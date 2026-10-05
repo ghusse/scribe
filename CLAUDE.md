@@ -2,20 +2,23 @@
 
 ## Coverage rule (mandatory)
 
-At least **95 % line coverage on every language**: Rust, TypeScript and Svelte components. The gate is
-global per tool (Rust workspace total, UI total) and CI fails below it.
+At least **95 % line coverage on every language**: Rust, TypeScript and Svelte components. Each language has
+its own gate: the Rust workspace total (cargo-llvm-cov), and in vitest one threshold per glob (`src/**/*.ts`,
+`src/**/*.svelte`) on top of the UI total, so a well-covered language cannot hide a poorly covered one. CI
+fails below any of them.
 
 ```bash
-npm run coverage:ui     # vitest + @vitest/coverage-v8, thresholds in vitest.config.ts (lines: 95)
+npm run coverage:ui     # vitest + @vitest/coverage-v8, thresholds in vitest.config.ts (lines: 95, per glob)
 npm run coverage:rust   # cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex ...
-npm run coverage        # both (what CI runs)
+npm run coverage        # both, locally (CI runs them as two independent steps)
 ```
 
 Reports: UI in `coverage/ui/` (html + lcov); Rust in the terminal (`cargo llvm-cov --workspace --html` for html).
 Prerequisites: `rustup component add llvm-tools-preview` and `cargo install cargo-llvm-cov`.
 
 Svelte components are covered through component tests (`@testing-library/svelte` + jsdom, see
-`src/main/ModelPicker.test.ts`); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
+`src/main/ModelPicker.test.ts`, which also shows how to observe a `$bindable` prop through a props object with
+a getter/setter); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
 with `vi.mock`.
 
 ## Test rules
@@ -28,12 +31,20 @@ with `vi.mock`.
 
 Excluding a file is allowed **only** for thin OS/framework adapters with no decision logic (raw Windows FFI,
 device/clipboard glue, Tauri bootstrap, UI entry files). Any logic in such a file must first be extracted into a
-tested module. Every exclusion is listed below and must match the tooling **exactly**:
+tested module. Every exclusion is listed below and must match the tooling **exactly**.
+`tests/coverage-policy.test.ts` (run by `npm test`) fails when the lines below and the tooling disagree: the
+threshold, the Rust regex and the set of Rust files it actually excludes, the vitest excludes and per-glob
+thresholds, and the two CI coverage steps.
 
-- Rust (`package.json` > `coverage:rust`): `--ignore-filename-regex "crates.scribe-platform.src.windows.|src-tauri.src.main[.]rs"`
+- Threshold (lines, every language): `95`
+- Rust ignore regex (`package.json` > `coverage:rust`): `crates.scribe-platform.src.windows.|src-tauri.src.main[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
-- UI (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.ts`, `src/main/main.ts`, `src/overlay/overlay.ts`,
-  `preview/**`.
+- Rust files excluded by that regex: `crates/scribe-platform/src/windows/focus.rs`,
+  `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
+  `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`
+- UI excludes (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.ts`, `src/main/main.ts`,
+  `src/overlay/overlay.ts`, `preview/**`
+- UI per-language thresholds (`vitest.config.ts` > `coverage.thresholds`): `src/**/*.ts`, `src/**/*.svelte`
 
 | Excluded | Why |
 |---|---|
@@ -42,14 +53,21 @@ tested module. Every exclusion is listed below and must match the tooling **exac
 | `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
 | `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
-Known debt (logic still inside excluded files, to extract into tested modules, see
-`docs/superpowers/reviews/2026-10-05-test-audit.md`):
-- `windows/hook.rs::hook_proc`: lock-key swallowing decision (`trigger_down`, pause, `lock_vk == 0`, injected
-  events) belongs in a pure `KeyFilter`.
-- `main.rs`: the `needs_setup` rule (duplicated in `App.svelte`) belongs in a tested `needs_setup(&Settings, ..)`.
+What is left in excluded files is wiring only; every decision lives in a tested module:
+- `windows/hook.rs::hook_proc` decodes `KBDLLHOOKSTRUCT` and calls `scribe_platform::key_filter::KeyFilter`
+  (injected events, trigger held, pause, `lock_vk == 0`, lost key-up / trigger changed while held). Remaining
+  branches: `code == HC_ACTION`, hook not started (`SHARED` empty), forward/swallow the filter's decision.
+- `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
+  `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
+  propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.
+- `windows/keys.rs`, `windows/window.rs`: Win32 calls only.
+- `main.rs`: `bootstrap::needs_setup` (same case table as `missingKeys` in `src/lib/apiKeys.ts`),
+  `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
+  the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if needs_setup { show_main }`, and the
+  `CloseRequested` match before `prevent_close` + `hide`.
 
 When you add or remove an exclusion, update this list, the regex/globs above, and the tooling in the same commit.
 
 ## Checks before finishing
 
-`cargo test --workspace`, `npm test`, `npm run check`, `npm run build`, `npm run coverage`.
+`cargo test --workspace`, `npm test`, `npm run check`, `npm run build`, `npm run coverage:ui`, `npm run coverage:rust`.

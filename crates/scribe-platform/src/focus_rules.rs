@@ -40,6 +40,22 @@ pub fn classify(f: &UiaFacts) -> FocusState {
     }
 }
 
+/// Text of a UTF-16 buffer filled by a Win32 call that returned `len` (negative or too large = clamped).
+pub fn utf16_prefix(buf: &[u16], len: i64) -> String {
+    let n = len.clamp(0, buf.len() as i64) as usize;
+    String::from_utf16_lossy(&buf[..n])
+}
+
+/// Application name shown in the history: the executable's file stem (`C:\…\Code.exe` → `Code`).
+pub fn process_stem(image_path: &str) -> Option<String> {
+    let file = image_path.rsplit(['\\', '/']).next().unwrap_or(image_path);
+    let stem = match file.rfind('.') {
+        Some(i) if i > 0 => &file[..i],
+        _ => file,
+    };
+    (!stem.is_empty()).then(|| stem.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +92,26 @@ mod tests {
         assert_eq!(classify(&facts("CASCADIA_HOSTING_WINDOW_CLASS", Some(PANE), None)), FocusState::Unknown);
         assert_eq!(classify(&facts("X", None, None)), FocusState::Unknown);
         assert_eq!(classify(&facts("X", Some(COMBO_BOX), Some(false))), FocusState::Editable);
+    }
+
+    #[test]
+    fn utf16_prefix_clamps_the_length() {
+        let buf: Vec<u16> = "Notepad\0\0".encode_utf16().collect();
+        assert_eq!(utf16_prefix(&buf, 7), "Notepad");
+        assert_eq!(utf16_prefix(&buf, 0), "");
+        assert_eq!(utf16_prefix(&buf, -1), "", "a failed call returns 0 or less");
+        assert_eq!(utf16_prefix(&buf[..3], 50), "Not", "never reads past the buffer");
+    }
+
+    #[test]
+    fn process_stem_keeps_the_file_name_without_extension() {
+        assert_eq!(process_stem(r"C:\Program Files\Microsoft VS Code\Code.exe").as_deref(), Some("Code"));
+        assert_eq!(process_stem(r"C:\Windows\notepad.EXE").as_deref(), Some("notepad"));
+        assert_eq!(process_stem(r"C:\a.b\my.app.exe").as_deref(), Some("my.app"));
+        assert_eq!(process_stem("/usr/bin/kate").as_deref(), Some("kate"));
+        assert_eq!(process_stem(r"C:\tools\.hidden").as_deref(), Some(".hidden"));
+        assert_eq!(process_stem("plain").as_deref(), Some("plain"));
+        assert_eq!(process_stem(""), None);
+        assert_eq!(process_stem(r"C:\dir\"), None);
     }
 }

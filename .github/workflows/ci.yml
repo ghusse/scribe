@@ -1,7 +1,9 @@
 name: CI
 
+# Pushes to master, plus every pull request: a PR branch is not built twice.
 on:
   push:
+    branches: [master]
   pull_request:
 
 concurrency:
@@ -41,7 +43,13 @@ jobs:
 
       # Also produces dist/, which the Tauri crate embeds at compile time.
       - name: Build UI
+        id: build
         run: npm run build
 
-      - name: Coverage gate (>= 95 % lines, UI + Rust)
-        run: npm run coverage
+      # Two independent gates: a failing UI gate must not hide the Rust one (it runs whenever the build passed).
+      - name: Coverage gate UI (>= 95 % lines, TypeScript and Svelte each)
+        run: npm run coverage:ui
+
+      - name: Coverage gate Rust (>= 95 % lines)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: npm run coverage:rust

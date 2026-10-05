@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
@@ -11,7 +9,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
 
-use crate::focus_rules::{classify, UiaFacts};
+use crate::focus_rules::{classify, process_stem, utf16_prefix, UiaFacts};
 
 pub struct UiaFocusDetector;
 
@@ -35,7 +33,7 @@ unsafe fn snapshot_impl() -> FocusSnapshot {
 unsafe fn class_name(hwnd: HWND) -> String {
     let mut buf = [0u16; 256];
     let n = GetClassNameW(hwnd, &mut buf);
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+    utf16_prefix(&buf, n as i64)
 }
 
 unsafe fn process_name(hwnd: HWND) -> Option<String> {
@@ -47,8 +45,7 @@ unsafe fn process_name(hwnd: HWND) -> Option<String> {
     let result = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len);
     let _ = CloseHandle(handle);
     result.ok()?;
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
-    Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned())
+    process_stem(&utf16_prefix(&buf, len as i64))
 }
 
 unsafe fn uia_facts() -> windows::core::Result<(Option<i32>, Option<bool>)> {

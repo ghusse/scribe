@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod bootstrap;
 mod commands;
 mod controller;
 mod dictation;
@@ -13,7 +14,6 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use tauri::{Manager, WindowEvent};
 
-use scribe_core::model::Level;
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
@@ -35,8 +35,7 @@ fn main() {
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
             let hook_cfg = Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
-            let needs_setup = secrets::get_key(&settings.stt_provider).is_none()
-                || (settings.level != Level::Raw && secrets::get_key(&settings.llm_provider).is_none());
+            let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(id).is_some());
             let svc = Arc::new(Services {
                 app: app.handle().clone(),
                 db: Mutex::new(db),
@@ -71,7 +70,7 @@ fn main() {
                 }
                 Err(e) => {
                     tracing::error!("{e}");
-                    overlay::toast(app.handle(), overlay::ToastLevel::Error, format!("Raccourci indisponible : {e}"), None, None);
+                    overlay::toast(app.handle(), overlay::ToastLevel::Error, bootstrap::hook_unavailable_message(&e), None, None);
                 }
             }
             controller::spawn(svc, rx, tx);
@@ -81,7 +80,7 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if window.label() == "main" {
+            if bootstrap::hides_on_close(window.label()) {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = window.hide();

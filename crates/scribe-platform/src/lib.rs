@@ -2,6 +2,7 @@
 pub mod audio_capture;
 pub mod clipboard;
 pub mod focus_rules;
+pub mod key_filter;
 #[cfg(windows)]
 mod windows;
 

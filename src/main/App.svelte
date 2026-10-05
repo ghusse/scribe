@@ -27,7 +27,7 @@
       tab = "history";
     });
     // First launch: without the API keys, open on the settings tab.
-    // Same rule as needs_setup in main.rs.
+    // Same rule as needs_setup in src-tauri/src/bootstrap.rs.
     Promise.all([api.getSettings(), api.keyStatus()])
       .then(([st, k]) => {
         const missing = missingKeys(st, k).length > 0;

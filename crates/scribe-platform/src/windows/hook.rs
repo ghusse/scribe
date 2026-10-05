@@ -1,20 +1,21 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
     KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
 };
 
-use crate::{HookConfig, KeyCallback, RawKey};
+use crate::key_filter::KeyFilter;
+use crate::{HookConfig, KeyCallback};
 
 struct Shared {
     on_key: KeyCallback,
     cfg: Arc<HookConfig>,
-    trigger_down: AtomicBool,
+    filter: Mutex<KeyFilter>,
 }
 
 static SHARED: OnceLock<Shared> = OnceLock::new();
@@ -33,7 +34,7 @@ impl Drop for HookHandle {
 
 pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, String> {
     SHARED
-        .set(Shared { on_key, cfg, trigger_down: AtomicBool::new(false) })
+        .set(Shared { on_key, cfg, filter: Mutex::new(KeyFilter::new()) })
         .map_err(|_| "le hook clavier est déjà démarré".to_string())?;
     let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
     std::thread::Builder::new()
@@ -58,27 +59,25 @@ pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, St
     Ok(HookHandle { thread_id })
 }
 
+// Decodes the event and delegates every decision to `KeyFilter` (unit-tested in key_filter.rs).
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         if let Some(s) = SHARED.get() {
             let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-            let injected = (kb.flags.0 & LLKHF_INJECTED.0) != 0;
-            if !injected {
-                let msg = wparam.0 as u32;
-                let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-                let vk = kb.vkCode;
-                if vk == s.cfg.trigger_vk.load(Ordering::Relaxed) {
-                    s.trigger_down.store(down, Ordering::Relaxed);
-                }
-                (s.on_key)(RawKey { vk, down, t_ms: scribe_core::clock::now_ms() });
-                let lock = s.cfg.lock_vk.load(Ordering::Relaxed);
-                if lock != 0
-                    && vk == lock
-                    && s.trigger_down.load(Ordering::Relaxed)
-                    && !s.cfg.paused.load(Ordering::Relaxed)
-                {
-                    return LRESULT(1);
-                }
+            let msg = wparam.0 as u32;
+            let decision = s.filter.lock().unwrap_or_else(|p| p.into_inner()).on_event(
+                &s.cfg,
+                kb.vkCode,
+                msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN,
+                (kb.flags.0 & LLKHF_INJECTED.0) != 0,
+                scribe_core::clock::now_ms(),
+                |vk| GetAsyncKeyState(vk as i32) < 0,
+            );
+            if let Some(k) = decision.key {
+                (s.on_key)(k);
+            }
+            if decision.swallow {
+                return LRESULT(1);
             }
         }
     }

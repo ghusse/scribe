@@ -7,7 +7,7 @@ type UsageSettings = Pick<Settings, "stt_provider" | "llm_provider" | "level">;
 
 /**
  * Providers whose key the current settings need, with what for. Same rule as needs_setup in
- * main.rs: transcription always, correction unless the level is raw.
+ * src-tauri/src/bootstrap.rs: transcription always, correction unless the level is raw.
  */
 export function keyUsage(s: UsageSettings): Record<string, KeyRole[]> {
   const usage: Record<string, KeyRole[]> = { [s.stt_provider]: ["transcription"] };
