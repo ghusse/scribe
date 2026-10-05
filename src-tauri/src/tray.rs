@@ -5,6 +5,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
+use crate::controller::ControllerMsg;
 use crate::services::Services;
 
 pub fn show_main(app: &AppHandle) {
@@ -32,6 +33,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 let paused = !svc.hook_cfg.paused.load(Ordering::Relaxed);
                 svc.hook_cfg.paused.store(paused, Ordering::Relaxed);
                 let _ = pause.set_checked(paused);
+                // The controller drops an in-flight recording on pause.
+                let _ = svc.ctrl_tx.lock().unwrap().send(ControllerMsg::PauseChanged);
             }
             "quit" => app.exit(0),
             _ => {}

@@ -75,6 +75,16 @@ impl Session {
     pub fn abort(&mut self) {
         self.state = SessionState::Idle;
     }
+
+    /// Pausing Scribe drops an in-flight recording (it must never be transcribed and pasted
+    /// later): returns DiscardRecording when there was one. Processing is left to finish.
+    pub fn on_paused(&mut self) -> Option<SessionAction> {
+        if let SessionState::Recording { .. } = self.state {
+            self.state = SessionState::Idle;
+            return Some(SessionAction::DiscardRecording);
+        }
+        None
+    }
 }
 
 /// Feeds the detector's commands to the session and keeps both in step: as soon as the session
@@ -195,6 +205,26 @@ mod tests {
         assert_eq!(s.on_tick(601_000), Some(SessionAction::FinishRecording));
         assert_eq!(s.state(), SessionState::Processing);
         assert_eq!(s.on_tick(700_000), None);
+    }
+
+    #[test]
+    fn pausing_discards_an_active_recording_so_max_duration_never_finishes_it() {
+        let mut s = Session::new(600_000);
+        s.on_gesture(Start, 0);
+        s.on_gesture(Lock, 200);
+        assert_eq!(s.on_paused(), Some(SessionAction::DiscardRecording));
+        assert_eq!(s.state(), SessionState::Idle);
+        assert_eq!(s.on_tick(700_000), None);
+        assert_eq!(s.on_paused(), None);
+    }
+
+    #[test]
+    fn pausing_lets_processing_finish() {
+        let mut s = Session::new(600_000);
+        s.on_gesture(Start, 0);
+        s.on_gesture(Stop, 1_000);
+        assert_eq!(s.on_paused(), None);
+        assert_eq!(s.state(), SessionState::Processing);
     }
 
     #[test]

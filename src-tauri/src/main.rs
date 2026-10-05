@@ -13,12 +13,15 @@ use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use tauri::{Manager, WindowEvent};
 
+use scribe_core::model::Level;
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
 use crate::controller::ControllerMsg;
 use crate::services::{AppPaths, Services};
 use crate::settings::Settings;
+
+const AUDIO_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 struct HookGuard(#[allow(dead_code)] scribe_platform::HookHandle);
 
@@ -32,7 +35,8 @@ fn main() {
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
             let hook_cfg = Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
-            let needs_setup = secrets::get_key(&settings.stt_preset).is_none();
+            let needs_setup = secrets::get_key(&settings.stt_preset).is_none()
+                || (settings.level != Level::Raw && secrets::get_key("anthropic").is_none());
             let svc = Arc::new(Services {
                 app: app.handle().clone(),
                 db: Mutex::new(db),
@@ -47,6 +51,14 @@ fn main() {
             });
             app.manage(svc.clone());
             dictation::purge_audio(&svc);
+            // Scribe lives in the tray for weeks: enforce the retention daily, not only at launch.
+            let purge_svc = svc.clone();
+            std::thread::Builder::new()
+                .name("scribe-audio-purge".into())
+                .spawn(move || loop {
+                    std::thread::sleep(AUDIO_PURGE_INTERVAL);
+                    dictation::purge_audio(&purge_svc);
+                })?;
             overlay::setup(app.handle())?;
             tray::setup(app.handle())?;
 

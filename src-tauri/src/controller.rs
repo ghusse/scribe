@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +21,8 @@ pub enum ControllerMsg {
     Tick,
     ProcessingDone,
     SettingsChanged,
+    /// Sent by the tray after flipping `hook_cfg.paused`.
+    PauseChanged,
 }
 
 pub fn key_role(vk: u32, trigger_vk: u32, lock_vk: u32) -> KeyRole {
@@ -39,7 +41,18 @@ struct Controller {
     gesture: GestureDetector,
     session: Session,
     mode: Mode,
-    recording: Option<(RecordingHandle, FocusSnapshot)>,
+    /// The start focus snapshot is resolved off the controller thread (it can take up to
+    /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
+    recording: Option<(RecordingHandle, Receiver<FocusSnapshot>)>,
+}
+
+fn spawn_focus_snapshot(svc: &Services) -> Receiver<FocusSnapshot> {
+    let (tx, rx) = mpsc::channel();
+    let detector = svc.focus.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(focus::snapshot_with_timeout(detector, FOCUS_TIMEOUT_MS));
+    });
+    rx
 }
 
 pub fn spawn(svc: Arc<Services>, rx: Receiver<ControllerMsg>, tx: Sender<ControllerMsg>) {
@@ -103,6 +116,14 @@ impl Controller {
                 }
             }
             ControllerMsg::ProcessingDone => self.session.on_processing_done(),
+            ControllerMsg::PauseChanged => {
+                if self.svc.hook_cfg.paused.load(Ordering::Relaxed) {
+                    self.gesture.reset();
+                    if let Some(action) = self.session.on_paused() {
+                        self.apply_action(action);
+                    }
+                }
+            }
             ControllerMsg::SettingsChanged => {
                 let s = self.svc.settings.read().unwrap().clone();
                 self.gesture.set_config(s.gesture.clone());
@@ -140,8 +161,7 @@ impl Controller {
                 Ok(handle) => {
                     self.mode = Mode::Hold;
                     overlay::emit(&app, OverlayEvent::Recording { locked: false });
-                    let focus = focus::snapshot_with_timeout(self.svc.focus.clone(), FOCUS_TIMEOUT_MS);
-                    self.recording = Some((handle, focus));
+                    self.recording = Some((handle, spawn_focus_snapshot(&self.svc)));
                 }
                 Err(e) => {
                     self.session.abort();
@@ -160,7 +180,7 @@ impl Controller {
                 overlay::emit(&app, OverlayEvent::Idle);
             }
             SessionAction::FinishRecording => {
-                let Some((handle, focus_start)) = self.recording.take() else {
+                let Some((handle, focus_rx)) = self.recording.take() else {
                     self.session.on_processing_done();
                     return;
                 };
@@ -169,9 +189,15 @@ impl Controller {
                     Ok(clip) => {
                         let svc = self.svc.clone();
                         let tx = self.tx.clone();
-                        let cap = Captured { clip, mode: self.mode, focus_start };
+                        let mode = self.mode;
                         tauri::async_runtime::spawn(async move {
-                            dictation::process(svc, cap).await;
+                            // Bounded by FOCUS_TIMEOUT_MS inside the snapshot thread.
+                            let focus_start = tauri::async_runtime::spawn_blocking(move || {
+                                focus_rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown())
+                            })
+                            .await
+                            .unwrap_or_else(|_| FocusSnapshot::unknown());
+                            dictation::process(svc, Captured { clip, mode, focus_start }).await;
                             let _ = tx.send(ControllerMsg::ProcessingDone);
                         });
                     }

@@ -27,15 +27,30 @@ pub struct Captured {
     pub focus_start: FocusSnapshot,
 }
 
-struct UnusedCorrector;
+/// Stands in for the LLM when there is none (Raw level) or it cannot be built (missing key):
+/// the pipeline then falls back to the raw text instead of failing the dictation.
+struct NoCorrector(String);
 
 #[async_trait::async_trait]
-impl Corrector for UnusedCorrector {
+impl Corrector for NoCorrector {
     fn name(&self) -> String {
         "aucun".into()
     }
     async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
-        Err(ProviderError::Config("correcteur désactivé".into()))
+        Err(ProviderError::Config(self.0.clone()))
+    }
+}
+
+fn build_corrector(s: &Settings, llm_key: Option<String>) -> Box<dyn Corrector> {
+    if s.level == Level::Raw {
+        return Box::new(NoCorrector("correcteur désactivé".into()));
+    }
+    let Some(key) = llm_key else {
+        return Box::new(NoCorrector("clé API Anthropic manquante".into()));
+    };
+    match AnthropicCorrector::new(ANTHROPIC_BASE_URL, key, &s.llm_model, &s.llm_effort, HTTP_TIMEOUT) {
+        Ok(llm) => Box::new(llm),
+        Err(e) => Box::new(NoCorrector(e.to_string())),
     }
 }
 
@@ -43,13 +58,16 @@ pub fn build_providers(s: &Settings) -> Result<(Box<dyn Transcriber>, Box<dyn Co
     let stt_key = secrets::get_key(&s.stt_preset)
         .ok_or_else(|| ProviderError::Config(format!("clé API manquante pour « {} »", s.stt_preset)))?;
     let stt = OpenAiCompatTranscriber::new(&s.stt_base_url, stt_key, &s.stt_model, HTTP_TIMEOUT)?;
-    if s.level == Level::Raw {
-        return Ok((Box::new(stt), Box::new(UnusedCorrector)));
+    let llm_key = if s.level == Level::Raw { None } else { secrets::get_key("anthropic") };
+    Ok((Box::new(stt), build_corrector(s, llm_key)))
+}
+
+/// Spec §7: a correction failure is always mentioned (« non corrigé »), whatever the insertion result.
+fn with_correction_note(msg: &str, correction_error: Option<&str>) -> String {
+    match correction_error {
+        Some(err) => format!("{msg} (non corrigé : {err})"),
+        None => msg.to_string(),
     }
-    let llm_key = secrets::get_key("anthropic")
-        .ok_or_else(|| ProviderError::Config("clé API Anthropic manquante".into()))?;
-    let llm = AnthropicCorrector::new(ANTHROPIC_BASE_URL, llm_key, &s.llm_model, &s.llm_effort, HTTP_TIMEOUT)?;
-    Ok((Box::new(stt), Box::new(llm)))
 }
 
 fn preview(text: &str) -> String {
@@ -158,18 +176,29 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
                 id
             };
             let p = Some(preview(&out.final_text));
+            let err = out.correction_error.as_deref();
             match inserted {
-                InsertResult::Pasted => match &out.correction_error {
+                InsertResult::Pasted => match err {
                     Some(err) => overlay::toast(&svc.app, ToastLevel::Info, format!("Inséré sans correction ({err})"), None, id),
                     None => overlay::emit(&svc.app, overlay::OverlayEvent::Idle),
                 },
-                InsertResult::PastedUncertain => overlay::toast(&svc.app, ToastLevel::Uncertain, "Texte inséré ?", p, id),
-                InsertResult::ClipboardOnly | InsertResult::PasteFailed => {
-                    overlay::toast(&svc.app, ToastLevel::Copied, "Texte copié dans le presse-papier", p, id)
+                InsertResult::PastedUncertain => {
+                    overlay::toast(&svc.app, ToastLevel::Uncertain, with_correction_note("Texte inséré ?", err), p, id)
                 }
-                InsertResult::ClipboardFailed => {
-                    overlay::toast(&svc.app, ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique", p, id)
-                }
+                InsertResult::ClipboardOnly | InsertResult::PasteFailed => overlay::toast(
+                    &svc.app,
+                    ToastLevel::Copied,
+                    with_correction_note("Texte copié dans le presse-papier", err),
+                    p,
+                    id,
+                ),
+                InsertResult::ClipboardFailed => overlay::toast(
+                    &svc.app,
+                    ToastLevel::Error,
+                    with_correction_note("Presse-papier indisponible : texte dans l'historique", err),
+                    p,
+                    id,
+                ),
             }
         }
     }
@@ -190,6 +219,19 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
     let out = pipeline::run(&settings.pipeline_config(), &wav, &terms, dictation.app_name.as_deref(), stt.as_ref(), llm.as_ref())
         .await
         .map_err(|e| e.to_string())?;
+    // A failed dictation was never delivered: hand the new text over through the clipboard, and
+    // only record « Clipboard » when that copy actually happened.
+    let outcome = if dictation.outcome == Outcome::Error {
+        match svc.clipboard.write_text(&out.final_text) {
+            Ok(()) => Outcome::Clipboard,
+            Err(e) => {
+                tracing::warn!("copie après retranscription impossible : {e}");
+                Outcome::Error
+            }
+        }
+    } else {
+        dictation.outcome
+    };
     let update = TranscriptionUpdate {
         raw_text: Some(out.raw),
         final_text: Some(out.final_text),
@@ -197,7 +239,7 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
         corrector: (settings.level != Level::Raw).then(|| llm.name()),
         stt_ms: Some(out.stt_ms as i64),
         llm_ms: out.llm_ms.map(|v| v as i64),
-        outcome: if dictation.outcome == Outcome::Error { Outcome::Clipboard } else { dictation.outcome },
+        outcome,
         error: out.correction_error,
     };
     svc.db.lock().unwrap().update_transcription(id, &update).map_err(|e| e.to_string())?;
@@ -207,14 +249,52 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
 
 pub fn purge_audio(svc: &Services) {
     let days = svc.settings.read().unwrap().audio_retention_days;
-    if days == 0 {
+    let Some(cutoff) = purge_cutoff(chrono::Utc::now(), days) else {
         return;
-    }
-    let cutoff = (chrono::Utc::now() - chrono::Duration::days(days as i64))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    };
     let db = svc.db.lock().unwrap();
     for (id, path) in db.audio_to_purge(&cutoff).unwrap_or_default() {
         let _ = std::fs::remove_file(&path);
         let _ = db.clear_audio_path(id);
+    }
+}
+
+/// RFC 3339 cutoff for the audio purge, or None when nothing must be purged (0 = keep forever).
+/// Never panics: a retention too large for date arithmetic means « keep everything ».
+fn purge_cutoff(now: chrono::DateTime<chrono::Utc>, days: u32) -> Option<String> {
+    if days == 0 {
+        return None;
+    }
+    let cutoff = now.checked_sub_signed(chrono::TimeDelta::try_days(days as i64)?)?;
+    Some(cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn purge_cutoff_never_panics_on_huge_retention() {
+        let now = chrono::Utc::now();
+        assert_eq!(purge_cutoff(now, 0), None);
+        assert_eq!(purge_cutoff(now, 100_000_000), None);
+        assert_eq!(purge_cutoff(now, u32::MAX), None);
+        let t: chrono::DateTime<chrono::Utc> = "2026-10-05T12:00:00Z".parse().unwrap();
+        assert_eq!(purge_cutoff(t, 30).as_deref(), Some("2026-09-05T12:00:00.000Z"));
+    }
+
+    #[test]
+    fn missing_llm_key_falls_back_to_raw_text_instead_of_failing() {
+        let s = Settings { level: Level::Formatted, ..Default::default() };
+        let c = build_corrector(&s, None);
+        let p = prompt::build_correction_prompt("bonjour", &[], None, Level::Formatted);
+        let err = tauri::async_runtime::block_on(c.correct(&p)).unwrap_err();
+        assert!(err.to_string().contains("Anthropic"), "{err}");
+    }
+
+    #[test]
+    fn correction_note_is_appended_to_every_toast() {
+        assert_eq!(with_correction_note("Texte inséré ?", None), "Texte inséré ?");
+        assert_eq!(with_correction_note("Texte inséré ?", Some("délai")), "Texte inséré ? (non corrigé : délai)");
     }
 }

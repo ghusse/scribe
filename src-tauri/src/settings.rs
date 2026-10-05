@@ -53,6 +53,26 @@ impl Default for Settings {
     }
 }
 
+/// About 100 years: anything above is a typo, and would overflow date arithmetic.
+pub const MAX_AUDIO_RETENTION_DAYS: u32 = 36_500;
+
+/// The API key travels with every request: refuse plain HTTP except to the local machine.
+fn is_secure_base_url(url: &str) -> bool {
+    let url = url.trim();
+    if let Some(rest) = url.strip_prefix("https://") {
+        return !rest.is_empty();
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = match host.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(""),
+            None => host.split(':').next().unwrap_or(""),
+        };
+        return matches!(host, "localhost" | "127.0.0.1" | "::1");
+    }
+    false
+}
+
 impl Settings {
     pub fn load(path: &Path) -> Settings {
         match std::fs::read_to_string(path) {
@@ -79,6 +99,21 @@ impl Settings {
         }
         if self.max_recording_ms < 10_000 {
             return Err("la durée maximale doit être d'au moins 10 secondes".into());
+        }
+        if self.min_recording_ms >= self.max_recording_ms {
+            return Err("la durée minimale doit être inférieure à la durée maximale".into());
+        }
+        if !(-90.0..=-10.0).contains(&self.silence_threshold_dbfs) {
+            return Err("le seuil de silence doit être compris entre −90 et −10 dBFS".into());
+        }
+        if self.gesture.hold_threshold_ms == 0 || self.gesture.double_tap_window_ms == 0 {
+            return Err("les délais du raccourci doivent être supérieurs à 0 ms".into());
+        }
+        if self.audio_retention_days > MAX_AUDIO_RETENTION_DAYS {
+            return Err(format!("la durée de conservation de l'audio ne peut pas dépasser {MAX_AUDIO_RETENTION_DAYS} jours"));
+        }
+        if !is_secure_base_url(&self.stt_base_url) {
+            return Err("l'adresse du service de transcription doit commencer par https:// (http:// accepté seulement pour localhost)".into());
         }
         Ok(())
     }
@@ -136,5 +171,35 @@ mod tests {
         assert!(Settings { trigger_vk: 0, ..Default::default() }.validate().is_err());
         assert!(Settings { lock_vk: 0xA3, ..Default::default() }.validate().is_err());
         assert!(Settings { max_recording_ms: 100, ..Default::default() }.validate().is_err());
+    }
+
+    #[test]
+    fn validation_rejects_values_that_break_dictation() {
+        let bad = [
+            Settings { min_recording_ms: 700_000, ..Default::default() },
+            Settings { min_recording_ms: 600_000, ..Default::default() },
+            Settings { silence_threshold_dbfs: -1.0, ..Default::default() },
+            Settings { silence_threshold_dbfs: -200.0, ..Default::default() },
+            Settings { gesture: GestureConfig { hold_threshold_ms: 0, ..Default::default() }, ..Default::default() },
+            Settings { gesture: GestureConfig { double_tap_window_ms: 0, ..Default::default() }, ..Default::default() },
+            Settings { audio_retention_days: 100_000_000, ..Default::default() },
+            Settings { stt_base_url: String::new(), ..Default::default() },
+            Settings { stt_base_url: "http://api.example.com/v1".into(), ..Default::default() },
+            Settings { stt_base_url: "http://localhost.evil.com/v1".into(), ..Default::default() },
+            Settings { stt_base_url: "https://".into(), ..Default::default() },
+        ];
+        for s in bad {
+            assert!(s.validate().is_err(), "should be rejected: {s:?}");
+        }
+        let good = [
+            Settings { audio_retention_days: 0, ..Default::default() },
+            Settings { audio_retention_days: MAX_AUDIO_RETENTION_DAYS, ..Default::default() },
+            Settings { stt_base_url: "http://localhost:8080/v1".into(), ..Default::default() },
+            Settings { stt_base_url: "http://127.0.0.1/v1".into(), ..Default::default() },
+            Settings { stt_base_url: "https://api.groq.com/openai/v1".into(), ..Default::default() },
+        ];
+        for s in good {
+            assert!(s.validate().is_ok(), "should be accepted: {s:?}");
+        }
     }
 }
