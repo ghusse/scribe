@@ -104,6 +104,7 @@ fn main() {
             commands::set_api_key,
             commands::test_providers,
             commands::capture_key,
+            commands::cancel_capture,
             commands::providers,
             commands::overlay_dismiss,
             commands::open_history,

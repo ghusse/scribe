@@ -137,6 +137,12 @@ pub async fn capture_key(svc: Svc<'_>) -> Result<Option<u32>, String> {
     .map_err(err)
 }
 
+/// Ends a pending capture_key early: dropping its sender makes it return None at once.
+#[tauri::command]
+pub fn cancel_capture(svc: Svc<'_>) {
+    svc.key_capture.lock().unwrap().take();
+}
+
 #[tauri::command]
 pub fn providers() -> Vec<Provider> {
     catalog::PROVIDERS.to_vec()

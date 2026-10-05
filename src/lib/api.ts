@@ -108,6 +108,8 @@ export const api = {
   setApiKey: (provider: string, key: string) => invoke<void>("set_api_key", { provider, key }),
   testProviders: () => invoke<ProviderTest>("test_providers"),
   captureKey: () => invoke<number | null>("capture_key"),
+  /** Makes a pending captureKey resolve to null at once. */
+  cancelCapture: () => invoke<void>("cancel_capture"),
   providers: () => invoke<Provider[]>("providers"),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
