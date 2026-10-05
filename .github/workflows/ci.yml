@@ -1,9 +1,9 @@
 name: CI
 
-# Pushes to master, plus every pull request: a PR branch is not built twice.
+# Pushes to main, plus every pull request: a PR branch is not built twice.
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 concurrency:
