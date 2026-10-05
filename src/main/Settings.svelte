@@ -53,10 +53,34 @@
     else s.lock_vk = vk;
   }
 
+  // bind:value on type=number yields null when cleared and allows decimals, which the
+  // backend (u32/u64) rejects with an English serde error: validate here, in French.
+  function checkNumbers(v: Settings): string | null {
+    const fields: [string, unknown][] = [
+      ["Seuil de maintien", v.gesture.hold_threshold_ms],
+      ["Fenêtre de double-tap", v.gesture.double_tap_window_ms],
+      ["Délai avant restauration du presse-papier", v.restore_delay_ms],
+      ["Conserver l'audio", v.audio_retention_days],
+    ];
+    for (const [label, n] of fields) {
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 0) return `${label} : entrez un nombre entier positif.`;
+    }
+    if (!Number.isFinite(v.max_recording_ms) || v.max_recording_ms <= 0) return "Durée maximale : entrez un nombre de minutes.";
+    return null;
+  }
+
   async function save() {
     if (!s) return;
+    const snap = $state.snapshot(s) as Settings;
+    snap.max_recording_ms = Math.round(snap.max_recording_ms);
+    const invalid = checkNumbers(snap);
+    if (invalid) {
+      error = invalid;
+      message = null;
+      return;
+    }
     try {
-      await api.saveSettings($state.snapshot(s) as Settings);
+      await api.saveSettings(snap);
       message = "Réglages enregistrés.";
       error = null;
     } catch (e) {
@@ -147,7 +171,7 @@
     <label>Délai avant restauration du presse-papier (ms) <input type="number" min="0" max="2000" bind:value={s.restore_delay_ms} /></label>
     <label>Conserver l'audio (jours, 0 = toujours) <input type="number" min="0" bind:value={s.audio_retention_days} /></label>
     <label>Durée maximale d'une dictée (min)
-      <input type="number" min="1" max="30" value={s.max_recording_ms / 60000} oninput={(e) => (s!.max_recording_ms = Number((e.target as HTMLInputElement).value) * 60000)} />
+      <input type="number" min="1" max="10" step="any" value={s.max_recording_ms / 60000} oninput={(e) => (s!.max_recording_ms = Number((e.target as HTMLInputElement).value) * 60000)} />
     </label>
   </section>
 

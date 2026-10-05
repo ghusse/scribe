@@ -144,12 +144,12 @@ pub fn stt_presets() -> Vec<SttPreset> {
 
 #[tauri::command]
 pub fn overlay_dismiss(svc: Svc<'_>) {
-    overlay::hide(&svc.app);
+    overlay::dismiss(&svc.app);
 }
 
 #[tauri::command]
 pub fn open_history(svc: Svc<'_>, id: Option<i64>) {
-    overlay::hide(&svc.app);
+    overlay::dismiss(&svc.app);
     tray::show_main(&svc.app);
     if let Some(id) = id {
         let _ = svc.app.emit_to("main", "focus-dictation", id);

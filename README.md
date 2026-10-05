@@ -11,7 +11,7 @@ npm install
 npx tauri dev
 ```
 
-Au premier lancement, la fenêtre Réglages s'ouvre : renseignez une clé OpenAI (transcription)
+Au premier lancement (clés manquantes), la fenêtre principale s'ouvre sur l'onglet Réglages : renseignez une clé OpenAI (transcription)
 et une clé Anthropic (correction), puis « Tester la configuration ».
 
 ## Utilisation

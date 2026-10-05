@@ -1,7 +1,9 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { api, type Dictation, type Outcome } from "../lib/api";
+
+  let { focus = null, onfocused }: { focus?: { id: number } | null; onfocused?: () => void } = $props();
 
   const PAGE = 50;
   let items = $state<Dictation[]>([]);
@@ -34,13 +36,15 @@
     searchTimer = setTimeout(() => load(true), 250);
   }
 
-  async function run(id: number, action: () => Promise<void>) {
+  async function run(id: number, action: () => Promise<void>): Promise<boolean> {
     busy = id;
     try {
       await action();
       error = null;
+      return true;
     } catch (e) {
       error = String(e);
+      return false;
     } finally {
       busy = null;
     }
@@ -52,24 +56,33 @@
   }
 
   async function saveEdit(d: Dictation) {
-    await run(d.id, () => api.saveEditedText(d.id, draft.trim() === "" ? null : draft));
+    // On failure keep the editor open (and the draft) so the error stays visible.
+    if (!(await run(d.id, () => api.saveEditedText(d.id, draft.trim() === "" ? null : draft)))) return;
     editing = null;
     await load(true);
   }
 
+  async function focusOn(id: number) {
+    query = "";
+    await load(true);
+    highlighted = id;
+    await tick();
+    document.getElementById(`d-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    onfocused?.();
+  }
+
+  // The focus-dictation event is received by App (always mounted) and passed down here,
+  // including when this tab is mounted because of it.
+  $effect(() => {
+    const f = focus;
+    if (f) untrack(() => focusOn(f.id));
+  });
+
   onMount(() => {
-    load(true);
+    if (!untrack(() => focus)) load(true);
     const unChanged = listen("history-changed", () => load(true));
-    const unFocus = listen<number>("focus-dictation", async (e) => {
-      query = "";
-      await load(true);
-      highlighted = e.payload;
-      await tick();
-      document.getElementById(`d-${e.payload}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
     return () => {
       unChanged.then((f) => f());
-      unFocus.then((f) => f());
     };
   });
 </script>

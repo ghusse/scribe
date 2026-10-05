@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount } from "svelte";
+  import { api } from "../lib/api";
   import History from "./History.svelte";
   import Glossary from "./Glossary.svelte";
   import Settings from "./Settings.svelte";
@@ -10,6 +13,27 @@
     { id: "glossary", label: "Vocabulaire" },
     { id: "settings", label: "Réglages" },
   ];
+  // Set by the toast's « Voir » button; consumed by History once it has scrolled to the card.
+  let focusRequest = $state<{ id: number } | null>(null);
+
+  onMount(() => {
+    // Listened here (always mounted) rather than in History, which may not be mounted.
+    const unFocus = listen<number>("focus-dictation", (e) => {
+      focusRequest = { id: e.payload };
+      tab = "history";
+    });
+    // First launch: without the API keys, open on the settings tab.
+    // Same rule as needs_setup in main.rs.
+    Promise.all([api.getSettings(), api.keyStatus()])
+      .then(([st, k]) => {
+        const missing = !k[st.stt_preset] || (st.level !== "raw" && !k.anthropic);
+        if (missing && tab === "history" && focusRequest === null) tab = "settings";
+      })
+      .catch(() => {});
+    return () => {
+      unFocus.then((f) => f());
+    };
+  });
 </script>
 
 <nav>
@@ -18,7 +42,7 @@
   {/each}
 </nav>
 <main>
-  {#if tab === "history"}<History />{:else if tab === "glossary"}<Glossary />{:else}<Settings />{/if}
+  {#if tab === "history"}<History focus={focusRequest} onfocused={() => (focusRequest = null)} />{:else if tab === "glossary"}<Glossary />{:else}<Settings />{/if}
 </main>
 
 <style>

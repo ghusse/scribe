@@ -13,7 +13,11 @@
   const split = (s: string) => s.split(",").map((v) => v.trim()).filter(Boolean);
 
   async function load() {
-    terms = await api.listTerms();
+    try {
+      terms = await api.listTerms();
+    } catch (err) {
+      error = String(err);
+    }
   }
 
   async function add(e: Event) {
@@ -45,8 +49,13 @@
   }
 
   async function remove(id: number) {
-    await api.deleteTerm(id);
-    await load();
+    try {
+      await api.deleteTerm(id);
+      error = null;
+      await load();
+    } catch (err) {
+      error = String(err);
+    }
   }
 
   onMount(load);
