@@ -355,4 +355,49 @@ mod tests {
         let huge = PipelineConfig { llm_timeout_per_char_ms: u64::MAX, ..PipelineConfig::default() };
         assert_eq!(llm_timeout(&huge, "ab"), Duration::from_millis(u64::MAX));
     }
+
+    #[test]
+    fn retry_classification() {
+        let retried = [
+            ProviderError::Network("connexion réinitialisée".into()),
+            ProviderError::Timeout,
+            ProviderError::Http { status: 429, body: String::new() },
+            ProviderError::Http { status: 500, body: String::new() },
+            ProviderError::Http { status: 503, body: String::new() },
+            ProviderError::Http { status: 529, body: String::new() },
+        ];
+        let final_ = [
+            ProviderError::Auth,
+            ProviderError::Http { status: 400, body: String::new() },
+            ProviderError::Http { status: 404, body: String::new() },
+            ProviderError::Http { status: 428, body: String::new() },
+            ProviderError::Http { status: 499, body: String::new() },
+            ProviderError::Refusal,
+            ProviderError::Malformed("x".into()),
+            ProviderError::Config("x".into()),
+        ];
+        for e in &retried {
+            assert!(e.is_retryable(), "{e:?}");
+        }
+        for e in &final_ {
+            assert!(!e.is_retryable(), "{e:?}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn server_errors_are_retried_and_client_errors_are_not() {
+        let llm = FakeLlm::new(Ok("<output>Bonjour.</output>".into()), 0);
+        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 503, body: "down".into() }), Ok("bonjour".into())]);
+        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap().final_text, "Bonjour.");
+        assert_eq!(stt.calls(), 2);
+
+        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 429, body: String::new() }), Ok("bonjour".into())]);
+        assert!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.is_ok());
+        assert_eq!(stt.calls(), 2);
+
+        let bad = ProviderError::Http { status: 400, body: "bad audio".into() };
+        let stt = FakeStt::new(vec![Err(bad.clone())]);
+        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await, Err(PipelineError::Transcription(bad)));
+        assert_eq!(stt.calls(), 1);
+    }
 }

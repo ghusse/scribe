@@ -235,4 +235,14 @@ mod tests {
         s.abort();
         assert_eq!(s.state(), SessionState::Idle);
     }
+
+    #[test]
+    fn max_duration_can_change_during_a_recording() {
+        let mut s = Session::new(600_000);
+        s.on_gesture(Start, 1_000);
+        s.on_gesture(Lock, 1_200);
+        s.set_max_recording_ms(10_000);
+        assert_eq!(s.on_tick(10_999), None);
+        assert_eq!(s.on_tick(11_000), Some(SessionAction::FinishRecording));
+    }
 }

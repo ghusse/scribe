@@ -137,4 +137,16 @@ mod tests {
         Mock::given(method("POST")).respond_with(reply(json!("  "), "stop")).mount(&server).await;
         assert!(matches!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Malformed(_))));
     }
+
+    #[tokio::test]
+    async fn name_is_the_model_and_a_slow_server_times_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+        let c = OpenAiChatCorrector::new(server.uri(), "k", "gpt-6.1-sol", None, Duration::from_millis(100)).unwrap();
+        assert_eq!(c.name(), "gpt-6.1-sol");
+        assert_eq!(c.correct(&prompt()).await, Err(ProviderError::Timeout));
+    }
 }

@@ -128,4 +128,16 @@ mod tests {
         assert!(matches!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Malformed(_))));
     }
 
+
+    #[tokio::test]
+    async fn name_is_the_model_and_a_slow_server_times_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+        let t = OpenAiCompatTranscriber::new(server.uri(), "k", "whisper-large-v3", Duration::from_millis(100)).unwrap();
+        assert_eq!(t.name(), "whisper-large-v3");
+        assert_eq!(t.transcribe(b"RIFF", &[]).await, Err(ProviderError::Timeout));
+    }
 }

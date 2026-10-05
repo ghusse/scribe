@@ -163,4 +163,9 @@ mod tests {
         let read: Vec<i16> = reader.samples::<i16>().map(|s| s.unwrap()).collect();
         assert_eq!(read, c.samples);
     }
+
+    #[test]
+    fn duration_of_a_clip_without_rate_is_zero() {
+        assert_eq!(duration_ms(&AudioClip { samples: vec![0; 16_000], sample_rate: 0 }), 0);
+    }
 }

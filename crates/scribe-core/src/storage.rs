@@ -489,4 +489,24 @@ mod tests {
         db.delete_term(id).unwrap();
         assert!(db.list_terms().unwrap().is_empty());
     }
+
+    #[test]
+    fn bump_term_usage_counts_each_listed_term_once_and_ignores_unknown_ids() {
+        let db = Db::open_in_memory().unwrap();
+        let now = "2026-10-05T10:00:00.000Z";
+        let a = db.add_term("Tauri", &[], None, TermSource::Manual, now).unwrap();
+        let b = db.add_term("Kubernetes", &[], None, TermSource::Mined, now).unwrap();
+        let c = db.add_term("Svelte", &[], None, TermSource::Correction, now).unwrap();
+        db.bump_term_usage(&[a, b, 9_999], "2026-10-05T11:00:00.000Z").unwrap();
+        db.bump_term_usage(&[a], "2026-10-05T12:00:00.000Z").unwrap();
+        db.bump_term_usage(&[], "2026-10-05T13:00:00.000Z").unwrap();
+        let usage = |id: i64| {
+            let t = db.list_terms().unwrap().into_iter().find(|t| t.id == id).unwrap();
+            (t.use_count, t.last_used_at)
+        };
+        assert_eq!(usage(a), (2, Some("2026-10-05T12:00:00.000Z".into())));
+        assert_eq!(usage(b), (1, Some("2026-10-05T11:00:00.000Z".into())));
+        assert_eq!(usage(c), (0, None));
+        assert_eq!(db.list_terms().unwrap().len(), 3, "an unknown id creates nothing");
+    }
 }

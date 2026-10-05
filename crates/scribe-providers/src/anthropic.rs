@@ -183,4 +183,16 @@ mod tests {
             .await;
         assert!(matches!(corrector(&server, "claude-opus-5-5").correct(&prompt()).await, Err(ProviderError::Malformed(_))));
     }
+
+    #[tokio::test]
+    async fn name_is_the_model_and_a_slow_server_times_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
+            .mount(&server)
+            .await;
+        let c = AnthropicCorrector::new(server.uri(), "k", "claude-haiku-4-5", None, Duration::from_millis(100)).unwrap();
+        assert_eq!(c.name(), "claude-haiku-4-5");
+        assert_eq!(c.correct(&prompt()).await, Err(ProviderError::Timeout));
+    }
 }

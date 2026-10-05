@@ -235,4 +235,21 @@ mod tests {
         assert_eq!(r, InsertResult::ClipboardFailed);
         assert_eq!(r.outcome(), Outcome::Error);
     }
+
+    #[test]
+    fn insert_results_map_to_stored_outcomes() {
+        assert_eq!(InsertResult::Pasted.outcome(), Outcome::Pasted);
+        assert_eq!(InsertResult::PastedUncertain.outcome(), Outcome::PastedUncertain);
+        assert_eq!(InsertResult::ClipboardOnly.outcome(), Outcome::Clipboard);
+        assert_eq!(InsertResult::PasteFailed.outcome(), Outcome::Clipboard);
+        assert_eq!(InsertResult::ClipboardFailed.outcome(), Outcome::Error);
+    }
+
+    #[test]
+    fn clipboard_only_write_failure_is_reported_without_keys() {
+        let cb = FakeClipboard { fail_write: true, ..Default::default() };
+        let keys = FakeKeys::new(true);
+        assert_eq!(perform(InsertPlan::ClipboardOnly, "dicté", &cb, &keys, 0, &no_sleep), InsertResult::ClipboardFailed);
+        assert_eq!(*keys.sent.lock().unwrap(), 0);
+    }
 }

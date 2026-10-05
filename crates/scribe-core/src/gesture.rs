@@ -291,4 +291,18 @@ mod tests {
         assert_eq!(d.on_key(trig(false, 900)), vec![]);
         assert_eq!(d.on_key(trig(true, 1_000)), vec![Start]);
     }
+
+    #[test]
+    fn mode_names() {
+        assert_eq!(Mode::Hold.as_str(), "hold");
+        assert_eq!(Mode::Locked.as_str(), "locked");
+        assert_eq!(serde_json::to_value(Mode::Locked).unwrap(), serde_json::json!("locked"));
+    }
+
+    #[test]
+    fn ignored_command_when_idle_stays_idle() {
+        let mut d = det();
+        d.on_command_ignored();
+        assert_eq!(d.on_key(trig(true, 0)), vec![Start], "no release to wait for");
+    }
 }

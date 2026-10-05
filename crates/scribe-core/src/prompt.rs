@@ -271,4 +271,11 @@ mod tests {
         assert_eq!(terms_used("On part sur tauri, avec du C++.", &terms), vec![1, 3]);
         assert!(terms_used("Google", &terms).is_empty());
     }
+
+    #[test]
+    fn terms_used_ignores_empty_terms() {
+        let terms = vec![term(1, "", 0, None, &[], None), term(2, "Tauri", 0, None, &[], None)];
+        assert_eq!(terms_used("tauri", &terms), vec![2]);
+        assert!(terms_used("", &terms).is_empty());
+    }
 }

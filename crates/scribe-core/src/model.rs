@@ -153,3 +153,75 @@ pub struct TranscriptionUpdate {
     pub outcome: Outcome,
     pub error: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `as_str` is what storage writes and `parse` what it reads back; serde (settings, UI) must agree.
+    fn assert_roundtrip<T>(all: &[T], as_str: fn(&T) -> &'static str, parse: fn(&str) -> Option<T>)
+    where
+        T: PartialEq + std::fmt::Debug + Serialize,
+    {
+        for v in all {
+            assert_eq!(parse(as_str(v)).as_ref(), Some(v));
+            assert_eq!(serde_json::to_value(v).unwrap(), serde_json::json!(as_str(v)));
+        }
+        let names: std::collections::HashSet<_> = all.iter().map(as_str).collect();
+        assert_eq!(names.len(), all.len(), "names are unique");
+    }
+
+    #[test]
+    fn level_roundtrips_and_defaults_to_formatted() {
+        assert_roundtrip(&[Level::Raw, Level::Clean, Level::Formatted], Level::as_str, Level::parse);
+        assert_eq!(Level::parse("Formatted"), None);
+        assert_eq!(Level::parse(""), None);
+        assert_eq!(Level::default(), Level::Formatted);
+    }
+
+    #[test]
+    fn outcome_roundtrips() {
+        assert_roundtrip(
+            &[Outcome::Pasted, Outcome::PastedUncertain, Outcome::Clipboard, Outcome::Error],
+            Outcome::as_str,
+            Outcome::parse,
+        );
+        assert_eq!(Outcome::PastedUncertain.as_str(), "pasted_uncertain");
+        assert_eq!(Outcome::parse("pastedUncertain"), None);
+    }
+
+    #[test]
+    fn term_source_roundtrips() {
+        assert_roundtrip(&[TermSource::Manual, TermSource::Correction, TermSource::Mined], TermSource::as_str, TermSource::parse);
+        assert_eq!(TermSource::parse("auto"), None);
+    }
+
+    #[test]
+    fn best_text_prefers_the_user_edit_then_the_correction_then_the_raw_text() {
+        let mut d = Dictation {
+            id: 1,
+            created_at: "2026-10-05T10:00:00.000Z".into(),
+            mode: "hold".into(),
+            app_name: None,
+            audio_path: None,
+            duration_ms: 0,
+            raw_text: Some("brut".into()),
+            final_text: Some("corrigé".into()),
+            edited_text: Some("édité".into()),
+            level: Level::Formatted,
+            transcriber: None,
+            corrector: None,
+            stt_ms: None,
+            llm_ms: None,
+            outcome: Outcome::Pasted,
+            error: None,
+        };
+        assert_eq!(d.best_text(), Some("édité"));
+        d.edited_text = None;
+        assert_eq!(d.best_text(), Some("corrigé"));
+        d.final_text = None;
+        assert_eq!(d.best_text(), Some("brut"));
+        d.raw_text = None;
+        assert_eq!(d.best_text(), None);
+    }
+}
