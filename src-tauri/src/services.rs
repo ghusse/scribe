@@ -14,7 +14,6 @@ use crate::settings::Settings;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    pub data_dir: PathBuf,
     pub audio_dir: PathBuf,
     pub db_path: PathBuf,
     pub settings_path: PathBuf,
@@ -26,7 +25,6 @@ impl AppPaths {
             audio_dir: data_dir.join("audio"),
             db_path: data_dir.join("scribe.db"),
             settings_path: data_dir.join("settings.json"),
-            data_dir,
         }
     }
 }
