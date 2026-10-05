@@ -64,16 +64,27 @@ What is left in excluded files is wiring only; every decision lives in a tested 
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
   propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.
-- `windows/keys.rs`, `windows/window.rs`: Win32 calls only.
+- `windows/keys.rs`, `windows/window.rs`: Win32 calls only. `show_overlay`/`hide_overlay` must stay
+  non-blocking across threads (`ShowWindowAsync`, `SWP_ASYNCWINDOWPOS`): see the next point.
 - `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
   `match` and the left-click filter.
 - `adapters.rs`: overlay state/dismiss rules are `overlay::Overlay`, placement is `overlay::overlay_position`, the
   level throttle is `controller::level_emitter`. Remaining branches: `raw_hwnd` `Some` (Win32 show/hide) / `None`
-  (webview show/hide) and the `if let Some(window)` guards.
+  (webview show/hide) and the `if let Some(window)` guards. `TauriOverlayWindow` methods run with the `Overlay`
+  lock held, from any thread, while the overlay window belongs to the main thread: they must never wait on
+  another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. Commands
+  that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
+  (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `missingKeys` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
   the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if needs_setup { show_main }`, and the
   `CloseRequested` match before `prevent_close` + `hide`.
+
+Test-only Rust code is **not** excluded and counts toward the Rust total: `src-tauri/src/testing.rs` (shared
+`#[cfg(test)]` fakes and the `Fixture`) and the `#[cfg(test)] mod fake` blocks in `overlay.rs` and `secrets.rs`.
+llvm-cov cannot drop `cfg(test)` blocks inside a file, and excluding only `testing.rs` would be inconsistent; the
+effect is small (about 150 lines, always fully run). Judge a file's own coverage in the per-file report, not only
+from the total.
 
 When you add or remove an exclusion, update this list, the regex/globs above, and the tooling in the same commit.
 

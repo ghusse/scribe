@@ -141,6 +141,25 @@ fn a_too_short_or_silent_recording_is_dropped() {
 }
 
 #[test]
+fn the_minimum_duration_is_inclusive() {
+    let min = Settings::default().min_recording_ms;
+    // One millisecond short of the minimum: dropped, nothing written.
+    let f = Fixture::new();
+    run(&f, speech(min as u32 - 1));
+    assert_eq!(audio::duration_ms(&speech(min as u32 - 1)), min - 1);
+    assert!(rows(&f).is_empty());
+    assert!(f.wav_files().is_empty());
+    assert_eq!(f.window.events(), vec![OverlayEvent::Idle]);
+    // Exactly the minimum: processed like any dictation.
+    let f = Fixture::new();
+    run(&f, speech(min as u32));
+    assert_eq!(audio::duration_ms(&speech(min as u32)), min);
+    let row = only_row(&f);
+    assert_eq!(row.outcome, Outcome::Pasted);
+    assert_eq!(row.duration_ms as u64, min);
+}
+
+#[test]
 fn no_speech_deletes_the_recording_without_a_row() {
     let f = Fixture::new();
     f.plan(|p| p.stt = Ok("  Merci d'avoir regardé. ".into()));

@@ -150,13 +150,16 @@ pub fn providers() -> Vec<Provider> {
     catalog::PROVIDERS.to_vec()
 }
 
-#[tauri::command]
+/// `async`: commands that touch the overlay must stay off the main (event-loop) thread, which owns the
+/// overlay window. Waiting there for the `Overlay` lock while another thread holds it and talks to that
+/// window could freeze the app (see `overlay::Overlay`). Enforced by a test in `commands/tests.rs`.
+#[tauri::command(async)]
 pub fn overlay_dismiss(svc: Svc<'_>) {
     svc.overlay.dismiss();
 }
 
-/// From an overlay toast: open the history, scrolled to that dictation.
-#[tauri::command]
+/// From an overlay toast: open the history, scrolled to that dictation. `async`: see `overlay_dismiss`.
+#[tauri::command(async)]
 pub fn open_history(svc: Svc<'_>, id: Option<i64>) {
     svc.overlay.dismiss();
     svc.ui.show_main();

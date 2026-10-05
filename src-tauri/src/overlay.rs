@@ -23,6 +23,11 @@ pub enum OverlayEvent {
 }
 
 /// The overlay window: delivers events to its webview and shows/hides it without taking focus.
+///
+/// `Overlay` calls these methods with its lock held, from any thread (controller, processing tasks,
+/// commands). Implementations must therefore never block waiting on another thread, in particular the
+/// main thread that owns the window: post, don't send (Win32 `ShowWindowAsync`, `SWP_ASYNCWINDOWPOS`).
+/// Otherwise a main-thread caller waiting for the lock and a holder waiting for the main thread deadlock.
 pub trait OverlayWindow: Send + Sync {
     fn send(&self, ev: &OverlayEvent);
     fn show(&self);

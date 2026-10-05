@@ -253,9 +253,15 @@ fn a_pending_hotkey_capture_takes_the_press() {
     let mut h = Harness::new();
     h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
     let (_, rx) = h.f.svc.key_capture.begin();
-    h.key(TRIGGER, false, 0); // key-ups are not captured
+    // The release of the key that started the capture (Enter on the button) must not become the hotkey.
+    h.key(0x0D, false, 0);
+    assert!(h.f.svc.key_capture.is_pending(), "a key-up does not end the capture");
+    assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
     h.key(TRIGGER, true, 10);
     assert_eq!(rx.try_recv(), Ok(TRIGGER));
+    // Only that press was captured, and the capture is over.
+    assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected));
+    assert!(!h.f.svc.key_capture.is_pending());
     assert_eq!(h.started(), 0);
 }
 
