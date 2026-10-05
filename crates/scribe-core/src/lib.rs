@@ -5,3 +5,4 @@ pub mod session;
 pub mod audio;
 pub mod model;
 pub mod storage;
+pub mod prompt;
