@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "Scribe", "url": "index.html", "width": 980, "height": 700, "visible": false },
+      { "label": "main", "title": "Scribe", "url": "index.html", "width": 980, "height": 700, "minWidth": 560, "minHeight": 480, "visible": false },
       { "label": "overlay", "title": "Scribe overlay", "url": "overlay.html", "width": 440, "height": 120,
         "visible": false, "decorations": false, "transparent": true, "alwaysOnTop": true,
         "skipTaskbar": true, "resizable": false, "focus": false, "shadow": false }

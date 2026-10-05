@@ -53,9 +53,12 @@
 </main>
 
 <style>
-  :global(:root) { --bg: #f7f7fb; --card: #fff; --text: #1f2330; --muted: #6b7080; --accent: #4f46e5; --border: #e3e4ec; --danger: #dc2626; }
+  /* Text colours (--danger, --success, --link) meet WCAG AA on --card and --bg in both themes. */
+  :global(:root) { --bg: #f7f7fb; --card: #fff; --text: #1f2330; --muted: #6b7080; --accent: #4f46e5; --border: #e3e4ec;
+    --danger: #b91c1c; --success: #15803d; --link: #4338ca; color-scheme: light dark; accent-color: var(--accent); }
   @media (prefers-color-scheme: dark) {
-    :global(:root) { --bg: #14151b; --card: #1d1f27; --text: #e8e9f0; --muted: #9a9eb0; --border: #2c2f3a; }
+    :global(:root) { --bg: #14151b; --card: #1d1f27; --text: #e8e9f0; --muted: #9a9eb0; --border: #2c2f3a;
+      --danger: #f87171; --success: #4ade80; --link: #a5b4fc; }
   }
   :global(body) { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
   :global(button) { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); padding: 6px 12px; }
