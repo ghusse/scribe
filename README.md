@@ -22,12 +22,20 @@ et un modèle pour la transcription et pour la correction (par défaut OpenAI `g
 - **Maintenir Ctrl droit + Espace** : verrouille en cours de dictée.
 - Si aucun champ texte n'est actif, le texte est copié et un toast propose de le voir.
 
-## Tests
+## Tests et couverture
 
 ```bash
 cargo test --workspace
+npm test
 npm run check
+npm run coverage   # porte : >= 95 % des lignes en Rust, TypeScript et Svelte
 ```
+
+Règle : au moins 95 % de couverture de lignes dans tous les langages, vérifiée par le CI
+(`.github/workflows/ci.yml`, Windows). Rust via `cargo-llvm-cov` (`rustup component add llvm-tools-preview`,
+`cargo install cargo-llvm-cov`), UI via vitest + `@vitest/coverage-v8` (composants testés avec
+`@testing-library/svelte` + jsdom). Les seules exclusions autorisées (adaptateurs OS/framework sans logique) et
+leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 
 ## Checklist manuelle (Windows)
 
