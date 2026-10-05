@@ -1,0 +1,23 @@
+[package]
+name = "scribe-app"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
+scribe-core = { path = "../crates/scribe-core" }
+scribe-providers = { path = "../crates/scribe-providers" }
+scribe-platform = { path = "../crates/scribe-platform" }
+
+[dev-dependencies]
+tempfile = "3"

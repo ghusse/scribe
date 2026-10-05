@@ -1,0 +1,16 @@
+[package]
+name = "scribe-providers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scribe-core = { path = "../scribe-core" }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { workspace = true }
