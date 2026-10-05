@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editAction, needsAttention, staleGuard, testSignature, type SaveState } from "./autosave";
+import { editAction, needsAttention, staleGuard, statusView, testSignature, type SaveState } from "./autosave";
 
 describe("editAction", () => {
   it("schedules a save for a real change, even while another save is in flight", () => {
@@ -45,5 +45,26 @@ describe("staleGuard", () => {
     expect(g.isCurrent(g.token())).toBe(true);
     g.invalidate();
     expect(g.isCurrent(g.token())).toBe(true);
+  });
+});
+
+describe("statusView", () => {
+  it("shows progress while saving", () => {
+    expect(statusView("pending", null, false)).toMatchObject({ tone: "muted", text: "Enregistrement…", visible: true, alert: false });
+    expect(statusView("saving", null, true).text).toBe("Enregistrement…");
+  });
+  it("shows the success only while it flashes", () => {
+    expect(statusView("saved", null, true)).toMatchObject({ tone: "success", text: "✓ Réglages enregistrés", visible: true });
+    expect(statusView("saved", null, false)).toMatchObject({ visible: false, text: "" });
+  });
+  it("keeps an invalid value visible, without retry", () => {
+    expect(statusView("invalid", "Seuil de maintien : entre 100 et 2000 ms", false)).toEqual({
+      tone: "danger", text: "⚠ Non enregistré : Seuil de maintien : entre 100 et 2000 ms", alert: true, retry: false, details: null, visible: true,
+    });
+  });
+  it("offers retry and details for a failed save", () => {
+    expect(statusView("failed", "disque plein\nos error 112", false)).toEqual({
+      tone: "danger", text: "⚠ Non enregistré : disque plein", alert: true, retry: true, details: "disque plein\nos error 112", visible: true,
+    });
   });
 });

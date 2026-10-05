@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignHotkey, CAPTURE_GRACE_MS, captureOutcome, isTypingKey, pendingSummary, swallowsKey } from "./hotkeys";
+import { assignHotkey, CAPTURE_GRACE_MS, captureOutcome, isTypingKey, normalizeLock, pendingSummary, swallowsKey } from "./hotkeys";
 
 const CTRL_R = 0xa3, SPACE = 0x20, F8 = 0x77, A = 0x41;
 const cur = { trigger_vk: CTRL_R, lock_vk: SPACE };
@@ -82,5 +82,17 @@ describe("pendingSummary", () => {
     const a = assignHotkey("trigger", A, cur);
     if (!a.ok) throw new Error("expected ok");
     expect(pendingSummary(a.keys, cur).lock).toBeNull();
+  });
+});
+
+describe("normalizeLock", () => {
+  it("maps a disabled lock key to « Aucune »", () => {
+    const s = { lock_vk: 0x20, gesture: { lock_key_enabled: false, hold_threshold_ms: 300 } };
+    expect(normalizeLock(s)).toEqual({ lock_vk: 0, gesture: { lock_key_enabled: true, hold_threshold_ms: 300 } });
+    expect(s.lock_vk).toBe(0x20); // not mutated
+  });
+  it("keeps an enabled lock key as is", () => {
+    const s = { lock_vk: 0x20, gesture: { lock_key_enabled: true } };
+    expect(normalizeLock(s)).toBe(s);
   });
 });

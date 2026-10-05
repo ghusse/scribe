@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Provider } from "./api";
-import { canSaveKey, deleteKeyQuestion, keyPlaceholder, keyState, keyUsage, missingKeys, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
+import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
 
 const p = (id: string, label: string): Provider => ({ id, label, base_url: "", stt_models: [], llm_api: null, llm_models: [] });
 const providers = [p("openai", "OpenAI"), p("anthropic", "Anthropic"), p("mistral", "Mistral")];
@@ -51,5 +51,49 @@ describe("unsaved drafts", () => {
       "Clés OpenAI, Anthropic et Mistral saisies mais non enregistrées. Enregistrer ?",
     );
     expect(unsavedDraftMessage(unsavedDrafts({}, providers))).toBeNull();
+  });
+});
+
+describe("key status display", () => {
+  it("words each state", () => {
+    expect(KEY_STATE_LABELS).toEqual({ saved: "✓ enregistrée", required: "✗ requise", unconfigured: "— non configurée" });
+  });
+  it("joins roles", () => {
+    expect(rolesText(["correction"])).toBe("Correction");
+    expect(rolesText(["transcription", "correction"])).toBe("Transcription et Correction");
+    expect(rolesText(["transcription", "correction"], true)).toBe("transcription et correction");
+  });
+});
+
+describe("splitProviders", () => {
+  it("puts the providers in use first, in usage order", () => {
+    const r = splitProviders(providers, keyUsage({ stt_provider: "mistral", llm_provider: "openai", level: "clean" }));
+    expect(r.used.map((x) => x.id)).toEqual(["mistral", "openai"]);
+    expect(r.others.map((x) => x.id)).toEqual(["anthropic"]);
+  });
+  it("counts a provider used for both once", () => {
+    const r = splitProviders(providers, keyUsage({ stt_provider: "openai", llm_provider: "openai", level: "clean" }));
+    expect(r.used.map((x) => x.id)).toEqual(["openai"]);
+    expect(r.others.map((x) => x.id)).toEqual(["anthropic", "mistral"]);
+  });
+  it("drops the correction provider in raw mode", () => {
+    expect(splitProviders(providers, keyUsage({ ...s, level: "raw" })).used.map((x) => x.id)).toEqual(["openai"]);
+  });
+});
+
+describe("setup banner and warnings", () => {
+  const label = (id: string) => providers.find((x) => x.id === id)!.label;
+  it("names each missing key with its roles", () => {
+    expect(setupBannerParts(missingKeys(s, {}), label)).toEqual([
+      { label: "OpenAI", roles: "transcription" }, { label: "Anthropic", roles: "correction" },
+    ]);
+    expect(setupBannerParts(missingKeys({ ...s, llm_provider: "openai" }, {}), label)).toEqual([
+      { label: "OpenAI", roles: "transcription et correction" },
+    ]);
+    expect(setupBannerParts(missingKeys(s, { openai: true, anthropic: true }), label)).toEqual([]);
+  });
+  it("words the inline warning per role", () => {
+    expect(missingKeyWarning("Anthropic", "correction")).toBe("⚠ Aucune clé Anthropic : la correction échouera.");
+    expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ Aucune clé OpenAI : la transcription échouera.");
   });
 });

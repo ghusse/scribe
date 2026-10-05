@@ -3,9 +3,12 @@ import type { Settings } from "./api";
 export interface NumberField {
   /** Used both in the form label and in the error messages. */
   label: string;
+  /** Shown after the input, and in the messages. */
   unit: string;
-  /** Extra text in the form label's parentheses. */
-  note?: string;
+  /** Grey help under the field (the default value is appended). */
+  help?: string;
+  /** The backend default (settings.rs), quoted in the help. */
+  default: number;
   min: number;
   max: number;
   integer: boolean;
@@ -14,17 +17,26 @@ export interface NumberField {
 
 /** Bounds mirror the HTML inputs and stay within settings.rs::validate. */
 export const NUMBER_FIELDS = {
-  hold_threshold_ms: { label: "Seuil de maintien", unit: "ms", min: 100, max: 2000, integer: true, get: (s) => s.gesture.hold_threshold_ms },
-  double_tap_window_ms: { label: "Fenêtre de double-tap", unit: "ms", min: 150, max: 1000, integer: true, get: (s) => s.gesture.double_tap_window_ms },
-  restore_delay_ms: { label: "Délai avant restauration du presse-papier", unit: "ms", min: 0, max: 2000, integer: true, get: (s) => s.restore_delay_ms },
-  audio_retention_days: { label: "Conserver l'audio", unit: "jours", note: "0 = toujours", min: 0, max: 36500, integer: true, get: (s) => s.audio_retention_days },
-  max_recording_min: { label: "Durée maximale d'une dictée", unit: "min", min: 1, max: 10, integer: false, get: (s) => s.max_recording_ms / 60000 },
+  hold_threshold_ms: { label: "Seuil de maintien", unit: "ms", help: "Un appui plus long est un maintien.", default: 300, min: 100, max: 2000, integer: true, get: (s) => s.gesture.hold_threshold_ms },
+  double_tap_window_ms: { label: "Fenêtre de double-tap", unit: "ms", help: "Délai maximal entre les deux appuis.", default: 350, min: 150, max: 1000, integer: true, get: (s) => s.gesture.double_tap_window_ms },
+  restore_delay_ms: { label: "Restauration du presse-papier", unit: "ms", help: "Augmentez si le texte collé est parfois l'ancien contenu.", default: 150, min: 0, max: 2000, integer: true, get: (s) => s.restore_delay_ms },
+  audio_retention_days: { label: "Conservation de l'audio", unit: "jours", default: 30, min: 0, max: 36500, integer: true, get: (s) => s.audio_retention_days },
+  max_recording_min: { label: "Durée max. d'une dictée", unit: "min", default: 10, min: 1, max: 10, integer: false, get: (s) => s.max_recording_ms / 60000 },
 } satisfies Record<string, NumberField>;
 
 export type NumberFieldId = keyof typeof NUMBER_FIELDS;
 
-export function formLabel(f: NumberField): string {
-  return `${f.label} (${f.unit}${f.note ? `, ${f.note}` : ""})`;
+/** The grey help under a number field: its explanation, then the default value. */
+export function fieldHelp(f: NumberField): string {
+  return `${f.help ? `${f.help} ` : ""}Défaut : ${f.default} ${f.unit}.`;
+}
+
+/** Choices of the audio retention select (0 = forever); a stored value outside them is kept as an extra option. */
+export function retentionOptions(current: number): { value: number; label: string }[] {
+  const days = [7, 30, 90];
+  if (current > 0 && !days.includes(current)) days.push(current);
+  days.sort((a, b) => a - b);
+  return [...days.map((d) => ({ value: d, label: `${d} jour${d > 1 ? "s" : ""}` })), { value: 0, label: "Toujours" }];
 }
 
 export function rangeMessage(f: NumberField): string {

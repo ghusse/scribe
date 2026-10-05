@@ -78,3 +78,12 @@ export function swallowsKey(
 export function pendingSummary(next: Hotkeys, cur: Hotkeys): { trigger: string; lock: string | null } {
   return { trigger: keyName(next.trigger_vk), lock: next.lock_vk !== cur.lock_vk ? keyName(next.lock_vk) : null };
 }
+
+/**
+ * The lock key has one control: « Désactiver » sets lock_vk to 0. Settings saved with the old
+ * « Touche de verrouillage active » box unchecked are shown (and later saved) that way.
+ */
+export function normalizeLock<T extends { lock_vk: number; gesture: { lock_key_enabled: boolean } }>(s: T): T {
+  if (s.gesture.lock_key_enabled) return s;
+  return { ...s, lock_vk: 0, gesture: { ...s.gesture, lock_key_enabled: true } };
+}

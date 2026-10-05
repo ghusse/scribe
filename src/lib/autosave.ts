@@ -36,3 +36,41 @@ export function staleGuard() {
     isCurrent: (t: number) => t === gen,
   };
 }
+
+/** How long « ✓ Réglages enregistrés » stays in the status bar after a save. */
+export const SAVED_FADE_MS = 2000;
+
+export interface StatusView {
+  tone: "muted" | "success" | "danger";
+  /** One line (the bar ellipsizes it); empty when the bar is hidden. */
+  text: string;
+  /** Errors are announced as alerts, progress and success as polite status. */
+  alert: boolean;
+  /** « Réessayer » re-sends a payload the backend failed to save. */
+  retry: boolean;
+  /** Full error text for the « Détails » disclosure. */
+  details: string | null;
+  visible: boolean;
+}
+
+/**
+ * The sticky status bar: progress while saving, a success that fades out (`flashing` is true
+ * during the SAVED_FADE_MS after a save), errors that stay until fixed.
+ */
+export function statusView(state: SaveState, error: string | null, flashing: boolean): StatusView {
+  const base = { alert: false, retry: false, details: null, visible: true };
+  switch (state) {
+    case "pending":
+    case "saving":
+      return { ...base, tone: "muted", text: "Enregistrement…" };
+    case "saved":
+      return { ...base, tone: "success", text: flashing ? "✓ Réglages enregistrés" : "", visible: flashing };
+    case "invalid":
+      return { ...base, tone: "danger", text: `⚠ Non enregistré : ${error ?? "valeur invalide"}`, alert: true };
+    case "failed": {
+      const full = error ?? "erreur inconnue";
+      const first = full.split("\n")[0];
+      return { tone: "danger", text: `⚠ Non enregistré : ${first}`, alert: true, retry: true, details: full, visible: true };
+    }
+  }
+}

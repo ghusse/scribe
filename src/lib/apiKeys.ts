@@ -52,3 +52,38 @@ export function unsavedDraftMessage(unsaved: Provider[]): string | null {
   const names = unsaved.map((p) => p.label);
   return `Clés ${names.slice(0, -1).join(", ")} et ${names[names.length - 1]} saisies mais non enregistrées. Enregistrer ?`;
 }
+
+export type KeyState = ReturnType<typeof keyState>;
+
+/** Status text of a key row: red when needed, grey when unused, green when stored. */
+export const KEY_STATE_LABELS: Record<KeyState, string> = {
+  saved: "✓ enregistrée",
+  required: "✗ requise",
+  unconfigured: "— non configurée",
+};
+
+/** « Transcription et Correction » for the « utilisée pour » tag. */
+export function rolesText(roles: KeyRole[], lower = false): string {
+  const names = roles.map((r) => (lower ? ROLE_LABELS[r].toLowerCase() : ROLE_LABELS[r]));
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} et ${names[names.length - 1]}` : (names[0] ?? "");
+}
+
+/** Key rows: providers in use first (transcription, then correction), the others after, catalog order. */
+export function splitProviders<P extends { id: string }>(providers: P[], usage: Record<string, KeyRole[]>): { used: P[]; others: P[] } {
+  const order = Object.keys(usage);
+  const used = providers.filter((p) => usage[p.id]).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  return { used, others: providers.filter((p) => !usage[p.id]) };
+}
+
+/**
+ * Parts of the setup banner (« Pour commencer, ajoutez la clé **OpenAI** (transcription) et
+ * **Anthropic** (correction). »): one bold provider name each, then its roles.
+ */
+export function setupBannerParts(missing: { provider: string; roles: KeyRole[] }[], labelOf: (id: string) => string): { label: string; roles: string }[] {
+  return missing.map((m) => ({ label: labelOf(m.provider), roles: rolesText(m.roles, true) }));
+}
+
+/** Under a provider select whose key is missing. */
+export function missingKeyWarning(label: string, role: KeyRole): string {
+  return `⚠ Aucune clé ${label} : la ${ROLE_LABELS[role].toLowerCase()} échouera.`;
+}
