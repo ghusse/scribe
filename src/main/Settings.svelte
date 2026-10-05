@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api, effortLevels, type Provider, type ProviderTest, type Settings } from "../lib/api";
   import { keyName } from "../lib/keys";
   import ModelPicker from "./ModelPicker.svelte";
@@ -14,13 +14,40 @@
   let keyStatus = $state<Record<string, boolean>>({});
   let keyDrafts = $state<Record<string, string>>({});
   let capturing = $state<"trigger" | "lock" | null>(null);
-  let message = $state<string | null>(null);
   let error = $state<string | null>(null);
+
+  // Autosave: every change is persisted ~500 ms after the last edit; the pill shows the outcome.
+  type SaveState = "saved" | "pending" | "saving" | "invalid" | "failed";
+  let saveState = $state<SaveState>("saved");
+  let saveError = $state<string | null>(null);
+  let savedFlash = $state(0);
+  let lastSaved = "";
+  let lastAttempted = "";
+  let inFlight = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let test = $state<ProviderTest | null>(null);
   let testing = $state(false);
 
   onMount(async () => {
     [s, providers, keyStatus] = await Promise.all([api.getSettings(), api.providers(), api.keyStatus()]);
+    lastSaved = lastAttempted = JSON.stringify($state.snapshot(s));
+  });
+
+  $effect(() => {
+    if (!s) return;
+    const json = JSON.stringify($state.snapshot(s)); // deep read: any field change re-runs this
+    if (json === lastSaved) return;
+    saveState = "pending";
+    clearTimeout(timer);
+    timer = setTimeout(flush, 500);
+  });
+
+  // Leaving the tab must not lose the last edit.
+  onDestroy(() => {
+    if (saveState === "pending") {
+      clearTimeout(timer);
+      flush();
+    }
   });
 
   // Switching provider selects its newest model.
@@ -76,24 +103,38 @@
     return null;
   }
 
-  async function save() {
-    if (!s) return;
+  async function flush() {
+    if (!s || inFlight) return;
     const snap = $state.snapshot(s) as Settings;
+    const json = JSON.stringify(snap);
+    if (json === lastSaved) {
+      saveState = "saved";
+      return;
+    }
     snap.max_recording_ms = Math.round(snap.max_recording_ms);
     const invalid = checkNumbers(snap);
     if (invalid) {
-      error = invalid;
-      message = null;
+      saveState = "invalid";
+      saveError = invalid;
       return;
     }
+    inFlight = true;
+    lastAttempted = json;
+    saveState = "saving";
     try {
       await api.saveSettings(snap);
-      message = "Réglages enregistrés.";
-      error = null;
+      lastSaved = json;
+      saveState = "saved";
+      saveError = null;
+      savedFlash++;
     } catch (e) {
-      error = String(e);
-      message = null;
+      saveState = "failed";
+      saveError = String(e);
+    } finally {
+      inFlight = false;
     }
+    // Edits made while the request was in flight: save them too (but never retry the same failing payload).
+    if (s && JSON.stringify($state.snapshot(s)) !== lastAttempted) flush();
   }
 
   async function runTest() {
@@ -117,13 +158,14 @@
     {#each providers as p}
       <div class="key">
         <span class="label">{p.label}</span>
-        <span>{keyStatus[p.id] ? "✓ enregistrée" : "✗ absente"}</span>
+        <span class="status">{keyStatus[p.id] ? "✓ enregistrée" : "✗ absente"}</span>
         <input type="password" placeholder="Nouvelle clé (vide = supprimer)" bind:value={keyDrafts[p.id]} />
         <button onclick={() => saveKey(p.id)}>Enregistrer</button>
       </div>
     {/each}
     <button onclick={runTest} disabled={testing}>{testing ? "Test…" : "Tester la configuration"}</button>
     {#if test}<p>Transcription : {show(test.stt)} — Correction : {show(test.llm)}</p>{/if}
+    {#if error}<p class="error">{error}</p>{/if}
   </section>
 
   <section>
@@ -166,12 +208,12 @@
 
   <section>
     <h2>Raccourci</h2>
-    <div class="key">
+    <div class="key hotkey">
       <span class="label">Déclenchement</span>
       <strong>{capturing === "trigger" ? "Appuyez sur une touche…" : keyName(s.trigger_vk)}</strong>
       <button onclick={() => capture("trigger")} disabled={capturing !== null}>Changer</button>
     </div>
-    <div class="key">
+    <div class="key hotkey">
       <span class="label">Verrouillage (maintenir + touche)</span>
       <strong>{capturing === "lock" ? "Appuyez sur une touche…" : keyName(s.lock_vk)}</strong>
       <button onclick={() => capture("lock")} disabled={capturing !== null}>Changer</button>
@@ -192,19 +234,41 @@
     </label>
   </section>
 
-  <button class="primary" onclick={save}>Enregistrer les réglages</button>
-  {#if message}<p class="ok">{message}</p>{/if}
-  {#if error}<p class="error">{error}</p>{/if}
+  <div class="save-status {saveState}" role="status" aria-live="polite">
+    {#if saveState === "pending" || saveState === "saving"}
+      <span class="spinner"></span> Enregistrement…
+    {:else if saveState === "saved"}
+      {#key savedFlash}<span class="check">✓</span>{/key} Réglages enregistrés
+    {:else}
+      ⚠ Non enregistré : {saveError}
+    {/if}
+  </div>
 {/if}
 
 <style>
   section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; }
   h2 { font-size: 15px; margin: 0 0 10px; }
-  label { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 14px; }
-  label input:not([type="checkbox"]), label select { flex: 1; }
-  .key { display: flex; align-items: center; gap: 10px; margin: 6px 0; font-size: 14px; flex-wrap: wrap; }
-  .key input { flex: 1; min-width: 200px; }
-  .label { width: 210px; color: var(--muted); }
-  .ok { color: #16a34a; }
+  /* Two columns everywhere: label text, then the control stretched over the rest of the row. */
+  label { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: center; column-gap: 12px; margin: 8px 0; font-size: 14px; }
+  label > input:not([type="checkbox"]), label > select { width: 100%; box-sizing: border-box; }
+  label:has(> input[type="checkbox"]) { display: flex; gap: 8px; padding-left: 232px; }
+  .key { display: grid; grid-template-columns: 220px 110px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; margin: 8px 0; font-size: 14px; }
+  .key.hotkey { grid-template-columns: 220px minmax(0, 1fr) auto auto; }
+  .key input { width: 100%; box-sizing: border-box; }
+  .status { color: var(--muted); }
+  @media (max-width: 640px) {
+    label, .key { grid-template-columns: 1fr; row-gap: 4px; }
+    label:has(> input[type="checkbox"]) { padding-left: 0; }
+  }
   .error { color: var(--danger); }
+  .save-status { position: fixed; right: 16px; bottom: 16px; display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100vw - 32px));
+    padding: 8px 14px; border-radius: 999px; font-size: 13px; background: var(--card); border: 1px solid var(--border);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); color: var(--muted); transition: color 0.2s, border-color 0.2s; }
+  .save-status.saved { color: #16a34a; border-color: #86efac; }
+  .save-status.invalid, .save-status.failed { color: var(--danger); border-color: var(--danger); border-radius: 12px; }
+  .check { display: inline-block; font-weight: 700; animation: pop 0.45s ease-out; }
+  .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.35); opacity: 1; } 100% { transform: scale(1); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  section:last-of-type { margin-bottom: 64px; }
 </style>

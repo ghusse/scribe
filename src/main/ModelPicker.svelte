@@ -15,12 +15,19 @@
   }
 </script>
 
-<select value={selected} onchange={pick}>
-  {#each models as m, i}
-    <option value={m}>{m}{i === 0 ? " (dernier, par défaut)" : ""}</option>
-  {/each}
-  <option value={CUSTOM}>Autre…</option>
-</select>
-{#if selected === CUSTOM}
-  <input placeholder="Identifiant du modèle" bind:value oninput={() => onchange?.()} />
-{/if}
+<div class="picker">
+  <select value={selected} onchange={pick}>
+    {#each models as m, i}
+      <option value={m}>{m}{i === 0 ? " (dernier, par défaut)" : ""}</option>
+    {/each}
+    <option value={CUSTOM}>Autre…</option>
+  </select>
+  {#if selected === CUSTOM}
+    <input placeholder="Identifiant du modèle" bind:value oninput={() => onchange?.()} />
+  {/if}
+</div>
+
+<style>
+  .picker { display: flex; gap: 8px; width: 100%; min-width: 0; }
+  .picker select, .picker input { flex: 1 1 0; min-width: 0; box-sizing: border-box; }
+</style>
