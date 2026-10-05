@@ -68,11 +68,13 @@ pub mod memory {
 
     use super::SecretStore;
 
-    /// In-memory `SecretStore`; `fail` makes every write fail with that message.
+    /// In-memory `SecretStore`; `fail` makes every write fail with that message, `reads` logs every
+    /// `get` (provider id) so tests can check which secrets were looked up.
     #[derive(Default)]
     pub struct MemorySecretStore {
         pub keys: Mutex<HashMap<String, String>>,
         pub fail: Mutex<Option<String>>,
+        pub reads: Mutex<Vec<String>>,
     }
 
     impl MemorySecretStore {
@@ -89,6 +91,7 @@ pub mod memory {
 
     impl SecretStore for MemorySecretStore {
         fn get(&self, provider: &str) -> Option<String> {
+            self.reads.lock().unwrap().push(provider.to_string());
             self.keys.lock().unwrap().get(provider).cloned()
         }
         fn set(&self, provider: &str, key: &str) -> Result<(), String> {
