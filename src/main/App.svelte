@@ -26,7 +26,7 @@
     // Same rule as needs_setup in main.rs.
     Promise.all([api.getSettings(), api.keyStatus()])
       .then(([st, k]) => {
-        const missing = !k[st.stt_preset] || (st.level !== "raw" && !k.anthropic);
+        const missing = !k[st.stt_provider] || (st.level !== "raw" && !k[st.llm_provider]);
         if (missing && tab === "history" && focusRequest === null) tab = "settings";
       })
       .catch(() => {});

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use scribe_core::gesture::GestureConfig;
 use scribe_core::model::Level;
 use scribe_core::pipeline::PipelineConfig;
+use scribe_providers::catalog;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -14,10 +15,13 @@ pub struct Settings {
     pub lock_vk: u32,
     pub gesture: GestureConfig,
     pub level: Level,
-    pub stt_preset: String,
-    pub stt_base_url: String,
+    /// Catalog provider id (`scribe_providers::catalog`); also the keyring entry of its API key.
+    #[serde(alias = "stt_preset")]
+    pub stt_provider: String,
     pub stt_model: String,
+    pub llm_provider: String,
     pub llm_model: String,
+    /// Ignored when the model takes no effort parameter.
     pub llm_effort: String,
     pub restore_delay_ms: u64,
     pub min_recording_ms: u64,
@@ -36,9 +40,9 @@ impl Default for Settings {
             lock_vk: 0x20,
             gesture: GestureConfig::default(),
             level: Level::Formatted,
-            stt_preset: "openai".into(),
-            stt_base_url: "https://api.openai.com/v1".into(),
-            stt_model: "gpt-4o-transcribe".into(),
+            stt_provider: "openai".into(),
+            stt_model: "gpt-transcribe".into(),
+            llm_provider: "anthropic".into(),
             llm_model: "claude-opus-5-5".into(),
             llm_effort: "low".into(),
             restore_delay_ms: 150,
@@ -65,23 +69,6 @@ pub const MAX_LLM_TIMEOUT_PER_CHAR_MS: u64 = 1_000;
 
 /// About 100 years: anything above is a typo, and would overflow date arithmetic.
 pub const MAX_AUDIO_RETENTION_DAYS: u32 = 36_500;
-
-/// The API key travels with every request: refuse plain HTTP except to the local machine.
-fn is_secure_base_url(url: &str) -> bool {
-    let url = url.trim();
-    if let Some(rest) = url.strip_prefix("https://") {
-        return !rest.is_empty();
-    }
-    if let Some(rest) = url.strip_prefix("http://") {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-        let host = match host.strip_prefix('[') {
-            Some(v6) => v6.split(']').next().unwrap_or(""),
-            None => host.split(':').next().unwrap_or(""),
-        };
-        return matches!(host, "localhost" | "127.0.0.1" | "::1");
-    }
-    false
-}
 
 impl Settings {
     pub fn load(path: &Path) -> Settings {
@@ -140,8 +127,14 @@ impl Settings {
         if self.llm_timeout_base_ms > MAX_LLM_TIMEOUT_BASE_MS || self.llm_timeout_per_char_ms > MAX_LLM_TIMEOUT_PER_CHAR_MS {
             return Err("le délai de correction est trop élevé".into());
         }
-        if !is_secure_base_url(&self.stt_base_url) {
-            return Err("l'adresse du service de transcription doit commencer par https:// (http:// accepté seulement pour localhost)".into());
+        if catalog::stt_provider(&self.stt_provider).is_none() {
+            return Err(format!("fournisseur de transcription inconnu : {}", self.stt_provider));
+        }
+        if catalog::llm_provider(&self.llm_provider).is_none() {
+            return Err(format!("fournisseur de correction inconnu : {}", self.llm_provider));
+        }
+        if self.stt_model.trim().is_empty() || self.llm_model.trim().is_empty() {
+            return Err("choisissez un modèle de transcription et un modèle de correction".into());
         }
         Ok(())
     }
@@ -165,7 +158,8 @@ mod tests {
     fn defaults_match_global_constraints() {
         let s = Settings::default();
         assert_eq!((s.trigger_vk, s.lock_vk), (0xA3, 0x20));
-        assert_eq!((s.stt_preset.as_str(), s.stt_model.as_str()), ("openai", "gpt-4o-transcribe"));
+        assert_eq!((s.stt_provider.as_str(), s.stt_model.as_str()), ("openai", "gpt-transcribe"));
+        assert_eq!(s.llm_provider, "anthropic");
         assert_eq!((s.llm_model.as_str(), s.llm_effort.as_str()), ("claude-opus-5-5", "low"));
         assert_eq!((s.min_recording_ms, s.max_recording_ms, s.restore_delay_ms), (300, 600_000, 150));
         assert_eq!(s.level, Level::Formatted);
@@ -175,7 +169,7 @@ mod tests {
     fn save_and_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let s = Settings { stt_preset: "groq".into(), level: Level::Clean, ..Default::default() };
+        let s = Settings { stt_provider: "groq".into(), llm_provider: "mistral".into(), level: Level::Clean, ..Default::default() };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
     }
@@ -194,11 +188,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_stt_preset_field_is_still_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"stt_preset":"groq","stt_base_url":"https://api.groq.com/openai/v1","stt_model":"whisper-large-v3"}"#).unwrap();
+        let s = Settings::load(&path);
+        assert_eq!((s.stt_provider.as_str(), s.stt_model.as_str()), ("groq", "whisper-large-v3"));
+    }
+
+    #[test]
     fn invalid_files_fall_back_to_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         for bad in [
-            r#"{"stt_base_url":"http://api.example.com/v1"}"#,
+            r#"{"stt_provider":"grok"}"#,
+            r#"{"llm_provider":"groq","llm_model":""}"#,
             r#"{"trigger_vk":0}"#,
             r#"{"max_recording_ms":1800000}"#,
             r#"{"llm_timeout_per_char_ms":18446744073709551615}"#,
@@ -226,10 +230,9 @@ mod tests {
             Settings { gesture: GestureConfig { hold_threshold_ms: 0, ..Default::default() }, ..Default::default() },
             Settings { gesture: GestureConfig { double_tap_window_ms: 0, ..Default::default() }, ..Default::default() },
             Settings { audio_retention_days: 100_000_000, ..Default::default() },
-            Settings { stt_base_url: String::new(), ..Default::default() },
-            Settings { stt_base_url: "http://api.example.com/v1".into(), ..Default::default() },
-            Settings { stt_base_url: "http://localhost.evil.com/v1".into(), ..Default::default() },
-            Settings { stt_base_url: "https://".into(), ..Default::default() },
+            Settings { stt_provider: "anthropic".into(), ..Default::default() },
+            Settings { llm_provider: "inconnu".into(), ..Default::default() },
+            Settings { stt_model: " ".into(), ..Default::default() },
             Settings { max_recording_ms: MAX_RECORDING_MS_CAP + 1, ..Default::default() },
             Settings { max_recording_ms: 1_800_000, ..Default::default() },
             Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS + 1, ..Default::default() },
@@ -243,9 +246,8 @@ mod tests {
         let good = [
             Settings { audio_retention_days: 0, ..Default::default() },
             Settings { audio_retention_days: MAX_AUDIO_RETENTION_DAYS, ..Default::default() },
-            Settings { stt_base_url: "http://localhost:8080/v1".into(), ..Default::default() },
-            Settings { stt_base_url: "http://127.0.0.1/v1".into(), ..Default::default() },
-            Settings { stt_base_url: "https://api.groq.com/openai/v1".into(), ..Default::default() },
+            Settings { stt_provider: "groq".into(), stt_model: "whisper-large-v3-turbo".into(), ..Default::default() },
+            Settings { llm_provider: "openai".into(), llm_model: "modèle-saisi-à-la-main".into(), ..Default::default() },
             Settings { max_recording_ms: MAX_RECORDING_MS_CAP, ..Default::default() },
             Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS, ..Default::default() },
             Settings { restore_delay_ms: 0, ..Default::default() },

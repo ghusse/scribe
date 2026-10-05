@@ -45,9 +45,9 @@ export interface Settings {
   lock_vk: number;
   gesture: GestureConfig;
   level: Level;
-  stt_preset: string;
-  stt_base_url: string;
+  stt_provider: string;
   stt_model: string;
+  llm_provider: string;
   llm_model: string;
   llm_effort: string;
   restore_delay_ms: number;
@@ -60,7 +60,25 @@ export interface Settings {
   audio_retention_days: number;
 }
 
-export interface SttPreset { id: string; label: string; base_url: string; default_model: string }
+export interface LlmModel { id: string; efforts: string[] }
+export interface Provider {
+  id: string;
+  label: string;
+  base_url: string;
+  /** Newest first: the first one is the default. */
+  stt_models: string[];
+  llm_api: "anthropic" | "open_ai_chat" | null;
+  llm_models: LlmModel[];
+}
+
+/** Mirror of catalog::effort_levels: hand-typed Anthropic models get effort unless Haiku/3.x. */
+export function effortLevels(p: Provider | undefined, model: string): string[] {
+  if (!p) return [];
+  const known = p.llm_models.find((m) => m.id === model);
+  if (known) return known.efforts;
+  if (p.llm_api === "anthropic" && !model.startsWith("claude-haiku") && !model.startsWith("claude-3")) return ["low", "medium", "high"];
+  return [];
+}
 
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
 export type OverlayEvent =
@@ -90,7 +108,7 @@ export const api = {
   setApiKey: (provider: string, key: string) => invoke<void>("set_api_key", { provider, key }),
   testProviders: () => invoke<ProviderTest>("test_providers"),
   captureKey: () => invoke<number | null>("capture_key"),
-  sttPresets: () => invoke<SttPreset[]>("stt_presets"),
+  providers: () => invoke<Provider[]>("providers"),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
 };

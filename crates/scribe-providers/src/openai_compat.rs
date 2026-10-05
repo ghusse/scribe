@@ -2,30 +2,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::multipart::{Form, Part};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use scribe_core::pipeline::{ProviderError, Transcriber};
 use scribe_core::prompt::transcriber_prompt;
 
 use crate::http::{map_send_error, map_status};
-
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct SttPreset {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub base_url: &'static str,
-    pub default_model: &'static str,
-}
-
-pub const STT_PRESETS: &[SttPreset] = &[
-    SttPreset { id: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", default_model: "gpt-4o-transcribe" },
-    SttPreset { id: "groq", label: "Groq", base_url: "https://api.groq.com/openai/v1", default_model: "whisper-large-v3-turbo" },
-    SttPreset { id: "mistral", label: "Mistral", base_url: "https://api.mistral.ai/v1", default_model: "voxtral-mini-latest" },
-];
-
-pub fn stt_preset(id: &str) -> Option<&'static SttPreset> {
-    STT_PRESETS.iter().find(|p| p.id == id)
-}
 
 /// Any provider exposing OpenAI's `POST /audio/transcriptions` (OpenAI, Groq, Mistral…).
 /// The language is never sent: detection stays automatic for mixed French/English dictation.
@@ -146,10 +128,4 @@ mod tests {
         assert!(matches!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Malformed(_))));
     }
 
-    #[test]
-    fn presets_are_available() {
-        assert_eq!(stt_preset("openai").unwrap().default_model, "gpt-4o-transcribe");
-        assert_eq!(stt_preset("groq").unwrap().base_url, "https://api.groq.com/openai/v1");
-        assert!(stt_preset("nope").is_none());
-    }
 }

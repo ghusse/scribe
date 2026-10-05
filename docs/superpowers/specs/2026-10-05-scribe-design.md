@@ -65,14 +65,15 @@ mélangés dans une même phrase, vocabulaire technique/métier.
 | Notifications | `tauri-plugin-notification` |
 
 **Fournisseurs**
-- Transcription : adaptateur « compatible OpenAI » (OpenAI `gpt-4o-transcribe`, Groq Whisper large v3
-  turbo, Mistral Voxtral via URL + modèle configurables) + un adaptateur spécialiste multilingue/mots-clés
-  (ElevenLabs Scribe, Soniox ou Deepgram — choix arrêté pendant la planification après vérification
-  de la gestion du code-switching FR/EN et de l'injection de mots-clés).
-- Correction : Anthropic Claude, appelé en HTTP brut (pas de SDK Rust officiel). Modèle par défaut
-  `claude-opus-5-5` avec `output_config.effort: "low"` ; modèle configurable (ex. `claude-haiku-4-5`
-  si la latence mesurée dépasse le budget). Prompt caching sur le préfixe stable
-  (instructions + glossaire).
+- Catalogue de fournisseurs et de modèles connus (`scribe-providers/src/catalog.rs`), le plus récent
+  en premier = valeur par défaut ; l'UI propose des listes déroulantes + « Autre… » pour un modèle saisi
+  à la main. Grok (xAI) est exclu par choix de l'utilisateur.
+- Transcription : adaptateur « compatible OpenAI » (OpenAI `gpt-transcribe` par défaut, Groq Whisper
+  large v3 turbo, Mistral Voxtral) + un adaptateur spécialiste multilingue/mots-clés (ElevenLabs Scribe,
+  Soniox ou Deepgram — Plan 3).
+- Correction : Anthropic Claude (HTTP brut, prompt caching, `output_config.effort`) par défaut
+  `claude-opus-5-5` effort `low` ; ou tout fournisseur « Chat Completions » (OpenAI, Mistral, Groq)
+  avec `reasoning_effort` quand le modèle l'accepte. La clé API est celle du fournisseur choisi.
 
 ## 4. Architecture
 

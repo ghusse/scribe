@@ -10,7 +10,9 @@ use scribe_core::insert::{self, InsertResult};
 use scribe_core::model::{Level, NewDictation, Outcome, TranscriptionUpdate};
 use scribe_core::pipeline::{self, Corrector, PipelineError, ProviderError, Transcriber};
 use scribe_core::prompt::{self, CorrectionPrompt};
-use scribe_providers::anthropic::{AnthropicCorrector, ANTHROPIC_BASE_URL};
+use scribe_providers::anthropic::AnthropicCorrector;
+use scribe_providers::catalog::{self, LlmApi};
+use scribe_providers::openai_chat::OpenAiChatCorrector;
 use scribe_providers::openai_compat::OpenAiCompatTranscriber;
 
 use crate::overlay::{self, ToastLevel};
@@ -45,20 +47,31 @@ fn build_corrector(s: &Settings, llm_key: Option<String>) -> Box<dyn Corrector> 
     if s.level == Level::Raw {
         return Box::new(NoCorrector("correcteur désactivé".into()));
     }
-    let Some(key) = llm_key else {
-        return Box::new(NoCorrector("clé API Anthropic manquante".into()));
+    let Some(provider) = catalog::llm_provider(&s.llm_provider) else {
+        return Box::new(NoCorrector(format!("fournisseur de correction inconnu : {}", s.llm_provider)));
     };
-    match AnthropicCorrector::new(ANTHROPIC_BASE_URL, key, &s.llm_model, &s.llm_effort, HTTP_TIMEOUT) {
-        Ok(llm) => Box::new(llm),
-        Err(e) => Box::new(NoCorrector(e.to_string())),
-    }
+    let Some(key) = llm_key else {
+        return Box::new(NoCorrector(format!("clé API {} manquante", provider.label)));
+    };
+    let effort = catalog::effort_levels(provider, &s.llm_model)
+        .contains(&s.llm_effort.as_str())
+        .then(|| s.llm_effort.clone());
+    let built: Result<Box<dyn Corrector>, ProviderError> = match provider.llm_api {
+        Some(LlmApi::Anthropic) => AnthropicCorrector::new(provider.base_url, key, &s.llm_model, effort, HTTP_TIMEOUT)
+            .map(|c| Box::new(c) as Box<dyn Corrector>),
+        _ => OpenAiChatCorrector::new(provider.base_url, key, &s.llm_model, effort, HTTP_TIMEOUT)
+            .map(|c| Box::new(c) as Box<dyn Corrector>),
+    };
+    built.unwrap_or_else(|e| Box::new(NoCorrector(e.to_string())))
 }
 
 pub fn build_providers(s: &Settings) -> Result<(Box<dyn Transcriber>, Box<dyn Corrector>), ProviderError> {
-    let stt_key = secrets::get_key(&s.stt_preset)
-        .ok_or_else(|| ProviderError::Config(format!("clé API manquante pour « {} »", s.stt_preset)))?;
-    let stt = OpenAiCompatTranscriber::new(&s.stt_base_url, stt_key, &s.stt_model, HTTP_TIMEOUT)?;
-    let llm_key = if s.level == Level::Raw { None } else { secrets::get_key("anthropic") };
+    let provider = catalog::stt_provider(&s.stt_provider)
+        .ok_or_else(|| ProviderError::Config(format!("fournisseur de transcription inconnu : {}", s.stt_provider)))?;
+    let stt_key = secrets::get_key(provider.id)
+        .ok_or_else(|| ProviderError::Config(format!("clé API manquante pour « {} »", provider.label)))?;
+    let stt = OpenAiCompatTranscriber::new(provider.base_url, stt_key, &s.stt_model, HTTP_TIMEOUT)?;
+    let llm_key = if s.level == Level::Raw { None } else { secrets::get_key(&s.llm_provider) };
     Ok((Box::new(stt), build_corrector(s, llm_key)))
 }
 

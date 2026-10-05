@@ -9,7 +9,7 @@ use tauri::{Emitter, State};
 use scribe_core::audio::{self, AudioClip, TARGET_RATE};
 use scribe_core::model::{Dictation, Term, TermSource};
 use scribe_core::prompt::CorrectionPrompt;
-use scribe_providers::openai_compat::{SttPreset, STT_PRESETS};
+use scribe_providers::catalog::{self, Provider};
 
 use crate::controller::ControllerMsg;
 use crate::dictation;
@@ -91,7 +91,7 @@ pub fn save_settings(svc: Svc<'_>, settings: Settings) -> Result<(), String> {
 
 #[tauri::command]
 pub fn key_status() -> HashMap<String, bool> {
-    secrets::PROVIDERS.iter().map(|p| (p.to_string(), secrets::get_key(p).is_some())).collect()
+    catalog::PROVIDERS.iter().map(|p| (p.id.to_string(), secrets::get_key(p.id).is_some())).collect()
 }
 
 #[tauri::command]
@@ -138,8 +138,8 @@ pub async fn capture_key(svc: Svc<'_>) -> Result<Option<u32>, String> {
 }
 
 #[tauri::command]
-pub fn stt_presets() -> Vec<SttPreset> {
-    STT_PRESETS.to_vec()
+pub fn providers() -> Vec<Provider> {
+    catalog::PROVIDERS.to_vec()
 }
 
 #[tauri::command]

@@ -1,17 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type ProviderTest, type Settings, type SttPreset } from "../lib/api";
+  import { api, effortLevels, type Provider, type ProviderTest, type Settings } from "../lib/api";
   import { keyName } from "../lib/keys";
-
-  const PROVIDERS: { id: string; label: string }[] = [
-    { id: "openai", label: "OpenAI" },
-    { id: "groq", label: "Groq" },
-    { id: "mistral", label: "Mistral" },
-    { id: "anthropic", label: "Anthropic (correction)" },
-  ];
+  import ModelPicker from "./ModelPicker.svelte";
 
   let s = $state<Settings | null>(null);
-  let presets = $state<SttPreset[]>([]);
+  let providers = $state<Provider[]>([]);
+  let sttProviders = $derived(providers.filter((p) => p.stt_models.length > 0));
+  let llmProviders = $derived(providers.filter((p) => p.llm_api !== null));
+  let sttProvider = $derived(providers.find((p) => p.id === s?.stt_provider));
+  let llmProvider = $derived(providers.find((p) => p.id === s?.llm_provider));
+  let efforts = $derived(s ? effortLevels(llmProvider, s.llm_model) : []);
   let keyStatus = $state<Record<string, boolean>>({});
   let keyDrafts = $state<Record<string, string>>({});
   let capturing = $state<"trigger" | "lock" | null>(null);
@@ -21,15 +20,23 @@
   let testing = $state(false);
 
   onMount(async () => {
-    [s, presets, keyStatus] = await Promise.all([api.getSettings(), api.sttPresets(), api.keyStatus()]);
+    [s, providers, keyStatus] = await Promise.all([api.getSettings(), api.providers(), api.keyStatus()]);
   });
 
-  function applyPreset(id: string) {
-    const p = presets.find((x) => x.id === id);
-    if (s && p) {
-      s.stt_base_url = p.base_url;
-      s.stt_model = p.default_model;
-    }
+  // Switching provider selects its newest model.
+  function onSttProvider() {
+    if (s && sttProvider) s.stt_model = sttProvider.stt_models[0];
+  }
+
+  function onLlmProvider() {
+    if (s && llmProvider) s.llm_model = llmProvider.llm_models[0].id;
+    syncEffort();
+  }
+
+  function syncEffort() {
+    if (!s) return;
+    const levels = effortLevels(llmProvider, s.llm_model);
+    if (levels.length > 0 && !levels.includes(s.llm_effort)) s.llm_effort = levels[0];
   }
 
   async function saveKey(provider: string) {
@@ -107,7 +114,7 @@
 {#if s}
   <section>
     <h2>Clés API</h2>
-    {#each PROVIDERS as p}
+    {#each providers as p}
       <div class="key">
         <span class="label">{p.label}</span>
         <span>{keyStatus[p.id] ? "✓ enregistrée" : "✗ absente"}</span>
@@ -122,12 +129,13 @@
   <section>
     <h2>Transcription</h2>
     <label>Fournisseur
-      <select bind:value={s.stt_preset} onchange={() => applyPreset(s!.stt_preset)}>
-        {#each presets as p}<option value={p.id}>{p.label}</option>{/each}
+      <select bind:value={s.stt_provider} onchange={onSttProvider}>
+        {#each sttProviders as p}<option value={p.id}>{p.label}</option>{/each}
       </select>
     </label>
-    <label>URL <input bind:value={s.stt_base_url} /></label>
-    <label>Modèle <input bind:value={s.stt_model} /></label>
+    {#key s.stt_provider}
+      <label>Modèle <ModelPicker models={sttProvider?.stt_models ?? []} bind:value={s.stt_model} /></label>
+    {/key}
   </section>
 
   <section>
@@ -139,12 +147,21 @@
         <option value="formatted">Mis en forme selon l'application</option>
       </select>
     </label>
-    <label>Modèle Claude <input bind:value={s.llm_model} /></label>
-    <label>Effort
-      <select bind:value={s.llm_effort}>
-        <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+    <label>Fournisseur
+      <select bind:value={s.llm_provider} onchange={onLlmProvider}>
+        {#each llmProviders as p}<option value={p.id}>{p.label}</option>{/each}
       </select>
     </label>
+    {#key s.llm_provider}
+      <label>Modèle <ModelPicker models={llmProvider?.llm_models.map((m) => m.id) ?? []} bind:value={s.llm_model} onchange={syncEffort} /></label>
+    {/key}
+    {#if efforts.length > 0}
+      <label>Effort
+        <select bind:value={s.llm_effort}>
+          {#each efforts as e}<option value={e}>{e}</option>{/each}
+        </select>
+      </label>
+    {/if}
   </section>
 
   <section>

@@ -35,8 +35,8 @@ fn main() {
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
             let hook_cfg = Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
-            let needs_setup = secrets::get_key(&settings.stt_preset).is_none()
-                || (settings.level != Level::Raw && secrets::get_key("anthropic").is_none());
+            let needs_setup = secrets::get_key(&settings.stt_provider).is_none()
+                || (settings.level != Level::Raw && secrets::get_key(&settings.llm_provider).is_none());
             let svc = Arc::new(Services {
                 app: app.handle().clone(),
                 db: Mutex::new(db),
@@ -104,7 +104,7 @@ fn main() {
             commands::set_api_key,
             commands::test_providers,
             commands::capture_key,
-            commands::stt_presets,
+            commands::providers,
             commands::overlay_dismiss,
             commands::open_history,
         ])

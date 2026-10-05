@@ -9,7 +9,6 @@ use scribe_core::prompt::CorrectionPrompt;
 
 use crate::http::{map_send_error, map_status};
 
-pub const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 
 pub struct AnthropicCorrector {
@@ -17,7 +16,8 @@ pub struct AnthropicCorrector {
     base_url: String,
     api_key: String,
     model: String,
-    effort: String,
+    /// Sent only when set and the model accepts it.
+    effort: Option<String>,
 }
 
 fn supports_effort(model: &str) -> bool {
@@ -33,7 +33,7 @@ impl AnthropicCorrector {
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         model: impl Into<String>,
-        effort: impl Into<String>,
+        effort: Option<String>,
         timeout: Duration,
     ) -> Result<Self, ProviderError> {
         let client = reqwest::Client::builder().timeout(timeout).build().map_err(|e| ProviderError::Config(e.to_string()))?;
@@ -42,7 +42,7 @@ impl AnthropicCorrector {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
-            effort: effort.into(),
+            effort,
         })
     }
 
@@ -53,8 +53,8 @@ impl AnthropicCorrector {
             "system": [{ "type": "text", "text": prompt.system, "cache_control": { "type": "ephemeral" } }],
             "messages": [{ "role": "user", "content": prompt.user }],
         });
-        if supports_effort(&self.model) {
-            body["output_config"] = json!({ "effort": self.effort });
+        if let Some(effort) = self.effort.as_deref().filter(|_| supports_effort(&self.model)) {
+            body["output_config"] = json!({ "effort": effort });
         }
         if supports_server_fallback(&self.model) {
             body["fallbacks"] = json!("default");
@@ -114,7 +114,7 @@ mod tests {
     }
 
     fn corrector(server: &MockServer, model: &str) -> AnthropicCorrector {
-        AnthropicCorrector::new(server.uri(), "k", model, "low", Duration::from_secs(5)).unwrap()
+        AnthropicCorrector::new(server.uri(), "k", model, Some("low".into()), Duration::from_secs(5)).unwrap()
     }
 
     async fn last_body(server: &MockServer) -> serde_json::Value {
