@@ -88,7 +88,8 @@ export type OverlayEvent =
   | { kind: "toast"; level: ToastLevel; message: string; preview: string | null; dictation_id: number | null };
 
 type Result<T> = { Ok: T } | { Err: string };
-export interface ProviderTest { stt: Result<string>; llm: Result<string> }
+/** Each call's duration in ms or its error; `llm` is null at the raw level (no correction tested). */
+export interface ProviderTest { stt: Result<number>; llm: Result<number> | null }
 
 export const api = {
   listDictations: (query: string | null, limit = 50, offset = 0) =>

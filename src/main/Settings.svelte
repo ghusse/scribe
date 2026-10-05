@@ -2,10 +2,12 @@
   import { onDestroy, onMount, tick } from "svelte";
   import { api, effortLevels, type Provider, type ProviderTest, type Settings } from "../lib/api";
   import { keyName } from "../lib/keys";
-  import { editAction, staleGuard, testSignature, type SaveState } from "../lib/autosave";
-  import { checkNumbers, formLabel, NUMBER_FIELDS, parseNumber, type NumberFieldId } from "../lib/validation";
-  import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, pendingSummary, swallowsKey, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
-  import { canSaveKey, deleteKeyQuestion, keyPlaceholder, keyState, keyUsage, missingKeys, unsavedDraftMessage, unsavedDrafts } from "../lib/apiKeys";
+  import { editAction, SAVED_FADE_MS, staleGuard, statusView, testSignature, type SaveState } from "../lib/autosave";
+  import { checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, retentionOptions, type NumberFieldId } from "../lib/validation";
+  import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, normalizeLock, pendingSummary, swallowsKey, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
+  import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts, type KeyRole } from "../lib/apiKeys";
+  import { testLine, translateProviderError } from "../lib/providerTest";
+  import { effortLabel, HOTKEY_HELP, KEYS_HELP, LEVEL_OPTIONS, RAW_LEVEL_NOTE } from "../lib/settingsCopy";
   import ModelPicker from "./ModelPicker.svelte";
 
   // App keeps this view mounted while another tab is shown (so nothing typed here is lost)
@@ -28,6 +30,10 @@
   let usage = $derived(s ? keyUsage(s) : {});
   let missing = $derived(s ? missingKeys(s, keyStatus) : []);
   const keyStateOf = (id: string) => (s ? keyState(id, s, keyStatus) : "unconfigured");
+  let keyRows = $derived(splitProviders(providers, usage));
+  const labelOf = (id: string) => providers.find((p) => p.id === id)?.label ?? id;
+  let banner = $derived(setupBannerParts(missing, labelOf));
+  let raw = $derived(s?.level === "raw");
 
   // Autosave: every change is persisted ~500 ms after the last edit; the pill shows the outcome.
   // Number fields and the hand-typed model id only change `s` when committed (blur or Entrée).
@@ -39,6 +45,11 @@
   let inFlight: Promise<void> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let numberIssue = $derived(s ? checkNumbers(s) : null);
+  // « ✓ Réglages enregistrés » fades out after SAVED_FADE_MS; errors stay until fixed.
+  let flashing = $state(false);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  let showDetails = $state(false);
+  let bar = $derived(statusView(saveState, saveError, flashing));
   $effect(() => {
     status = saveState;
   });
@@ -47,10 +58,11 @@
     loadError = null;
     try {
       const [st, pr, ks] = await Promise.all([api.getSettings(), api.providers(), api.keyStatus()]);
-      lastSaved = lastAttempted = JSON.stringify(st);
+      const shown = normalizeLock(st); // before lastSaved: showing it is not an edit
+      lastSaved = lastAttempted = JSON.stringify(shown);
       providers = pr;
       keyStatus = ks;
-      s = st;
+      s = shown;
     } catch (e) {
       loadError = String(e);
     }
@@ -121,6 +133,9 @@
         saveState = "saved";
         saveError = null;
         savedFlash++;
+        flashing = true;
+        clearTimeout(flashTimer);
+        flashTimer = setTimeout(() => (flashing = false), SAVED_FADE_MS);
       } catch (e) {
         saveState = "failed";
         saveError = String(e);
@@ -132,6 +147,13 @@
     })();
     inFlight = run;
     return run;
+  }
+
+  // « Réessayer »: send again the payload that failed (flush never retries it by itself).
+  function retrySave() {
+    lastAttempted = "";
+    showDetails = false;
+    flush();
   }
 
   // ---- API keys: saved explicitly, one row at a time. ----
@@ -191,6 +213,16 @@
   };
 
   const autofocus = (node: HTMLElement) => node.focus();
+
+  // « Ajouter la clé » (banner / inline warning): bring the provider's key field into view.
+  let othersOpen = $state(false);
+  async function focusKey(id: string) {
+    if (keyRows.others.some((p) => p.id === id)) othersOpen = true;
+    if (confirmDelete === id) confirmDelete = null;
+    await tick();
+    keyInputs[id]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    keyInputs[id]?.focus({ preventScroll: true });
+  }
 
   // ---- Provider test: runs on what is displayed, once saved. ----
   let test = $state<ProviderTest | null>(null);
@@ -301,113 +333,100 @@
     if (!active && capturing) cancelCapture();
   });
 
-  const show = (r: { Ok: string } | { Err: string }) => ("Ok" in r ? `✓ ${r.Ok}` : `✗ ${r.Err}`);
+  let testLines = $derived(
+    test && s
+      ? [
+          testLine("Transcription", sttProvider?.label ?? s.stt_provider, s.stt_model, test.stt),
+          testLine("Correction", llmProvider?.label ?? s.llm_provider, s.llm_model, test.llm),
+        ]
+      : [],
+  );
+  let errorSummary = $derived(error ? translateProviderError(error, null) : null);
 </script>
 
 {#snippet numberField(id: NumberFieldId, value: number, set: (n: number) => void)}
   {@const f = NUMBER_FIELDS[id]}
-  <label>{formLabel(f)}
-    <input type="number" min={f.min} max={f.max} step={f.integer ? 1 : "any"} {value} aria-invalid={numberIssue?.field === id}
-      onchange={(e) => set(parseNumber(e.currentTarget.value))} />
+  <label class="field">
+    <span>{f.label}</span>
+    <span class="num">
+      <input type="number" min={f.min} max={f.max} step="1" {value} aria-invalid={numberIssue?.field === id} aria-describedby="help-{id}"
+        onchange={(e) => set(parseNumber(e.currentTarget.value))} />
+      <span class="unit">{f.unit}</span>
+    </span>
+    <span class="help" id="help-{id}">{fieldHelp(f)}</span>
   </label>
 {/snippet}
 
 {#snippet hotkeyButton(role: HotkeyRole)}
   <button onclick={() => (capturing === role ? cancelCapture() : capture(role))}
+    aria-label={capturing === role ? "Annuler la capture" : role === "trigger" ? "Changer la touche de déclenchement" : "Changer la touche de verrouillage"}
     onkeydown={(e) => hotkeyKeydown(e, role)} onkeyup={hotkeyKeyup} disabled={(capturing !== null && capturing !== role) || pendingAssign !== null}>
     {capturing === role ? "Annuler" : "Changer"}
   </button>
 {/snippet}
 
+{#snippet keyLine(id: string, role: KeyRole)}
+  {#if keyStatus[id]}
+    <p class="key-line ok">✓ Clé {labelOf(id)} enregistrée</p>
+  {:else}
+    <p class="key-line warn">{missingKeyWarning(labelOf(id), role)} <button type="button" class="link" onclick={() => focusKey(id)}>Ajouter la clé</button></p>
+  {/if}
+{/snippet}
+
+{#snippet keyRow(p: { id: string; label: string })}
+  {@const st = keyStateOf(p.id)}
+  <form class="key" onsubmit={(e) => { e.preventDefault(); saveKey(p.id); }}>
+    <span class="who">
+      <span class="label">{p.label}</span>
+      <span class="status {st}">{KEY_STATE_LABELS[st]}</span>
+      {#if usage[p.id]}<span class="usage">utilisée pour : {rolesText(usage[p.id])}</span>{/if}
+    </span>
+    {#if confirmDelete === p.id}
+      <span class="confirm">{deleteKeyQuestion(p.label)}</span>
+      <span class="actions">
+        <button type="button" class="danger" onclick={() => deleteKey(p.id)} onkeydown={escCancelsDelete(p.id)}>Supprimer</button>
+        <button type="button" onclick={() => cancelDelete(p.id)} onkeydown={escCancelsDelete(p.id)} use:autofocus>Annuler</button>
+      </span>
+    {:else}
+      <input type="password" placeholder={keyPlaceholder(keyStatus[p.id])} aria-label="Clé {p.label}" bind:value={keyDrafts[p.id]} bind:this={keyInputs[p.id]} />
+      <span class="actions">
+        <button type="submit" class:primary={canSaveKey(keyDrafts[p.id])} disabled={!canSaveKey(keyDrafts[p.id]) || keyBusy[p.id]}>Enregistrer</button>
+        {#if keyStatus[p.id]}
+          <button type="button" class="danger" disabled={keyBusy[p.id]} onclick={() => (confirmDelete = p.id)} bind:this={deleteButtons[p.id]}>Supprimer</button>
+        {/if}
+      </span>
+    {/if}
+    {#if keyFeedback[p.id]}
+      <span class="key-feedback" class:ok={keyFeedback[p.id].ok} class:error={!keyFeedback[p.id].ok} role="status">{keyFeedback[p.id].text}</span>
+    {/if}
+  </form>
+{/snippet}
+
 {#if s}
-  <section>
-    <h2>Clés API</h2>
-    {#each providers as p (p.id)}
-      <form class="key" onsubmit={(e) => { e.preventDefault(); saveKey(p.id); }}>
-        <span class="label">{p.label}</span>
-        <span class="status">{keyStatus[p.id] ? "✓ enregistrée" : "✗ absente"}</span>
-        {#if confirmDelete === p.id}
-          <span class="confirm">{deleteKeyQuestion(p.label)}</span>
-          <span class="actions">
-            <button type="button" class="danger" onclick={() => deleteKey(p.id)} onkeydown={escCancelsDelete(p.id)}>Supprimer</button>
-            <button type="button" onclick={() => cancelDelete(p.id)} onkeydown={escCancelsDelete(p.id)} use:autofocus>Annuler</button>
-          </span>
-        {:else}
-          <input type="password" placeholder={keyPlaceholder(keyStatus[p.id])} bind:value={keyDrafts[p.id]} bind:this={keyInputs[p.id]} />
-          <span class="actions">
-            <button type="submit" class:primary={canSaveKey(keyDrafts[p.id])} disabled={!canSaveKey(keyDrafts[p.id]) || keyBusy[p.id]}>Enregistrer</button>
-            {#if keyStatus[p.id]}
-              <button type="button" class="danger" disabled={keyBusy[p.id]} onclick={() => (confirmDelete = p.id)} bind:this={deleteButtons[p.id]}>Supprimer</button>
-            {/if}
-          </span>
-        {/if}
-        {#if keyFeedback[p.id]}
-          <span class="key-feedback" class:ok={keyFeedback[p.id].ok} class:error={!keyFeedback[p.id].ok} role="status">{keyFeedback[p.id].text}</span>
-        {/if}
-      </form>
-    {/each}
-    <button onclick={runTest} disabled={testing}>{testing ? "Test…" : "Tester la configuration"}</button>
-    {#if testBlock}
-      <p class="inline-confirm" role="status">
-        {testBlock}
-        <button class="primary" onclick={saveDraftsAndTest}>Enregistrer</button>
-        <button onclick={() => (testBlock = null)}>Annuler</button>
-      </p>
-    {/if}
-    {#if test}<p>Transcription : {show(test.stt)} — Correction : {show(test.llm)}</p>{/if}
-    {#if error}<p class="error">{error}</p>{/if}
-  </section>
-
-  <section>
-    <h2>Transcription</h2>
-    <label>Fournisseur
-      <select bind:value={s.stt_provider} onchange={onSttProvider}>
-        {#each sttProviders as p}<option value={p.id}>{p.label}</option>{/each}
-      </select>
-    </label>
-    {#key s.stt_provider}
-      <label>Modèle <ModelPicker models={sttProvider?.stt_models ?? []} bind:value={s.stt_model} /></label>
-    {/key}
-  </section>
-
-  <section>
-    <h2>Correction</h2>
-    <label>Niveau
-      <select bind:value={s.level}>
-        <option value="raw">Brut (aucune correction)</option>
-        <option value="clean">Nettoyé (vocabulaire, ponctuation, hésitations)</option>
-        <option value="formatted">Mis en forme selon l'application</option>
-      </select>
-    </label>
-    <label>Fournisseur
-      <select bind:value={s.llm_provider} onchange={onLlmProvider}>
-        {#each llmProviders as p}<option value={p.id}>{p.label}</option>{/each}
-      </select>
-    </label>
-    {#key s.llm_provider}
-      <label>Modèle <ModelPicker models={llmProvider?.llm_models.map((m) => m.id) ?? []} bind:value={s.llm_model} onchange={syncEffort} /></label>
-    {/key}
-    {#if efforts.length > 0}
-      <label>Effort
-        <select bind:value={s.llm_effort}>
-          {#each efforts as e}<option value={e}>{e}</option>{/each}
-        </select>
-      </label>
-    {/if}
-  </section>
+  {#if banner.length > 0}
+    <div class="banner" role="note">
+      Pour commencer, ajoutez la clé
+      {#each banner as part, i}{#if i > 0}{i === banner.length - 1 ? " et " : ", "}{/if}<button type="button" class="link" onclick={() => focusKey(missing[i].provider)}>{part.label}</button> ({part.roles}){/each}.
+    </div>
+  {/if}
 
   <section>
     <h2>Raccourci</h2>
-    <div class="key hotkey">
-      <span class="label">Déclenchement</span>
-      <strong>{capturing === "trigger" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.trigger_vk)}</strong>
-      {@render hotkeyButton("trigger")}
-    </div>
-    <div class="key hotkey">
-      <span class="label">Verrouillage (maintenir + touche)</span>
-      <strong>{capturing === "lock" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.lock_vk)}</strong>
-      {@render hotkeyButton("lock")}
-      <button onclick={() => (s!.lock_vk = 0)} disabled={capturing !== null || pendingAssign !== null}>Aucune</button>
+    <p class="help">{HOTKEY_HELP}</p>
+    <div class="hotkeys">
+      <div class="hotkey">
+        <span class="label">Déclenchement</span>
+        <strong>{capturing === "trigger" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.trigger_vk)}</strong>
+        {@render hotkeyButton("trigger")}
+      </div>
+      <label class="check"><input type="checkbox" bind:checked={s.gesture.double_tap_enabled} /> Double-tap pour verrouiller</label>
+      <div class="hotkey">
+        <span class="label">Touche de verrouillage (pendant le maintien)</span>
+        <strong>{capturing === "lock" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.lock_vk)}</strong>
+        {@render hotkeyButton("lock")}
+        <button onclick={() => (s!.lock_vk = 0)} aria-label="Désactiver la touche de verrouillage"
+          disabled={s.lock_vk === 0 || capturing !== null || pendingAssign !== null}>Désactiver</button>
+      </div>
     </div>
     {#if pendingAssign}
       {@const sum = pendingSummary(pendingAssign.keys, { trigger_vk: s.trigger_vk, lock_vk: s.lock_vk })}
@@ -418,27 +437,112 @@
       </p>
     {/if}
     {#if hotkeyNote}<p class="note" role="status">{hotkeyNote}</p>{/if}
-    <label><input type="checkbox" bind:checked={s.gesture.double_tap_enabled} /> Double-tap pour verrouiller</label>
-    <label><input type="checkbox" bind:checked={s.gesture.lock_key_enabled} /> Touche de verrouillage active</label>
-    {@render numberField("hold_threshold_ms", s.gesture.hold_threshold_ms, (n) => (s!.gesture.hold_threshold_ms = n))}
-    {@render numberField("double_tap_window_ms", s.gesture.double_tap_window_ms, (n) => (s!.gesture.double_tap_window_ms = n))}
+  </section>
+
+  <section>
+    <h2>Correction</h2>
+    <label>Niveau de correction
+      <select bind:value={s.level}>
+        {#each LEVEL_OPTIONS as o}<option value={o.value}>{o.label}</option>{/each}
+      </select>
+    </label>
+  </section>
+
+  <section>
+    <h2>Fournisseurs et modèles</h2>
+    <h3>Transcription</h3>
+    <label>Fournisseur
+      <select bind:value={s.stt_provider} onchange={onSttProvider}>
+        {#each sttProviders as p}<option value={p.id}>{p.label}</option>{/each}
+      </select>
+    </label>
+    {@render keyLine(s.stt_provider, "transcription")}
+    {#key s.stt_provider}
+      <label>Modèle <ModelPicker models={sttProvider?.stt_models ?? []} bind:value={s.stt_model} /></label>
+    {/key}
+
+    <h3>Correction</h3>
+    {#if raw}<p class="note indent">{RAW_LEVEL_NOTE}</p>{/if}
+    <fieldset disabled={raw} class:off={raw}>
+      <label>Fournisseur
+        <select bind:value={s.llm_provider} onchange={onLlmProvider}>
+          {#each llmProviders as p}<option value={p.id}>{p.label}</option>{/each}
+        </select>
+      </label>
+      {#if !raw}{@render keyLine(s.llm_provider, "correction")}{/if}
+      {#key s.llm_provider}
+        <label>Modèle <ModelPicker models={llmProvider?.llm_models.map((m) => m.id) ?? []} bind:value={s.llm_model} onchange={syncEffort} /></label>
+      {/key}
+      {#if efforts.length > 0}
+        <label>Réflexion du modèle
+          <select bind:value={s.llm_effort}>
+            {#each efforts as e}<option value={e}>{effortLabel(e)}</option>{/each}
+          </select>
+        </label>
+      {/if}
+    </fieldset>
+
+    <div class="test">
+      <button onclick={runTest} disabled={testing}>{testing ? "Test en cours…" : raw ? "Tester la transcription" : "Tester transcription et correction"}</button>
+      {#if testBlock}
+        <p class="inline-confirm" role="status">
+          {testBlock}
+          <button class="primary" onclick={saveDraftsAndTest}>Enregistrer</button>
+          <button onclick={() => (testBlock = null)}>Annuler</button>
+        </p>
+      {/if}
+      <div class="test-result" role="status">
+        {#each testLines as l}
+          <p class:ok={l.ok} class:fail={!l.ok}><span class="title">{l.title}</span> : {l.text}</p>
+          {#if l.raw}<details><summary>Détails</summary><pre>{l.raw}</pre></details>{/if}
+        {/each}
+        {#if error}
+          <p class="fail">{errorSummary ? `✗ Test impossible : ${errorSummary}` : error}</p>
+          {#if errorSummary}<details><summary>Détails</summary><pre>{error}</pre></details>{/if}
+        {/if}
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Clés API</h2>
+    <p class="help">{KEYS_HELP}</p>
+    {#each keyRows.used as p (p.id)}{@render keyRow(p)}{/each}
+    {#if keyRows.others.length > 0}
+      <details class="others" bind:open={othersOpen}>
+        <summary>Autres fournisseurs</summary>
+        {#each keyRows.others as p (p.id)}{@render keyRow(p)}{/each}
+      </details>
+    {/if}
   </section>
 
   <section>
     <h2>Avancé</h2>
+    {@render numberField("hold_threshold_ms", s.gesture.hold_threshold_ms, (n) => (s!.gesture.hold_threshold_ms = n))}
+    {@render numberField("double_tap_window_ms", s.gesture.double_tap_window_ms, (n) => (s!.gesture.double_tap_window_ms = n))}
     {@render numberField("restore_delay_ms", s.restore_delay_ms, (n) => (s!.restore_delay_ms = n))}
-    {@render numberField("audio_retention_days", s.audio_retention_days, (n) => (s!.audio_retention_days = n))}
+    <label class="field">
+      <span>{NUMBER_FIELDS.audio_retention_days.label}</span>
+      <select class="short" bind:value={s.audio_retention_days}>
+        {#each retentionOptions(s.audio_retention_days) as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+      </select>
+    </label>
     {@render numberField("max_recording_min", s.max_recording_ms / 60000, (n) => (s!.max_recording_ms = n * 60000))}
   </section>
 
-  <div class="save-status {saveState}" role="status" aria-live="polite">
-    {#if saveState === "pending" || saveState === "saving"}
-      <span class="spinner"></span> Enregistrement…
-    {:else if saveState === "saved"}
-      {#key savedFlash}<span class="check">✓</span>{/key} Réglages enregistrés
-    {:else}
-      ⚠ Non enregistré : {saveError}
+  <div class="statusbar {bar.tone}" class:hidden={!bar.visible}>
+    <span class="msg" role="status">
+      {#if !bar.alert && bar.visible}
+        {#if bar.tone === "muted"}<span class="spinner"></span>{:else}{#key savedFlash}<span class="tick">✓</span>{/key}{/if}
+        {bar.tone === "muted" ? bar.text : bar.text.replace(/^✓ /, "")}
+      {/if}
+    </span>
+    <span class="msg alert" role="alert" title={bar.alert ? bar.text : undefined}>{bar.alert ? bar.text : ""}</span>
+    {#if bar.details}
+      <button type="button" class="small" aria-expanded={showDetails} onclick={() => (showDetails = !showDetails)}>Détails</button>
     {/if}
+    {#if bar.retry}<button type="button" class="small primary" onclick={retrySave}>Réessayer</button>{/if}
+    {#if bar.details && showDetails}<pre class="details">{bar.details}</pre>{/if}
   </div>
 {:else if loadError}
   <section class="load-error" role="alert">
@@ -450,41 +554,100 @@
 {/if}
 
 <style>
-  section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
   h2 { font-size: 15px; margin: 0 0 10px; }
+  h3 { font-size: 14px; margin: 16px 0 4px; color: var(--muted); font-weight: 600; }
+  h2 + h3 { margin-top: 0; }
+  .help { font-size: 13px; color: var(--muted); margin: -4px 0 10px; }
   /* Two columns everywhere: label text, then the control stretched over the rest of the row. */
-  label { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: center; column-gap: 12px; margin: 8px 0; font-size: 14px; }
+  label { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: center; column-gap: 12px; margin: 8px 0; }
   label > input:not([type="checkbox"]), label > select { width: 100%; box-sizing: border-box; }
-  label:has(> input[type="checkbox"]) { display: flex; gap: 8px; padding-left: 232px; }
-  .key { display: grid; grid-template-columns: 220px 110px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; margin: 8px 0; font-size: 14px; }
-  .key.hotkey { grid-template-columns: 220px minmax(0, 1fr) auto auto; }
+  label.check { display: flex; gap: 8px; }
+  fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  fieldset.off { opacity: 0.55; }
+  fieldset:disabled :global(select), fieldset:disabled :global(input) { cursor: not-allowed; }
+  .indent, .key-line { margin: -2px 0 8px 232px; }
+  .key-line { font-size: 13px; }
+  .key-line.ok { color: var(--muted); }
+  .key-line.warn { color: var(--danger); }
+
+  /* Raccourci: one grid for both rows so the « Changer » buttons line up. */
+  .hotkeys { display: grid; grid-template-columns: 220px minmax(0, 1fr) auto auto; align-items: center; gap: 8px 12px; margin: 8px 0; }
+  .hotkey { display: contents; }
+  .hotkey > button:first-of-type { grid-column: 3; }
+  .hotkeys label.check { grid-column: 2 / -1; margin: 0; }
+  .hotkeys button:disabled, .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Number fields: short input, unit suffix, grey help below. */
+  label.field { row-gap: 2px; }
+  .num { display: flex; align-items: center; gap: 6px; }
+  .num input { width: 8ch; box-sizing: content-box; }
+  .unit { color: var(--muted); }
+  label.field .help { grid-column: 2; font-size: 12px; margin: 0; }
+  label > select.short { width: auto; justify-self: start; min-width: 14ch; }
+
+  /* API keys: who (name, status, usage) | field | buttons. */
+  .key { display: grid; grid-template-columns: 220px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; margin: 8px 0; }
+  .who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .usage { flex-basis: 100%; font-size: 12px; color: var(--muted); }
   .key input { width: 100%; box-sizing: border-box; }
-  .actions button:disabled, .key.hotkey button:disabled { opacity: 0.5; cursor: not-allowed; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; }
   .confirm { color: var(--danger); font-weight: 600; }
   .key-feedback { grid-column: 2 / -1; font-size: 13px; margin-top: 4px; }
-  .key-feedback.ok { color: #16a34a; }
-  .status { color: var(--muted); }
+  .key-feedback.ok { color: var(--success); }
+  .key-feedback.error { color: var(--danger); }
+  .status { font-size: 13px; color: var(--muted); }
+  .status.saved { color: var(--success); }
+  .status.required { color: var(--danger); font-weight: 600; }
+  details.others { margin-top: 4px; }
+  details.others > summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+
+  .banner { margin-bottom: 12px; padding: 10px 14px; border-radius: 12px; font-size: 14px; border: 1px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+  .link { border: 0; background: none; padding: 0; color: var(--link); font-weight: 600; text-decoration: underline; cursor: pointer; }
+
+  .test { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .test-result p { margin: 8px 0 0; }
+  .test-result .ok { color: var(--success); }
+  .test-result .fail { color: var(--danger); }
+  .test-result .title { font-weight: 600; color: var(--text); }
+  details summary { cursor: pointer; }
+  .test-result details { font-size: 13px; color: var(--muted); margin: 2px 0 0; }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; margin: 4px 0 0; }
+
   :global(input[aria-invalid="true"]) { border-color: var(--danger); outline-color: var(--danger); }
-  .inline-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; margin: 8px 0; }
+  .inline-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
   .note { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
-  @media (max-width: 640px) {
-    label, .key { grid-template-columns: 1fr; row-gap: 4px; }
-    label:has(> input[type="checkbox"]) { padding-left: 0; }
-    .key-feedback { grid-column: 1; }
-    .actions { justify-content: flex-start; }
-  }
-  .error { color: var(--danger); }
   .loading { color: var(--muted); font-size: 14px; }
   .load-error p { margin: 0 0 10px; color: var(--danger); font-size: 14px; }
-  .save-status { position: fixed; right: 16px; bottom: 16px; display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100vw - 32px));
-    padding: 8px 14px; border-radius: 999px; font-size: 13px; background: var(--card); border: 1px solid var(--border);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); color: var(--muted); transition: color 0.2s, border-color 0.2s; }
-  .save-status.saved { color: #16a34a; border-color: #86efac; }
-  .save-status.invalid, .save-status.failed { color: var(--danger); border-color: var(--danger); border-radius: 12px; }
-  .check { display: inline-block; font-weight: 700; animation: pop 0.45s ease-out; }
-  .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+
+  /* Sticky bar at the bottom of the view: the content never scrolls under it. */
+  .statusbar { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 30px;
+    margin: 0 -16px -16px; padding: 8px 16px; background: var(--card); border-top: 1px solid var(--border); font-size: 13px;
+    color: var(--muted); transition: opacity 0.4s; }
+  .statusbar.hidden { opacity: 0; pointer-events: none; }
+  .statusbar.success { color: var(--success); }
+  .statusbar.danger { color: var(--danger); border-top-color: var(--danger); }
+  .statusbar .msg { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; white-space: nowrap; }
+  .statusbar .msg.alert { display: block; overflow: hidden; text-overflow: ellipsis; }
+  .statusbar .msg:empty { display: none; }
+  .statusbar button.small { padding: 3px 10px; font-size: 13px; }
+  .statusbar .details { flex-basis: 100%; color: var(--text); max-height: 120px; overflow: auto; }
+  .tick { display: inline-block; font-weight: 700; animation: pop 0.45s ease-out; }
+  .spinner { width: 12px; height: 12px; flex: none; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.35); opacity: 1; } 100% { transform: scale(1); } }
   @keyframes spin { to { transform: rotate(360deg); } }
-  section:last-of-type { margin-bottom: 64px; }
+
+  @media (max-width: 640px) {
+    label { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+    label.field .help { grid-column: 1; }
+    .indent, .key-line { margin-left: 0; }
+    .hotkeys { grid-template-columns: minmax(0, 1fr) auto auto; }
+    .hotkey > .label, .hotkeys label.check { grid-column: 1 / -1; }
+    .hotkey > .label { margin-top: 4px; }
+    .hotkey > button:first-of-type { grid-column: 2; }
+    .key { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
+    .who { grid-column: 1 / -1; }
+    .key-feedback { grid-column: 1 / -1; }
+  }
 </style>

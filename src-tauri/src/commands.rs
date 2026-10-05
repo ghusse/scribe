@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{Emitter, State};
@@ -101,8 +101,14 @@ pub fn set_api_key(provider: String, key: String) -> Result<(), String> {
 
 #[derive(Serialize)]
 pub struct ProviderTest {
-    stt: Result<String, String>,
-    llm: Result<String, String>,
+    /// Duration of the call in ms, or the error.
+    stt: Result<u64, String>,
+    /// None when the level is raw: no correction is made, so none is tested.
+    llm: Option<Result<u64, String>>,
+}
+
+fn elapsed_ms(start: Instant) -> u64 {
+    start.elapsed().as_millis() as u64
 }
 
 /// Validates the keys with two tiny real calls (half a second of silence, a one-word correction).
@@ -112,12 +118,14 @@ pub async fn test_providers(svc: Svc<'_>) -> Result<ProviderTest, String> {
     let (stt, llm) = dictation::build_providers(&settings).map_err(err)?;
     let silence = AudioClip { samples: vec![0; (TARGET_RATE / 2) as usize], sample_rate: TARGET_RATE };
     let wav = audio::encode_wav(&silence)?;
-    let stt_result = stt.transcribe(&wav, &[]).await.map(|_| "OK".to_string()).map_err(err);
+    let start = Instant::now();
+    let stt_result = stt.transcribe(&wav, &[]).await.map(|_| elapsed_ms(start)).map_err(err);
     let llm_result = if settings.level == scribe_core::model::Level::Raw {
-        Ok("non utilisé (niveau brut)".to_string())
+        None
     } else {
         let p = CorrectionPrompt { system: "Réponds <output>ok</output>.".into(), user: "<transcript>test</transcript>".into() };
-        llm.correct(&p).await.map(|_| "OK".to_string()).map_err(err)
+        let start = Instant::now();
+        Some(llm.correct(&p).await.map(|_| elapsed_ms(start)).map_err(err))
     };
     Ok(ProviderTest { stt: stt_result, llm: llm_result })
 }
