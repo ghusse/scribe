@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
+use scribe_core::chord::{ChordRecorder, Recorded};
 use scribe_core::focus::FocusDetector;
 use scribe_core::insert::{Clipboard, KeySender};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
-use scribe_platform::HookConfig;
+use scribe_platform::{HookConfig, RawKey};
 
 use crate::controller::ControllerMsg;
 use crate::overlay::Overlay;
@@ -76,45 +78,69 @@ impl Services {
 }
 
 /// One pending « press the new hotkey » request. Each capture gets a token, so a capture that ends
-/// (timeout, superseded) never clears a newer capture started meanwhile.
-#[derive(Default)]
+/// (timeout, superseded) never clears a newer capture started meanwhile. While a capture is pending the
+/// hook swallows every key (`HookConfig::capturing`).
 pub struct KeyCapture {
-    /// Last token handed out, and the pending capture (its token and sender).
+    /// Last token handed out, and the pending capture.
     state: Mutex<(u64, Option<PendingCapture>)>,
+    hook: Arc<HookConfig>,
 }
 
-type PendingCapture = (u64, Sender<u32>);
+struct PendingCapture {
+    token: u64,
+    recorder: ChordRecorder,
+    tx: Sender<Vec<u32>>,
+}
 
 impl KeyCapture {
+    pub fn new(hook: Arc<HookConfig>) -> Self {
+        Self { state: Mutex::new((0, None)), hook }
+    }
+
+    fn set(&self, state: &mut (u64, Option<PendingCapture>), pending: Option<PendingCapture>) {
+        state.1 = pending;
+        self.hook.capturing.store(state.1.is_some(), Ordering::Relaxed);
+    }
+
     /// Starts a capture, superseding any pending one (whose receiver then disconnects).
-    pub fn begin(&self) -> (u64, Receiver<u32>) {
+    pub fn begin(&self) -> (u64, Receiver<Vec<u32>>) {
         let (tx, rx) = mpsc::channel();
         let mut state = self.state.lock().unwrap();
         state.0 += 1;
         let token = state.0;
-        state.1 = Some((token, tx));
+        self.set(&mut state, Some(PendingCapture { token, recorder: ChordRecorder::new(), tx }));
         (token, rx)
     }
 
-    /// Hands a key press to the pending capture, if any. Returns whether it was captured.
-    pub fn offer(&self, vk: u32) -> bool {
-        match self.state.lock().unwrap().1.take() {
-            Some((_, tx)) => tx.send(vk).is_ok(),
-            None => false,
-        }
+    /// Hands a key event to the pending capture, if any. Returns whether it was taken (then it is not a
+    /// gesture). The capture sends the combination once all keys are released, or an empty one on Échap.
+    pub fn offer(&self, key: RawKey) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let Some(pending) = state.1.as_mut() else {
+            return false;
+        };
+        let done = match pending.recorder.feed(key.vk, key.down) {
+            Recorded::Pending => return true,
+            Recorded::Done(keys) => keys,
+            Recorded::Cancelled => Vec::new(),
+        };
+        let sent = pending.tx.send(done).is_ok();
+        self.set(&mut state, None);
+        sent
     }
 
     /// Ends the capture `token`, leaving a newer one alone.
     pub fn finish(&self, token: u64) {
         let mut state = self.state.lock().unwrap();
-        if matches!(state.1, Some((t, _)) if t == token) {
-            state.1 = None;
+        if matches!(&state.1, Some(p) if p.token == token) {
+            self.set(&mut state, None);
         }
     }
 
     /// Ends the pending capture early: its waiter returns None at once.
     pub fn cancel(&self) {
-        self.state.lock().unwrap().1 = None;
+        let mut state = self.state.lock().unwrap();
+        self.set(&mut state, None);
     }
 
     #[cfg(test)]
@@ -122,12 +148,12 @@ impl KeyCapture {
         self.state.lock().unwrap().1.is_some()
     }
 
-    /// Waits up to `timeout` for the next key press.
-    pub fn wait(&self, timeout: Duration) -> Option<u32> {
+    /// Waits up to `timeout` for a combination: None on timeout or cancel, empty on Échap.
+    pub fn wait(&self, timeout: Duration) -> Option<Vec<u32>> {
         let (token, rx) = self.begin();
-        let key = rx.recv_timeout(timeout).ok();
+        let keys = rx.recv_timeout(timeout).ok();
         self.finish(token);
-        key
+        keys
     }
 }
 
@@ -157,60 +183,92 @@ mod tests {
         assert!(now.ends_with('Z') && now.len() == "2026-10-05T12:00:00.000Z".len(), "{now}");
     }
 
+    fn kc() -> KeyCapture {
+        KeyCapture::new(Arc::new(HookConfig::new(&[0xA3], 0x20)))
+    }
+
+    fn key(vk: u32, down: bool) -> RawKey {
+        RawKey { vk, down, t_ms: 0 }
+    }
+
     #[test]
-    fn capture_receives_the_offered_key() {
-        let kc = Arc::new(KeyCapture::default());
-        assert!(!kc.offer(0x41), "nothing pending");
+    fn capture_receives_the_combination_once_all_keys_are_released() {
+        let kc = Arc::new(kc());
+        assert!(!kc.offer(key(0x41, true)), "nothing pending");
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed));
         let kc2 = kc.clone();
         let waiter = std::thread::spawn(move || kc2.wait(Duration::from_secs(5)));
         while !kc.is_pending() {
             std::thread::yield_now();
         }
-        assert!(kc.offer(0x41));
-        assert_eq!(waiter.join().unwrap(), Some(0x41));
+        assert!(kc.hook.capturing.load(Ordering::Relaxed), "the hook swallows keys during a capture");
+        for (vk, down) in [(0xA2, true), (0x41, true), (0x41, false)] {
+            assert!(kc.offer(key(vk, down)));
+            assert!(kc.is_pending());
+        }
+        assert!(kc.offer(key(0xA2, false)));
+        assert_eq!(waiter.join().unwrap(), Some(vec![0xA2, 0x41]));
         assert!(!kc.is_pending());
-        assert!(!kc.offer(0x42), "a capture takes one key only");
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed), "the keyboard works again");
+        assert!(!kc.offer(key(0x42, true)), "the capture is over");
+    }
+
+    #[test]
+    fn escape_ends_the_capture_with_an_empty_combination() {
+        let kc = kc();
+        let (_, rx) = kc.begin();
+        assert!(kc.offer(key(0xA2, true)));
+        assert!(kc.offer(key(0x1B, true)));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(vec![]));
+        assert!(!kc.is_pending());
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed));
     }
 
     #[test]
     fn capture_times_out_and_clears_itself() {
-        let kc = KeyCapture::default();
+        let kc = kc();
         let start = Instant::now();
         assert_eq!(kc.wait(Duration::from_millis(20)), None);
         assert!(start.elapsed() >= Duration::from_millis(20));
         assert!(!kc.is_pending());
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed), "a timed-out capture must not block the keyboard");
     }
 
     #[test]
     fn cancel_ends_the_pending_capture_at_once() {
-        let kc = KeyCapture::default();
+        let kc = kc();
         let (_, rx) = kc.begin();
         kc.cancel();
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_err(), "sender dropped");
         assert!(!kc.is_pending());
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed));
     }
 
     #[test]
     fn an_ending_capture_does_not_clear_a_newer_one() {
         // Two concurrent captures (settings window opened twice, double click): the first is
         // superseded and returns None, and its cleanup must not cancel the second.
-        let kc = KeyCapture::default();
+        let kc = kc();
         let (first, first_rx) = kc.begin();
         let (second, second_rx) = kc.begin();
         assert_ne!(first, second);
         assert!(first_rx.recv_timeout(Duration::from_secs(5)).is_err(), "superseded");
         kc.finish(first);
         assert!(kc.is_pending(), "the newer capture survives");
-        assert!(kc.offer(0x20));
-        assert_eq!(second_rx.recv().unwrap(), 0x20);
+        assert!(kc.hook.capturing.load(Ordering::Relaxed));
+        kc.offer(key(0x20, true));
+        assert!(kc.offer(key(0x20, false)));
+        assert_eq!(second_rx.recv().unwrap(), vec![0x20]);
         kc.finish(second);
         assert!(!kc.is_pending());
     }
 
     #[test]
-    fn offer_to_a_dropped_waiter_is_not_a_capture() {
-        let kc = KeyCapture::default();
+    fn a_combination_for_a_dropped_waiter_is_not_a_capture() {
+        let kc = kc();
         drop(kc.begin());
-        assert!(!kc.offer(0x41));
+        assert!(kc.offer(key(0x41, true)), "still pending: the key is taken");
+        assert!(!kc.offer(key(0x41, false)), "nobody receives the combination");
+        assert!(!kc.hook.capturing.load(Ordering::Relaxed));
     }
 }

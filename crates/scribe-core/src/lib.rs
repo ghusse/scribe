@@ -1,4 +1,5 @@
 //! Pure, OS-independent logic of Scribe.
+pub mod chord;
 pub mod clock;
 pub mod gesture;
 pub mod session;

@@ -1,24 +1,37 @@
 //! Decision logic of the low-level keyboard hook, kept OS-independent so it is unit-testable everywhere.
-//! `windows/hook.rs` only decodes `KBDLLHOOKSTRUCT` and calls [`KeyFilter::on_event`].
+//! `windows/hook.rs` only decodes `KBDLLHOOKSTRUCT`, calls [`KeyFilter::on_event`] and applies the decision.
+//!
+//! The trigger is a combination (`scribe_core::chord`). It is pressed when all its keys are held and no
+//! other key is (strict), and released as soon as one of its keys is. The gesture detector only sees
+//! these two edges, as if the combination were a single key.
 use std::sync::atomic::Ordering;
 
-use crate::{HookConfig, RawKey};
+use scribe_core::chord;
+use scribe_core::gesture::{KeyEvent, KeyRole};
+
+use crate::{HookConfig, HookEvent, RawKey};
 
 /// What the hook does with one keyboard event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDecision {
-    /// Event to forward to the controller (`None` for injected events, e.g. our own Ctrl+V).
-    pub key: Option<RawKey>,
+    /// Event for the controller (`None` for injected events, e.g. our own Ctrl+V).
+    pub event: Option<HookEvent>,
     /// True: the event is swallowed (not passed to the focused application).
     pub swallow: bool,
+    /// True: inject `chord::VK_MENU_MASK` (the combination holds Alt or Win, which would open a menu
+    /// when released without another key in between).
+    pub inject_mask: bool,
 }
 
-/// Tracks the trigger key so the lock key is swallowed only while the trigger is held.
 #[derive(Debug, Default)]
 pub struct KeyFilter {
-    /// The trigger vk that was down, if any. Remembering *which* vk (rather than a bool) means that
-    /// changing the trigger in the settings while it is held cannot leave a stale "held" state.
-    held_trigger: Option<u32>,
+    /// Keys physically down, as seen by the hook.
+    held: Vec<u32>,
+    /// Keys whose key-down was swallowed: their auto-repeats and key-up are swallowed too, so the
+    /// application never sees half a keystroke.
+    swallowed: Vec<u32>,
+    /// The packed combination currently pressed (trigger-down sent, trigger-up not yet).
+    active: Option<u32>,
 }
 
 impl KeyFilter {
@@ -26,10 +39,10 @@ impl KeyFilter {
         Self::default()
     }
 
-    /// `is_pressed(vk)` queries the physical key state; it is asked only before swallowing, to recover
-    /// from a lost key-up (e.g. Win+L switches to the secure desktop while the trigger is held), which
-    /// would otherwise swallow the lock key (Space) system-wide. A `&dyn` rather than a generic, so the hook
-    /// does not compile a second, untested copy of this function.
+    /// `is_pressed(vk)` queries the physical key state. A key-up can be lost (Win+L switches to the secure
+    /// desktop while keys are held): a stale « held » key would block or fake the combination, and a stale
+    /// active combination would swallow the lock key (Space) system-wide. A `&dyn` rather than a generic, so
+    /// the hook does not compile a second, untested copy of this function.
     pub fn on_event(
         &mut self,
         cfg: &HookConfig,
@@ -40,27 +53,79 @@ impl KeyFilter {
         is_pressed: &dyn Fn(u32) -> bool,
     ) -> KeyDecision {
         if injected {
-            return KeyDecision { key: None, swallow: false };
+            return KeyDecision { event: None, swallow: false, inject_mask: false };
         }
-        let trigger = cfg.trigger_vk.load(Ordering::Relaxed);
-        if vk == trigger {
-            self.held_trigger = down.then_some(vk);
-        }
-        let key = Some(RawKey { vk, down, t_ms });
+        let trigger = cfg.trigger.load(Ordering::Relaxed);
         let lock = cfg.lock_vk.load(Ordering::Relaxed);
-        let wants_swallow = lock != 0
-            && vk == lock
-            && vk != trigger
-            && self.held_trigger == Some(trigger)
-            && !cfg.paused.load(Ordering::Relaxed);
-        if !wants_swallow {
-            return KeyDecision { key, swallow: false };
+        let paused = cfg.paused.load(Ordering::Relaxed);
+        let capturing = cfg.capturing.load(Ordering::Relaxed);
+        let mut gestures = Vec::new();
+        let edge = |role, down| KeyEvent { role, down, t_ms };
+
+        // Combination changed in the settings while held, or one of its keys released unseen: end the press.
+        if let Some(active) = self.active {
+            if active != trigger
+                || chord::keys(active).any(|k| !chord::same_key(active, k, vk) && !chord::key_pressed(active, k, is_pressed))
+            {
+                self.active = None;
+                gestures.push(edge(KeyRole::Trigger, false));
+            }
         }
-        if !is_pressed(trigger) {
-            self.held_trigger = None;
-            return KeyDecision { key, swallow: false };
-        }
-        KeyDecision { key, swallow: true }
+
+        let in_trigger = chord::contains(trigger, vk);
+        let is_lock = lock != 0 && vk == lock && !in_trigger;
+        let mut inject_mask = false;
+        // A key-down for a key already held is an auto-repeat, unless its key-up was lost: then the key is
+        // physically up (the hook runs before the key state is updated) and this is a new press.
+        let repeat = down && self.held.contains(&vk) && is_pressed(vk);
+        let swallow = if repeat {
+            // No edge.
+            self.swallowed.contains(&vk)
+        } else if down {
+            if !self.held.contains(&vk) {
+                self.held.push(vk);
+            }
+            let mut swallow = capturing;
+            if in_trigger && self.active.is_none() && self.completes(trigger, vk, is_pressed) {
+                self.active = Some(trigger);
+                gestures.push(edge(KeyRole::Trigger, true));
+                if !paused && !capturing {
+                    // Modifiers pass, so the system never sees them stuck; the other keys are the hotkey's own.
+                    swallow |= !chord::is_modifier(vk);
+                    inject_mask = chord::keys(trigger).any(chord::opens_menu);
+                }
+            }
+            if is_lock {
+                gestures.push(edge(KeyRole::Lock, true));
+                swallow |= self.active.is_some() && !paused;
+            }
+            self.swallowed.retain(|&k| k != vk);
+            if swallow {
+                self.swallowed.push(vk);
+            }
+            swallow
+        } else {
+            self.held.retain(|&k| k != vk);
+            if in_trigger && self.active.take().is_some() {
+                gestures.push(edge(KeyRole::Trigger, false));
+            }
+            if is_lock {
+                gestures.push(edge(KeyRole::Lock, false));
+            }
+            let was_swallowed = self.swallowed.contains(&vk);
+            self.swallowed.retain(|&k| k != vk);
+            was_swallowed
+        };
+        KeyDecision { event: Some(HookEvent { key: RawKey { vk, down, t_ms }, gestures }), swallow, inject_mask }
+    }
+
+    /// Whether `vk` going down completes the combination: all its keys held and no other key. Held keys that
+    /// are physically up (lost key-up) are forgotten first.
+    fn completes(&mut self, trigger: u32, vk: u32, is_pressed: &dyn Fn(u32) -> bool) -> bool {
+        self.held.retain(|&k| k == vk || is_pressed(k));
+        self.swallowed.retain(|k| self.held.contains(k));
+        chord::keys(trigger).all(|k| self.held.iter().any(|&h| chord::same_key(trigger, k, h)))
+            && self.held.iter().all(|&h| chord::contains(trigger, h))
     }
 }
 
@@ -68,128 +133,348 @@ impl KeyFilter {
 mod tests {
     use super::*;
 
-    const TRIGGER: u32 = 0xA3; // Right Ctrl
-    const LOCK: u32 = 0x20; // Space
-    const OTHER: u32 = 0x41; // A
+    const RCTRL: u32 = 0xA3;
+    const LCTRL: u32 = 0xA2;
+    const LSHIFT: u32 = 0xA0;
+    const LALT: u32 = 0xA4;
+    const LWIN: u32 = 0x5B;
+    const SPACE: u32 = 0x20;
+    const A: u32 = 0x41;
+    const B: u32 = 0x42;
 
     fn pressed(_: u32) -> bool {
         true
     }
-    fn released(_: u32) -> bool {
-        false
+
+    fn trig(down: bool) -> KeyEvent {
+        KeyEvent { role: KeyRole::Trigger, down, t_ms: 7 }
     }
 
-    fn ev(f: &mut KeyFilter, cfg: &HookConfig, vk: u32, down: bool) -> KeyDecision {
-        f.on_event(cfg, vk, down, false, 7, &pressed)
+    fn lock(down: bool) -> KeyEvent {
+        KeyEvent { role: KeyRole::Lock, down, t_ms: 7 }
+    }
+
+    struct H {
+        cfg: HookConfig,
+        f: KeyFilter,
+    }
+
+    impl H {
+        fn new(trigger: &[u32], lock: u32) -> Self {
+            Self { cfg: HookConfig::new(trigger, lock), f: KeyFilter::new() }
+        }
+        fn with(&mut self, vk: u32, down: bool, is_pressed: &dyn Fn(u32) -> bool) -> KeyDecision {
+            self.f.on_event(&self.cfg, vk, down, false, 7, is_pressed)
+        }
+        fn ev(&mut self, vk: u32, down: bool) -> KeyDecision {
+            self.with(vk, down, &pressed)
+        }
+        fn gestures(&mut self, vk: u32, down: bool) -> Vec<KeyEvent> {
+            self.ev(vk, down).event.unwrap().gestures
+        }
     }
 
     #[test]
     fn forwards_every_real_event_with_its_time() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        let d = f.on_event(&cfg, OTHER, true, false, 42, &pressed);
-        assert_eq!(d, KeyDecision { key: Some(RawKey { vk: OTHER, down: true, t_ms: 42 }), swallow: false });
-        let d = f.on_event(&cfg, OTHER, false, false, 43, &pressed);
-        assert_eq!(d.key, Some(RawKey { vk: OTHER, down: false, t_ms: 43 }));
+        let mut h = H::new(&[RCTRL], SPACE);
+        let d = h.f.on_event(&h.cfg, A, true, false, 42, &pressed);
+        assert_eq!(
+            d,
+            KeyDecision {
+                event: Some(HookEvent { key: RawKey { vk: A, down: true, t_ms: 42 }, gestures: vec![] }),
+                swallow: false,
+                inject_mask: false
+            }
+        );
+        let d = h.f.on_event(&h.cfg, A, false, false, 43, &pressed);
+        assert_eq!(d.event.unwrap().key, RawKey { vk: A, down: false, t_ms: 43 });
     }
 
     #[test]
-    fn swallows_lock_down_and_up_while_trigger_held() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        assert!(!ev(&mut f, &cfg, TRIGGER, true).swallow, "the trigger itself is never swallowed");
-        let d = ev(&mut f, &cfg, LOCK, true);
+    fn single_modifier_trigger_passes_through_and_emits_edges() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        let d = h.ev(RCTRL, true);
+        assert!(!d.swallow, "a modifier is never swallowed");
+        assert!(!d.inject_mask, "Ctrl opens no menu");
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
+        assert_eq!(h.gestures(RCTRL, true), vec![], "auto-repeat: no edge");
+        assert_eq!(h.gestures(RCTRL, false), vec![trig(false)]);
+        assert_eq!(h.gestures(RCTRL, false), vec![], "a second key-up is no edge");
+    }
+
+    #[test]
+    fn combination_fires_when_complete_in_any_order() {
+        for order in [[LCTRL, LSHIFT, A], [A, LSHIFT, LCTRL], [LSHIFT, A, LCTRL]] {
+            let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
+            assert_eq!(h.gestures(order[0], true), vec![]);
+            assert_eq!(h.gestures(order[1], true), vec![]);
+            assert_eq!(h.gestures(order[2], true), vec![trig(true)], "{order:?}");
+            assert_eq!(h.gestures(order[1], false), vec![trig(false)], "any key released ends it");
+            assert_eq!(h.gestures(order[0], false), vec![]);
+            assert_eq!(h.gestures(order[2], false), vec![]);
+        }
+    }
+
+    #[test]
+    fn non_modifier_key_is_swallowed_down_repeat_and_up_only_when_it_completes_the_combination() {
+        let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
+        assert!(!h.ev(A, true).swallow, "A alone types an a");
+        assert!(!h.ev(A, false).swallow);
+        h.ev(LCTRL, true);
+        h.ev(LSHIFT, true);
+        let d = h.ev(A, true);
         assert!(d.swallow);
-        assert_eq!(d.key, Some(RawKey { vk: LOCK, down: true, t_ms: 7 }), "a swallowed key still reaches the controller");
-        assert!(ev(&mut f, &cfg, LOCK, false).swallow);
-        assert!(!ev(&mut f, &cfg, OTHER, true).swallow, "other keys pass");
+        assert!(h.ev(A, true).swallow, "auto-repeat");
+        assert!(!h.ev(LSHIFT, false).swallow, "modifiers pass");
+        assert!(h.ev(A, false).swallow, "its key-up too, even after the combination ended");
+        assert!(!h.ev(A, true).swallow, "Ctrl + A afterwards is not the combination");
+        assert!(!h.ev(A, false).swallow);
     }
 
     #[test]
-    fn lock_passes_without_the_trigger() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        assert!(!ev(&mut f, &cfg, LOCK, true).swallow);
-        ev(&mut f, &cfg, TRIGGER, true);
-        ev(&mut f, &cfg, TRIGGER, false);
-        assert!(!ev(&mut f, &cfg, LOCK, true).swallow, "released trigger");
-    }
-
-    #[test]
-    fn paused_never_swallows() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        cfg.paused.store(true, Ordering::Relaxed);
-        let mut f = KeyFilter::new();
-        ev(&mut f, &cfg, TRIGGER, true);
-        let d = ev(&mut f, &cfg, LOCK, true);
+    fn a_key_held_before_the_modifiers_is_not_swallowed() {
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        assert!(!h.ev(A, true).swallow);
+        let d = h.ev(LCTRL, true);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
         assert!(!d.swallow);
-        assert!(d.key.is_some());
+        assert!(!h.ev(A, false).swallow, "its key-down reached the application, so does its key-up");
+    }
+
+    #[test]
+    fn an_extra_key_held_blocks_the_combination() {
+        let mut h = H::new(&[LCTRL, LSHIFT], SPACE);
+        h.ev(B, true);
+        h.ev(LCTRL, true);
+        assert_eq!(h.gestures(LSHIFT, true), vec![], "B is held");
+        h.ev(LSHIFT, false);
+        h.ev(B, false);
+        assert_eq!(h.gestures(LSHIFT, true), vec![trig(true)], "B released: Ctrl + Maj fires");
+        // A key pressed while the combination is active does not end it.
+        assert_eq!(h.gestures(B, true), vec![]);
+        assert_eq!(h.gestures(LSHIFT, false), vec![trig(false)]);
+    }
+
+    #[test]
+    fn re_pressing_one_key_is_a_second_tap() {
+        let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
+        h.ev(LCTRL, true);
+        h.ev(LSHIFT, true);
+        assert_eq!(h.gestures(A, true), vec![trig(true)]);
+        assert_eq!(h.gestures(A, false), vec![trig(false)]);
+        let d = h.ev(A, true);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
+        assert!(d.swallow);
+    }
+
+    #[test]
+    fn combinations_with_alt_or_win_inject_the_menu_mask_once_per_press() {
+        let mut h = H::new(&[LALT, LWIN], SPACE);
+        assert!(!h.ev(LWIN, true).inject_mask);
+        let d = h.ev(LALT, true);
+        assert!(d.inject_mask);
+        assert!(!d.swallow);
+        assert!(!h.ev(LALT, true).inject_mask, "auto-repeat");
+        h.ev(LALT, false);
+        assert!(h.ev(LALT, true).inject_mask, "second tap");
+        let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
+        h.ev(LCTRL, true);
+        h.ev(LSHIFT, true);
+        assert!(!h.ev(A, true).inject_mask, "no Alt or Win: nothing to mask");
+    }
+
+    #[test]
+    fn swallows_lock_down_and_up_while_the_combination_is_held() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        h.ev(RCTRL, true);
+        let d = h.ev(SPACE, true);
+        assert!(d.swallow);
+        assert_eq!(d.event.unwrap().gestures, vec![lock(true)], "a swallowed key still reaches the controller");
+        assert!(h.ev(SPACE, true).swallow, "auto-repeat");
+        let d = h.ev(SPACE, false);
+        assert!(d.swallow);
+        assert_eq!(d.event.unwrap().gestures, vec![lock(false)]);
+        assert!(!h.ev(A, true).swallow, "other keys pass");
+    }
+
+    #[test]
+    fn lock_released_after_the_trigger_is_still_swallowed() {
+        // Otherwise the application gets an orphan Space key-up.
+        let mut h = H::new(&[RCTRL], SPACE);
+        h.ev(RCTRL, true);
+        assert!(h.ev(SPACE, true).swallow);
+        h.ev(RCTRL, false);
+        assert!(h.ev(SPACE, false).swallow);
+        assert!(!h.ev(SPACE, true).swallow, "without the trigger, Space types a space");
+    }
+
+    #[test]
+    fn lock_passes_without_the_trigger_and_still_reports_its_edges() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        let d = h.ev(SPACE, true);
+        assert!(!d.swallow);
+        assert_eq!(d.event.unwrap().gestures, vec![lock(true)]);
+        assert_eq!(h.gestures(SPACE, true), vec![], "auto-repeat");
+    }
+
+    #[test]
+    fn paused_never_swallows_nor_masks_but_keeps_tracking() {
+        let mut h = H::new(&[LALT, A], SPACE);
+        h.cfg.paused.store(true, Ordering::Relaxed);
+        h.ev(LALT, true);
+        let d = h.ev(A, true);
+        assert!(!d.swallow);
+        assert!(!d.inject_mask);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)], "the controller drops it while paused");
+        assert!(!h.ev(SPACE, true).swallow);
+        h.cfg.paused.store(false, Ordering::Relaxed);
+        assert!(!h.ev(A, false).swallow, "its key-down passed");
+    }
+
+    #[test]
+    fn capture_swallows_every_key_pressed_during_it() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        h.ev(B, true); // held before the capture
+        h.cfg.capturing.store(true, Ordering::Relaxed);
+        let d = h.ev(LWIN, true);
+        assert!(d.swallow);
+        assert!(!d.inject_mask, "the system never sees Win: nothing to mask");
+        assert!(h.ev(LWIN, true).swallow, "auto-repeat");
+        assert!(!h.ev(B, false).swallow, "its key-down reached the application");
+        assert!(h.ev(RCTRL, true).swallow, "even the current trigger");
+        h.cfg.capturing.store(false, Ordering::Relaxed);
+        assert!(h.ev(LWIN, false).swallow, "key-up of a key swallowed during the capture");
+        assert!(h.ev(RCTRL, false).swallow);
     }
 
     #[test]
     fn no_lock_key_never_swallows() {
-        let cfg = HookConfig::new(TRIGGER, 0);
-        let mut f = KeyFilter::new();
-        ev(&mut f, &cfg, TRIGGER, true);
-        assert!(!ev(&mut f, &cfg, 0, true).swallow, "vk 0 is not a lock key");
-        assert!(!ev(&mut f, &cfg, LOCK, true).swallow);
+        let mut h = H::new(&[RCTRL], 0);
+        h.ev(RCTRL, true);
+        assert!(!h.ev(0, true).swallow, "vk 0 is not a lock key");
+        let d = h.ev(SPACE, true);
+        assert!(!d.swallow);
+        assert_eq!(d.event.unwrap().gestures, vec![]);
     }
 
     #[test]
-    fn lock_equal_to_trigger_is_never_swallowed() {
-        let cfg = HookConfig::new(TRIGGER, TRIGGER);
-        let mut f = KeyFilter::new();
-        assert!(!ev(&mut f, &cfg, TRIGGER, true).swallow);
-        assert!(!ev(&mut f, &cfg, TRIGGER, true).swallow, "auto-repeat of the trigger");
+    fn a_lock_key_inside_the_combination_is_part_of_the_combination() {
+        // Rejected by the settings; the hook must still not emit both roles.
+        let mut h = H::new(&[LCTRL, SPACE], SPACE);
+        h.ev(LCTRL, true);
+        let d = h.ev(SPACE, true);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
     }
 
     #[test]
     fn injected_events_are_ignored_and_do_not_change_state() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        let d = f.on_event(&cfg, TRIGGER, true, true, 1, &pressed);
-        assert_eq!(d, KeyDecision { key: None, swallow: false });
-        assert!(!ev(&mut f, &cfg, LOCK, true).swallow, "an injected trigger-down does not arm the lock");
-        ev(&mut f, &cfg, TRIGGER, true);
-        let d = f.on_event(&cfg, LOCK, true, true, 1, &pressed);
-        assert_eq!(d, KeyDecision { key: None, swallow: false }, "an injected lock is neither forwarded nor swallowed");
-        f.on_event(&cfg, TRIGGER, false, true, 1, &pressed);
-        assert!(ev(&mut f, &cfg, LOCK, true).swallow, "an injected trigger-up does not disarm the lock");
+        let mut h = H::new(&[RCTRL], SPACE);
+        let d = h.f.on_event(&h.cfg, RCTRL, true, true, 1, &pressed);
+        assert_eq!(d, KeyDecision { event: None, swallow: false, inject_mask: false });
+        assert!(!h.ev(SPACE, true).swallow, "an injected trigger-down does not arm the lock");
+        h.ev(SPACE, false);
+        h.ev(RCTRL, true);
+        let d = h.f.on_event(&h.cfg, SPACE, true, true, 1, &pressed);
+        assert_eq!(d, KeyDecision { event: None, swallow: false, inject_mask: false });
+        h.f.on_event(&h.cfg, RCTRL, false, true, 1, &pressed);
+        assert!(h.ev(SPACE, true).swallow, "an injected trigger-up does not disarm the lock");
     }
 
     #[test]
-    fn lost_trigger_key_up_does_not_swallow_the_lock_forever() {
+    fn lost_key_up_of_the_trigger_ends_the_press() {
         // Win+L while holding the trigger: the key-up goes to the secure desktop, never to the hook.
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        ev(&mut f, &cfg, TRIGGER, true);
-        let d = f.on_event(&cfg, LOCK, true, false, 7, &released);
+        let mut h = H::new(&[RCTRL], SPACE);
+        h.ev(RCTRL, true);
+        let d = h.with(SPACE, true, &|vk| vk != RCTRL);
         assert!(!d.swallow, "the trigger is physically up: Space must reach the application");
-        assert!(d.key.is_some());
-        // The stale state is cleared: no more queries needed, still not swallowed.
-        let d = f.on_event(&cfg, LOCK, true, false, 7, &|_| panic!("state should be reset"));
+        assert_eq!(d.event.unwrap().gestures, vec![trig(false), lock(true)], "the detector sees the release");
+        // The stale state is cleared: no more queries needed.
+        let d = h.with(SPACE, false, &|_| panic!("state should be reset"));
         assert!(!d.swallow);
+        // The next real press works again.
+        assert_eq!(h.with(RCTRL, true, &|_| false).event.unwrap().gestures, vec![trig(true)]);
     }
 
     #[test]
-    fn asks_the_physical_state_of_the_current_trigger() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        ev(&mut f, &cfg, TRIGGER, true);
-        assert!(f.on_event(&cfg, LOCK, true, false, 7, &|vk| vk == TRIGGER).swallow);
-        assert!(!f.on_event(&cfg, LOCK, true, false, 7, &|vk| vk != TRIGGER).swallow);
+    fn asks_the_physical_state_of_the_combination_keys_only() {
+        let mut h = H::new(&[LCTRL, LSHIFT], SPACE);
+        h.ev(LCTRL, true);
+        h.ev(LSHIFT, true);
+        let d = h.with(SPACE, true, &|vk| vk == LCTRL || vk == LSHIFT);
+        assert!(d.swallow);
+        h.ev(SPACE, false);
+        let d = h.with(SPACE, true, &|vk| vk == LCTRL);
+        assert!(!d.swallow, "Maj is up");
     }
 
     #[test]
-    fn trigger_changed_while_held_does_not_leave_a_stale_state() {
-        let cfg = HookConfig::new(TRIGGER, LOCK);
-        let mut f = KeyFilter::new();
-        ev(&mut f, &cfg, TRIGGER, true);
-        cfg.trigger_vk.store(OTHER, Ordering::Relaxed);
-        // The old trigger's key-up is no longer seen as a trigger event.
-        ev(&mut f, &cfg, TRIGGER, false);
-        assert!(!ev(&mut f, &cfg, LOCK, true).swallow, "the new trigger was never pressed");
-        ev(&mut f, &cfg, OTHER, true);
-        assert!(ev(&mut f, &cfg, LOCK, true).swallow, "the new trigger arms the lock");
+    fn stale_held_keys_neither_block_nor_fake_the_combination() {
+        let mut h = H::new(&[LWIN, LALT], SPACE);
+        // Win + L: both key-ups lost.
+        h.ev(LWIN, true);
+        h.ev(0x4C, true);
+        let d = h.with(LALT, true, &|_| false);
+        assert_eq!(d.event.unwrap().gestures, vec![], "Win is physically up: Alt alone is not Win + Alt");
+        h.ev(LALT, false);
+        h.with(LWIN, true, &|_| false);
+        let d = h.with(LALT, true, &|vk| vk == LWIN);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)], "the stale L does not block it");
+    }
+
+    #[test]
+    fn trigger_changed_while_held_ends_the_press() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        h.ev(RCTRL, true);
+        h.cfg.set_trigger(&[A]);
+        let d = h.ev(SPACE, true);
+        assert!(!d.swallow, "the new trigger was never pressed");
+        assert_eq!(d.event.unwrap().gestures, vec![trig(false), lock(true)]);
+        h.ev(SPACE, false);
+        assert_eq!(h.gestures(RCTRL, false), vec![], "the old trigger's key-up is no edge");
+        assert_eq!(h.gestures(A, true), vec![trig(true)], "the new trigger works");
+    }
+
+    #[test]
+    fn a_new_press_after_a_lost_key_up_is_not_an_auto_repeat() {
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        let a_up = |vk| vk != A;
+        h.ev(A, true); // key-up lost
+        assert_eq!(h.with(LCTRL, true, &a_up).event.unwrap().gestures, vec![], "A is physically up");
+        let d = h.with(A, true, &a_up);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
+        assert!(d.swallow);
+    }
+
+    #[test]
+    fn a_combination_accepts_either_side_of_its_modifiers() {
+        let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
+        h.ev(RCTRL, true);
+        h.ev(0xA1, true);
+        let d = h.ev(A, true);
+        assert_eq!(d.event.unwrap().gestures, vec![trig(true)]);
+        assert!(d.swallow);
+        assert_eq!(h.gestures(RCTRL, false), vec![trig(false)], "releasing the right Ctrl ends it");
+        h.ev(RCTRL, true);
+        h.ev(A, false);
+        assert_eq!(h.gestures(A, true), vec![trig(true)]);
+        // The lock press checks that the right-hand modifiers are still down.
+        assert!(h.with(SPACE, true, &|vk| [RCTRL, 0xA1, A].contains(&vk)).swallow);
+        h.ev(SPACE, false);
+        assert!(!h.with(SPACE, true, &|vk| [RCTRL, A].contains(&vk)).swallow, "no Maj on either side");
+    }
+
+    #[test]
+    fn a_single_modifier_trigger_is_side_specific() {
+        let mut h = H::new(&[RCTRL], SPACE);
+        assert_eq!(h.gestures(LCTRL, true), vec![], "the left Ctrl of Ctrl+C is not the trigger");
+        h.ev(LCTRL, false);
+        assert_eq!(h.gestures(RCTRL, true), vec![trig(true)]);
+    }
+
+    #[test]
+    fn an_empty_combination_never_fires() {
+        let mut h = H::new(&[], SPACE);
+        assert_eq!(h.gestures(RCTRL, true), vec![]);
+        assert!(!h.ev(A, true).swallow);
     }
 }

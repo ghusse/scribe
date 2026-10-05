@@ -65,8 +65,10 @@ thresholds, and the two CI coverage steps.
 
 What is left in excluded files is wiring only; every decision lives in a tested module:
 - `windows/hook.rs::hook_proc` decodes `KBDLLHOOKSTRUCT` and calls `scribe_platform::key_filter::KeyFilter`
-  (injected events, trigger held, pause, `lock_vk == 0`, lost key-up / trigger changed while held). Remaining
-  branches: `code == HC_ACTION`, hook not started (`SHARED` empty), forward/swallow the filter's decision.
+  (trigger combination held/released, strict matching, swallowing, capture, pause, `lock_vk == 0`, injected
+  events, lost key-up / trigger changed while held, menu-mask decision; combination rules in `scribe_core::chord`).
+  Remaining branches: `code == HC_ACTION`, hook not started (`SHARED` empty), inject the mask / forward /
+  swallow per the filter's decision.
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
   propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.

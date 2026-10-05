@@ -183,9 +183,10 @@ impl Fixture {
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
         let factory_plan = plan.clone();
         let (tx, ctrl_rx) = mpsc::channel();
+        let hook_cfg = Arc::new(HookConfig::new(&settings.trigger_keys, settings.lock_vk));
         let svc = Arc::new(Services {
             db: Mutex::new(Db::open_in_memory().unwrap()),
-            hook_cfg: Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk)),
+            hook_cfg: hook_cfg.clone(),
             settings: RwLock::new(settings),
             paths,
             focus: focus.clone(),
@@ -199,7 +200,7 @@ impl Fixture {
             }),
             overlay: Overlay::new(window.clone()),
             ui: ui.clone(),
-            key_capture: KeyCapture::default(),
+            key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
         Self { svc, window, ui, clipboard, keys, focus, secrets, plan, ctrl_rx, _dir: dir }

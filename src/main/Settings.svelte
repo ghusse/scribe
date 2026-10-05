@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { api, effortLevels, type Provider, type ProviderTest, type Settings } from "../lib/api";
-  import { keyName } from "../lib/keys";
+  import { chordName, keyName } from "../lib/keys";
   import { editAction, SAVED_FADE_MS, staleGuard, statusView, testSignature, type SaveState } from "../lib/autosave";
   import { checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, retentionOptions, type NumberFieldId } from "../lib/validation";
   import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, normalizeLock, pendingSummary, swallowsKey, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
@@ -277,11 +277,11 @@
     hotkeyNote = null;
     pendingAssign = null;
     try {
-      const vk = await api.captureKey();
-      const outcome = captureOutcome(vk, captureCancelled);
+      const keys = await api.captureKey();
+      const outcome = captureOutcome(keys, captureCancelled);
       if (outcome === "timeout") hotkeyNote = CAPTURE_TIMEOUT_MESSAGE;
-      else if (outcome === "key" && s) {
-        const a = assignHotkey(role, vk!, { trigger_vk: s.trigger_vk, lock_vk: s.lock_vk });
+      else if (outcome === "keys" && s) {
+        const a = assignHotkey(role, keys!, { trigger_keys: s.trigger_keys, lock_vk: s.lock_vk });
         if (!a.ok) hotkeyNote = a.note;
         else if (a.confirm) pendingAssign = a;
         else applyKeys(a);
@@ -313,7 +313,7 @@
 
   function applyKeys(a: Extract<Assignment, { ok: true }>) {
     if (!s) return;
-    s.trigger_vk = a.keys.trigger_vk;
+    s.trigger_keys = a.keys.trigger_keys;
     s.lock_vk = a.keys.lock_vk;
     hotkeyNote = a.note;
     pendingAssign = null;
@@ -359,7 +359,7 @@
 
 {#snippet hotkeyButton(role: HotkeyRole)}
   <button onclick={() => (capturing === role ? cancelCapture() : capture(role))}
-    aria-label={capturing === role ? "Annuler la capture" : role === "trigger" ? "Changer la touche de déclenchement" : "Changer la touche de verrouillage"}
+    aria-label={capturing === role ? "Annuler la capture" : role === "trigger" ? "Changer le raccourci de déclenchement" : "Changer la touche de verrouillage"}
     onkeydown={(e) => hotkeyKeydown(e, role)} onkeyup={hotkeyKeyup} disabled={(capturing !== null && capturing !== role) || pendingAssign !== null}>
     {capturing === role ? "Annuler" : "Changer"}
   </button>
@@ -416,7 +416,7 @@
     <div class="hotkeys">
       <div class="hotkey">
         <span class="label">Déclenchement</span>
-        <strong>{capturing === "trigger" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.trigger_vk)}</strong>
+        <strong>{capturing === "trigger" ? "Appuyez sur la touche ou la combinaison, puis relâchez… (Échap pour annuler)" : chordName(s.trigger_keys)}</strong>
         {@render hotkeyButton("trigger")}
       </div>
       <label class="check"><input type="checkbox" bind:checked={s.gesture.double_tap_enabled} /> Double-tap pour verrouiller</label>
@@ -429,7 +429,7 @@
       </div>
     </div>
     {#if pendingAssign}
-      {@const sum = pendingSummary(pendingAssign.keys, { trigger_vk: s.trigger_vk, lock_vk: s.lock_vk })}
+      {@const sum = pendingSummary(pendingAssign.keys, { trigger_keys: s.trigger_keys, lock_vk: s.lock_vk })}
       <p class="inline-confirm" role="status">
         <span>Déclenchement = <strong>{sum.trigger}</strong>{#if sum.lock}, Verrouillage = <strong>{sum.lock}</strong>{/if}. {TYPING_KEY_WARNING}</span>
         <button class="primary" onclick={() => applyKeys(pendingAssign!)}>Continuer</button>

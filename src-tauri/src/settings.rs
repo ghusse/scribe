@@ -1,7 +1,8 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
+use scribe_core::chord;
 use scribe_core::gesture::GestureConfig;
 use scribe_core::model::Level;
 use scribe_core::pipeline::PipelineConfig;
@@ -10,7 +11,10 @@ use scribe_providers::catalog;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub trigger_vk: u32,
+    /// The trigger combination (`scribe_core::chord`), in canonical order. Files from before combinations
+    /// hold a single `trigger_vk` number, read as a one-key combination.
+    #[serde(alias = "trigger_vk", deserialize_with = "one_or_many")]
+    pub trigger_keys: Vec<u32>,
     /// 0 = no lock key.
     pub lock_vk: u32,
     pub gesture: GestureConfig,
@@ -36,7 +40,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            trigger_vk: 0xA3,
+            trigger_keys: vec![0xA3],
             lock_vk: 0x20,
             gesture: GestureConfig::default(),
             level: Level::Formatted,
@@ -97,12 +101,7 @@ impl Settings {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.trigger_vk == 0 {
-            return Err("choisissez une touche de déclenchement".into());
-        }
-        if self.lock_vk == self.trigger_vk {
-            return Err("la touche de verrouillage doit différer de la touche de déclenchement".into());
-        }
+        chord::validate(&self.trigger_keys, self.lock_vk)?;
         if self.max_recording_ms < 10_000 {
             return Err("la durée maximale doit être d'au moins 10 secondes".into());
         }
@@ -150,6 +149,19 @@ impl Settings {
     }
 }
 
+fn one_or_many<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(u32),
+        Many(Vec<u32>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(vk) => vec![vk],
+        OneOrMany::Many(keys) => keys,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,7 +169,7 @@ mod tests {
     #[test]
     fn defaults_match_global_constraints() {
         let s = Settings::default();
-        assert_eq!((s.trigger_vk, s.lock_vk), (0xA3, 0x20));
+        assert_eq!((s.trigger_keys.clone(), s.lock_vk), (vec![0xA3], 0x20));
         assert_eq!((s.stt_provider.as_str(), s.stt_model.as_str()), ("openai", "gpt-transcribe"));
         assert_eq!(s.llm_provider, "anthropic");
         assert_eq!((s.llm_model.as_str(), s.llm_effort.as_str()), ("claude-opus-5-5", "low"));
@@ -181,7 +193,7 @@ mod tests {
         std::fs::write(&path, r#"{"llm_model":"claude-haiku-4-5"}"#).unwrap();
         let s = Settings::load(&path);
         assert_eq!(s.llm_model, "claude-haiku-4-5");
-        assert_eq!(s.trigger_vk, 0xA3);
+        assert_eq!(s.trigger_keys, vec![0xA3]);
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
         assert_eq!(Settings::load(&dir.path().join("absent.json")), Settings::default());
@@ -197,6 +209,19 @@ mod tests {
     }
 
     #[test]
+    fn legacy_single_trigger_key_is_read_as_a_one_key_combination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"trigger_vk":162,"lock_vk":0}"#).unwrap();
+        assert_eq!(Settings::load(&path).trigger_keys, vec![0xA2]);
+        let s = Settings { trigger_keys: vec![0xA2, 0xA0, 0x41], ..Default::default() };
+        s.save(&path).unwrap();
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(json.contains("\"trigger_keys\"") && !json.contains("trigger_vk"), "{json}");
+        assert_eq!(Settings::load(&path), s);
+    }
+
+    #[test]
     fn invalid_files_fall_back_to_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
@@ -204,6 +229,9 @@ mod tests {
             r#"{"stt_provider":"grok"}"#,
             r#"{"llm_provider":"groq","llm_model":""}"#,
             r#"{"trigger_vk":0}"#,
+            r#"{"trigger_keys":[]}"#,
+            r#"{"trigger_keys":"A"}"#,
+            r#"{"trigger_keys":[162,160,164,91,65]}"#,
             r#"{"max_recording_ms":1800000}"#,
             r#"{"llm_timeout_per_char_ms":18446744073709551615}"#,
         ] {
@@ -215,8 +243,13 @@ mod tests {
     #[test]
     fn validation_rejects_inconsistent_keys() {
         assert!(Settings::default().validate().is_ok());
-        assert!(Settings { trigger_vk: 0, ..Default::default() }.validate().is_err());
+        assert!(Settings { trigger_keys: vec![], ..Default::default() }.validate().is_err());
         assert!(Settings { lock_vk: 0xA3, ..Default::default() }.validate().is_err());
+        assert_eq!(
+            Settings { trigger_keys: vec![0xA2, 0x20], ..Default::default() }.validate(),
+            Err("la touche de verrouillage ne peut pas faire partie du raccourci".into())
+        );
+        assert!(Settings { trigger_keys: vec![0xA2, 0x20], lock_vk: 0, ..Default::default() }.validate().is_ok());
         assert!(Settings { max_recording_ms: 100, ..Default::default() }.validate().is_err());
     }
 

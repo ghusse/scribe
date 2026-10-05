@@ -3,6 +3,7 @@ use tauri::Manager;
 use scribe_core::gesture::Mode;
 use scribe_core::model::{NewDictation, Outcome};
 use scribe_core::pipeline::ProviderError;
+use scribe_platform::RawKey;
 
 use super::*;
 use crate::overlay::{OverlayEvent, ToastLevel};
@@ -100,7 +101,7 @@ fn glossary_commands_round_trip() {
 #[test]
 fn valid_settings_are_saved_applied_and_announced() {
     let f = Fixture::new();
-    let new = Settings { level: Level::Clean, trigger_vk: 0xA2, ..Default::default() };
+    let new = Settings { level: Level::Clean, trigger_keys: vec![0xA2], ..Default::default() };
     with_state(&f, |s| {
         save_settings(s.clone(), new.clone()).unwrap();
         assert_eq!(get_settings(s), new);
@@ -114,8 +115,8 @@ fn invalid_settings_are_neither_written_nor_applied() {
     let f = Fixture::new();
     let before = f.svc.settings.read().unwrap().clone();
     with_state(&f, |s| {
-        let err = save_settings(s.clone(), Settings { trigger_vk: 0, ..Default::default() }).unwrap_err();
-        assert_eq!(err, "choisissez une touche de déclenchement");
+        let err = save_settings(s.clone(), Settings { trigger_keys: vec![], ..Default::default() }).unwrap_err();
+        assert_eq!(err, "choisissez un raccourci");
         assert_eq!(get_settings(s.clone()), before);
         // A valid value that cannot be written is not applied either.
         std::fs::create_dir(f.svc.paths.settings_path.with_extension("json.tmp")).unwrap();
@@ -182,11 +183,12 @@ fn capture_key_returns_the_next_press_or_none_when_cancelled() {
         while !svc.key_capture.is_pending() {
             std::thread::yield_now();
         }
-        assert!(svc.key_capture.offer(0x41));
+        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: true, t_ms: 0 }));
+        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: false, t_ms: 1 }));
     });
     let key = with_state(&f, |s| tauri::async_runtime::block_on(capture_key(s)));
     presser.join().unwrap();
-    assert_eq!(key, Ok(Some(0x41)));
+    assert_eq!(key, Ok(Some(vec![0x41])));
 
     let svc = f.svc.clone();
     let app = tauri::test::mock_app();

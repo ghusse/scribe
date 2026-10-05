@@ -11,7 +11,10 @@ pub mod key_filter;
 #[cfg(windows)]
 mod windows;
 
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+use scribe_core::chord;
+use scribe_core::gesture::KeyEvent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RawKey {
@@ -20,20 +23,39 @@ pub struct RawKey {
     pub t_ms: u64,
 }
 
+/// A real key event and what it means for the gesture detector (trigger combination / lock key edges).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookEvent {
+    pub key: RawKey,
+    pub gestures: Vec<KeyEvent>,
+}
+
 pub struct HookConfig {
-    pub trigger_vk: AtomicU32,
+    /// The trigger combination, packed by `scribe_core::chord::pack`.
+    pub trigger: AtomicU32,
     /// 0 = no lock key.
     pub lock_vk: AtomicU32,
     pub paused: AtomicBool,
+    /// A hotkey capture is running: every key is swallowed (so Win or Alt open no menu, letters type nothing).
+    pub capturing: AtomicBool,
 }
 
 impl HookConfig {
-    pub fn new(trigger_vk: u32, lock_vk: u32) -> Self {
-        Self { trigger_vk: AtomicU32::new(trigger_vk), lock_vk: AtomicU32::new(lock_vk), paused: AtomicBool::new(false) }
+    pub fn new(trigger_keys: &[u32], lock_vk: u32) -> Self {
+        Self {
+            trigger: AtomicU32::new(chord::pack(trigger_keys)),
+            lock_vk: AtomicU32::new(lock_vk),
+            paused: AtomicBool::new(false),
+            capturing: AtomicBool::new(false),
+        }
+    }
+
+    pub fn set_trigger(&self, keys: &[u32]) {
+        self.trigger.store(chord::pack(keys), Ordering::Relaxed);
     }
 }
 
-pub type KeyCallback = Box<dyn Fn(RawKey) + Send + Sync>;
+pub type KeyCallback = Box<dyn Fn(HookEvent) + Send + Sync>;
 
 #[cfg(not(windows))]
 pub use fallback::{focus_detector, hide_overlay, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};

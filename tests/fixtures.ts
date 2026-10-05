@@ -3,7 +3,7 @@ import type { Provider, Settings } from "../src/lib/api";
 /** Backend defaults (settings.rs) with OpenAI transcription and Anthropic correction. */
 export function settings(over: Partial<Settings> = {}): Settings {
   return {
-    trigger_vk: 0xa5,
+    trigger_keys: [0xa5],
     lock_vk: 0x20,
     gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
     level: "formatted",

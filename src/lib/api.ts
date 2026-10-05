@@ -41,7 +41,8 @@ export interface GestureConfig {
 }
 
 export interface Settings {
-  trigger_vk: number;
+  /** Trigger combination (1 to 4 virtual-key codes, canonical order: Ctrl, Maj, Alt, Win, others). */
+  trigger_keys: number[];
   lock_vk: number;
   gesture: GestureConfig;
   level: Level;
@@ -108,7 +109,7 @@ export const api = {
   keyStatus: () => invoke<Record<string, boolean>>("key_status"),
   setApiKey: (provider: string, key: string) => invoke<void>("set_api_key", { provider, key }),
   testProviders: () => invoke<ProviderTest>("test_providers"),
-  captureKey: () => invoke<number | null>("capture_key"),
+  captureKey: () => invoke<number[] | null>("capture_key"),
   /** Makes a pending captureKey resolve to null at once. */
   cancelCapture: () => invoke<void>("cancel_capture"),
   providers: () => invoke<Provider[]>("providers"),

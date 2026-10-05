@@ -482,19 +482,20 @@ describe("Settings: provider test", () => {
 });
 
 describe("Settings: hotkeys", () => {
-  const change = (role: "déclenchement" | "verrouillage") => screen.getByRole("button", { name: `Changer la touche de ${role}` });
+  const change = (role: "déclenchement" | "verrouillage") =>
+    screen.getByRole("button", { name: role === "déclenchement" ? "Changer le raccourci de déclenchement" : "Changer la touche de verrouillage" });
 
   it("captures a new trigger key and saves it", async () => {
-    commands({ capture_key: () => 0x70 });
+    commands({ capture_key: () => [0x70] });
     await setup();
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText("F1")).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
-    expect(lastSave().trigger_vk).toBe(0x70);
+    expect(lastSave().trigger_keys).toEqual([0x70]);
   });
 
   it("shows the capture in progress and can cancel it", async () => {
-    let answer!: (vk: number | null) => void;
+    let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)) });
     await setup();
     await fireEvent.click(change("verrouillage"));
@@ -503,21 +504,21 @@ describe("Settings: hotkeys", () => {
     expect((screen.getByLabelText("Désactiver la touche de verrouillage") as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(screen.getByRole("button", { name: "Annuler la capture" }));
     expect(calls("cancel_capture")).toHaveLength(1);
-    answer(0x41); // a key that arrives after the cancel is ignored
+    answer([0x41]); // a key that arrives after the cancel is ignored
     await waitFor(() => expect(screen.getByText("Espace")).toBeTruthy());
-    expect(screen.queryByText(/ne fonctionnera plus/)).toBeNull();
+    expect(screen.queryByText(/saisie normale/)).toBeNull();
     await new Promise((r) => setTimeout(r, 600));
     expect(saves()).toHaveLength(0);
   });
 
   it("a cancel that fails still lets the capture end", async () => {
-    let answer!: (vk: number | null) => void;
+    let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)), cancel_capture: () => Promise.reject("x") });
     await setup();
     await fireEvent.click(change("déclenchement"));
     await fireEvent.click(screen.getByRole("button", { name: "Annuler la capture" }));
     answer(null);
-    expect(await screen.findByRole("button", { name: "Changer la touche de déclenchement" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" })).toBeTruthy();
     expect(screen.queryByText(CAPTURE_TIMEOUT_MESSAGE)).toBeNull();
   });
 
@@ -535,45 +536,86 @@ describe("Settings: hotkeys", () => {
   });
 
   it("refuses the trigger key as the lock key when there is no lock to swap", async () => {
-    commands({ get_settings: () => settings({ lock_vk: 0 }), capture_key: () => 0xa5 });
+    commands({ get_settings: () => settings({ lock_vk: 0 }), capture_key: () => [0xa5] });
     await setup();
     await fireEvent.click(change("verrouillage"));
     expect(await screen.findByText(/Alt droit \(AltGr\) est déjà la touche de déclenchement/)).toBeTruthy();
   });
 
   it("swaps the keys when the trigger takes the lock key", async () => {
-    commands({ capture_key: () => 0x14 });
+    commands({ capture_key: () => [0x14] });
     commands({ get_settings: () => settings({ lock_vk: 0x14 }) });
     await setup();
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/Touches échangées/)).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
-    expect([lastSave().trigger_vk, lastSave().lock_vk]).toEqual([0x14, 0xa5]);
+    expect([lastSave().trigger_keys, lastSave().lock_vk]).toEqual([[0x14], 0xa5]);
   });
 
   it("asks before making a typing key the trigger", async () => {
-    commands({ capture_key: () => 0x41 });
+    commands({ capture_key: () => [0x41] });
     await setup();
     await fireEvent.click(change("déclenchement"));
-    expect(await screen.findByText(/Cette touche ne fonctionnera plus pour la saisie normale/)).toBeTruthy();
+    expect(await screen.findByText(/Ce raccourci gênera la saisie normale/)).toBeTruthy();
     expect(screen.getByText("A")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Annuler" }));
-    expect(screen.queryByText(/ne fonctionnera plus/)).toBeNull();
+    expect(screen.queryByText(/saisie normale/)).toBeNull();
     expect(screen.getByText("Alt droit (AltGr)")).toBeTruthy();
 
     await fireEvent.click(change("déclenchement"));
-    await screen.findByText(/ne fonctionnera plus/);
+    await screen.findByText(/saisie normale/);
     await fireEvent.click(screen.getByRole("button", { name: "Continuer" }));
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
-    expect(lastSave().trigger_vk).toBe(0x41);
+    expect(lastSave().trigger_keys).toEqual([0x41]);
   });
 
   it("the confirmation also names the lock key when the keys are swapped", async () => {
-    commands({ get_settings: () => settings({ lock_vk: 0x41 }), capture_key: () => 0x41 });
+    commands({ get_settings: () => settings({ lock_vk: 0x41 }), capture_key: () => [0x41] });
     await setup();
     await fireEvent.click(change("déclenchement"));
-    const confirm = (await screen.findByText(/ne fonctionnera plus/)).closest("p")!;
+    const confirm = (await screen.findByText(/saisie normale/)).closest("p")!;
     expect(confirm.textContent).toMatch(/Déclenchement = A, Verrouillage = Alt droit \(AltGr\)\./);
+  });
+
+  it("captures a combination, shows it and saves it", async () => {
+    let answer!: (keys: number[] | null) => void;
+    commands({ capture_key: () => new Promise((res) => (answer = res)) });
+    await setup();
+    await fireEvent.click(change("déclenchement"));
+    expect(screen.getByText("Appuyez sur la touche ou la combinaison, puis relâchez… (Échap pour annuler)")).toBeTruthy();
+    answer([0xa2, 0xa0, 0x41]);
+    expect(await screen.findByText("Ctrl + Maj + A")).toBeTruthy();
+    expect(screen.queryByText(/saisie normale/)).toBeNull();
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+    expect(lastSave().trigger_keys).toEqual([0xa2, 0xa0, 0x41]);
+  });
+
+  it("Échap during the capture changes nothing", async () => {
+    commands({ capture_key: () => [] });
+    await setup();
+    await fireEvent.click(change("déclenchement"));
+    expect(await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" })).toBeTruthy();
+    expect(screen.getByText("Alt droit (AltGr)")).toBeTruthy();
+    expect(screen.queryByText(CAPTURE_TIMEOUT_MESSAGE)).toBeNull();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(saves()).toHaveLength(0);
+  });
+
+  it("warns about a combination Windows uses but keeps it", async () => {
+    commands({ capture_key: () => [0xa0, 0xa4] });
+    await setup();
+    await fireEvent.click(change("déclenchement"));
+    expect(await screen.findByText(/changer la langue du clavier/)).toBeTruthy();
+    expect(screen.getByText("Maj + Alt")).toBeTruthy();
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+  });
+
+  it("refuses a combination as the lock key", async () => {
+    commands({ capture_key: () => [0xa2, 0x41] });
+    await setup();
+    await fireEvent.click(change("verrouillage"));
+    expect(await screen.findByText("Le verrouillage se fait avec une seule touche.")).toBeTruthy();
+    expect(screen.getByText("Espace")).toBeTruthy();
   });
 
   it("disables the lock key", async () => {
@@ -585,7 +627,7 @@ describe("Settings: hotkeys", () => {
   });
 
   it("the captured Space/Enter never activates the button being captured", async () => {
-    let answer!: (vk: number | null) => void;
+    let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)) });
     await setup();
     const button = change("déclenchement");
@@ -596,8 +638,8 @@ describe("Settings: hotkeys", () => {
     expect(await fireEvent.keyUp(capturing, { key: "Enter", code: "Enter" })).toBe(true); // not the swallowed key
     expect(await fireEvent.keyUp(capturing, { key: " ", code: "Space" })).toBe(false);
     expect(await fireEvent.keyUp(capturing, { key: " ", code: "Space" })).toBe(true); // swallowed once
-    answer(0x70);
-    const after = await screen.findByRole("button", { name: "Changer la touche de déclenchement" });
+    answer([0x70]);
+    const after = await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" });
     expect(await fireEvent.keyDown(after, { key: "Enter", code: "Enter" })).toBe(false); // just after the capture
     expect(await fireEvent.keyDown(change("verrouillage"), { key: "Enter", code: "Enter" })).toBe(true);
   });

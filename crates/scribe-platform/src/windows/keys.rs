@@ -7,6 +7,14 @@ use scribe_core::insert::KeySender;
 
 pub struct WinKeySender;
 
+/// Taps `chord::VK_MENU_MASK` so that releasing Alt or Win opens no menu. Injected, so the hook ignores it.
+pub fn send_menu_mask() {
+    let vk = VIRTUAL_KEY(scribe_core::chord::VK_MENU_MASK as u16);
+    unsafe {
+        SendInput(&[key(vk, false), key(vk, true)], std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,

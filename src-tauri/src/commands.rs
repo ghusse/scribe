@@ -132,9 +132,10 @@ pub async fn test_providers(svc: Svc<'_>) -> Result<ProviderTest, String> {
     Ok(ProviderTest { stt: stt_result, llm: llm_result })
 }
 
-/// Waits (max 10 s) for the next key press and returns its virtual-key code.
+/// Waits (max 10 s) for a key combination, returned once all its keys are released (virtual-key codes,
+/// canonical order). None on timeout or `cancel_capture`; empty when the user pressed Échap.
 #[tauri::command]
-pub async fn capture_key(svc: Svc<'_>) -> Result<Option<u32>, String> {
+pub async fn capture_key(svc: Svc<'_>) -> Result<Option<Vec<u32>>, String> {
     let svc = svc.inner().clone();
     tauri::async_runtime::spawn_blocking(move || svc.key_capture.wait(CAPTURE_TIMEOUT)).await.map_err(err)
 }

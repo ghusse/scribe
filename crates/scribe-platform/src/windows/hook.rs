@@ -73,8 +73,11 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 scribe_core::clock::now_ms(),
                 &|vk| GetAsyncKeyState(vk as i32) < 0,
             );
-            if let Some(k) = decision.key {
-                (s.on_key)(k);
+            if decision.inject_mask {
+                crate::windows::keys::send_menu_mask();
+            }
+            if let Some(ev) = decision.event {
+                (s.on_key)(ev);
             }
             if decision.swallow {
                 return LRESULT(1);

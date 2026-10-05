@@ -40,7 +40,7 @@ fn main() {
             std::fs::create_dir_all(&paths.audio_dir)?;
             let settings = Settings::load(&paths.settings_path);
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
-            let hook_cfg = Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk));
+            let hook_cfg = Arc::new(HookConfig::new(&settings.trigger_keys, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
             let secret_store: Arc<dyn SecretStore> = Arc::new(KeyringStore::system());
             let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
@@ -56,7 +56,7 @@ fn main() {
                 providers: Box::new(providers::build),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
-                key_capture: KeyCapture::default(),
+                key_capture: KeyCapture::new(hook_cfg.clone()),
                 ctrl_tx: Mutex::new(tx.clone()),
             });
             app.manage(svc.clone());

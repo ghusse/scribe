@@ -3,6 +3,10 @@ use std::sync::Mutex;
 
 use scribe_core::audio::TARGET_RATE;
 
+use scribe_core::chord;
+use scribe_platform::key_filter::KeyFilter;
+use scribe_platform::RawKey;
+
 use super::*;
 use crate::overlay::OverlayEvent;
 use crate::settings::Settings;
@@ -52,6 +56,8 @@ struct Harness {
     rec: Arc<FakeRecorder>,
     now: Arc<AtomicU64>,
     jobs: Arc<Mutex<Vec<Job>>>,
+    /// Turns raw keys into hook events as the real hook does.
+    filter: KeyFilter,
     _done_rx: Receiver<ControllerMsg>,
 }
 
@@ -73,12 +79,13 @@ impl Harness {
         };
         let (tx, done_rx) = mpsc::channel();
         let c = Controller::new(f.svc.clone(), tx, deps);
-        Self { f, c, rec, now, jobs, _done_rx: done_rx }
+        Self { f, c, rec, now, jobs, filter: KeyFilter::new(), _done_rx: done_rx }
     }
 
     fn key(&mut self, vk: u32, down: bool, t_ms: u64) {
         self.now.store(t_ms, Ordering::SeqCst);
-        self.c.handle(ControllerMsg::Key(RawKey { vk, down, t_ms }));
+        let d = self.filter.on_event(&self.f.svc.hook_cfg, vk, down, false, t_ms, &|_| true);
+        self.c.handle(ControllerMsg::Key(d.event.unwrap()));
     }
 
     fn tick(&mut self, t_ms: u64) {
@@ -116,11 +123,25 @@ fn processing_done_is_sent_even_on_panic() {
 }
 
 #[test]
-fn maps_virtual_keys_to_roles() {
-    assert_eq!(key_role(0xA3, 0xA3, 0x20), KeyRole::Trigger);
-    assert_eq!(key_role(0x20, 0xA3, 0x20), KeyRole::Lock);
-    assert_eq!(key_role(0x41, 0xA3, 0x20), KeyRole::Other);
-    assert_eq!(key_role(0x20, 0xA3, 0), KeyRole::Other);
+fn a_combination_works_like_a_single_trigger_key() {
+    let (ctrl, shift, a) = (0xA2, 0xA0, 0x41);
+    let mut h = Harness::with(Fixture::with_settings(Settings { trigger_keys: vec![ctrl, shift, a], ..Default::default() }));
+    h.key(ctrl, true, 0);
+    h.key(shift, true, 10);
+    assert_eq!(h.started(), 0, "incomplete combination");
+    h.key(a, true, 20);
+    assert_eq!(h.started(), 1);
+    h.key(a, true, 60); // auto-repeat
+    h.key(LOCK, true, 100);
+    h.key(LOCK, false, 120);
+    h.key(shift, false, 900); // releasing any key of the combination
+    h.key(a, false, 910);
+    h.key(ctrl, false, 920);
+    assert_eq!(h.stopped(), 0, "locked by the lock key");
+    for (vk, t) in [(ctrl, 2_000), (shift, 2_010), (a, 2_020)] {
+        h.key(vk, true, t);
+    }
+    assert_eq!(h.job_modes(), vec![Mode::Locked], "pressing the combination again stops");
 }
 
 #[test]
@@ -130,6 +151,7 @@ fn hold_records_then_processes_in_hold_mode() {
     assert_eq!(h.started(), 1);
     assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false }));
     h.key(0x41, true, 100); // other keys do nothing
+    h.key(0x41, false, 150);
     h.key(TRIGGER, false, 800);
     assert_eq!(h.stopped(), 1);
     assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing));
@@ -250,6 +272,7 @@ fn pausing_discards_the_recording_and_ignores_keys() {
     assert_eq!(h.last_overlay(), Some(OverlayEvent::Idle));
     h.key(TRIGGER, false, 800);
     h.key(TRIGGER, true, 1_000);
+    h.key(TRIGGER, false, 1_500);
     assert_eq!(h.started(), 1, "keys are ignored while paused");
     assert!(h.jobs.lock().unwrap().is_empty());
 
@@ -264,20 +287,24 @@ fn pausing_discards_the_recording_and_ignores_keys() {
 }
 
 #[test]
-fn a_pending_hotkey_capture_takes_the_press() {
+fn a_pending_hotkey_capture_takes_every_key_until_the_combination_is_released() {
     let mut h = Harness::new();
     h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
     let (_, rx) = h.f.svc.key_capture.begin();
-    // The release of the key that started the capture (Enter on the button) must not become the hotkey.
+    // The release of the key that started the capture (Enter on the button) must not end it.
     h.key(0x0D, false, 0);
-    assert!(h.f.svc.key_capture.is_pending(), "a key-up does not end the capture");
-    assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    assert!(h.f.svc.key_capture.is_pending(), "a stray key-up does not end the capture");
+    h.f.svc.hook_cfg.paused.store(false, Ordering::Relaxed);
     h.key(TRIGGER, true, 10);
-    assert_eq!(rx.try_recv(), Ok(TRIGGER));
-    // Only that press was captured, and the capture is over.
-    assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected));
+    h.key(0x41, true, 20);
+    assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    h.key(TRIGGER, false, 30);
+    h.key(0x41, false, 40);
+    assert_eq!(rx.try_recv(), Ok(vec![0xA2, 0x41]), "Ctrl droit + A is stored as side-less Ctrl + A");
     assert!(!h.f.svc.key_capture.is_pending());
-    assert_eq!(h.started(), 0);
+    assert_eq!(h.started(), 0, "the current trigger pressed during a capture records nothing");
+    h.key(TRIGGER, true, 1_000);
+    assert_eq!(h.started(), 1, "keys are gestures again");
 }
 
 #[test]
@@ -287,9 +314,10 @@ fn settings_change_updates_the_hook_without_breaking_the_recording() {
     h.key(TRIGGER, false, 100);
     h.key(TRIGGER, true, 200);
     h.key(TRIGGER, false, 250); // locked
-    *h.f.svc.settings.write().unwrap() = Settings { trigger_vk: 0xA2, lock_vk: 0, max_recording_ms: 20_000, ..Default::default() };
+    *h.f.svc.settings.write().unwrap() =
+        Settings { trigger_keys: vec![0xA2], lock_vk: 0, max_recording_ms: 20_000, ..Default::default() };
     h.c.handle(ControllerMsg::SettingsChanged);
-    assert_eq!(h.f.svc.hook_cfg.trigger_vk.load(Ordering::Relaxed), 0xA2);
+    assert_eq!(h.f.svc.hook_cfg.trigger.load(Ordering::Relaxed), chord::pack(&[0xA2]));
     assert_eq!(h.f.svc.hook_cfg.lock_vk.load(Ordering::Relaxed), 0);
     assert_eq!(h.stopped(), 0);
     h.tick(19_999);
@@ -369,6 +397,8 @@ fn spawned_controller_handles_messages_on_its_thread() {
     };
     spawn(f.svc.clone(), rx, tx.clone(), deps);
     let (_, capture) = f.svc.key_capture.begin();
-    tx.send(ControllerMsg::Key(RawKey { vk: 0x42, down: true, t_ms: 0 })).unwrap();
-    assert_eq!(capture.recv_timeout(Duration::from_secs(5)), Ok(0x42));
+    for down in [true, false] {
+        tx.send(ControllerMsg::Key(HookEvent { key: RawKey { vk: 0x42, down, t_ms: 0 }, gestures: vec![] })).unwrap();
+    }
+    assert_eq!(capture.recv_timeout(Duration::from_secs(5)), Ok(vec![0x42]));
 }

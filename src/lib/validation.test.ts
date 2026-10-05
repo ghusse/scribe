@@ -3,7 +3,7 @@ import type { Settings } from "./api";
 import { checkModelId, checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, rangeMessage, retentionOptions } from "./validation";
 
 const ok: Settings = {
-  trigger_vk: 0xa3, lock_vk: 0x20,
+  trigger_keys: [0xa3], lock_vk: 0x20,
   gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
   level: "formatted", stt_provider: "openai", stt_model: "gpt-transcribe", llm_provider: "anthropic", llm_model: "claude-opus-5-5",
   llm_effort: "low", restore_delay_ms: 150, min_recording_ms: 300, max_recording_ms: 600000, silence_threshold_dbfs: -45,

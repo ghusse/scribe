@@ -5,17 +5,18 @@ use std::time::Duration;
 
 use scribe_core::audio::AudioClip;
 use scribe_core::focus::{self, FocusSnapshot};
-use scribe_core::gesture::{GestureCommand, GestureDetector, KeyEvent, KeyRole, Mode};
+use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
 use scribe_core::session::{self, Session, SessionAction};
 use scribe_platform::audio_capture::LevelCallback;
-use scribe_platform::RawKey;
+use scribe_platform::HookEvent;
 
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
 use crate::overlay::{OverlayEvent, ToastLevel};
 use crate::services::{Services, UiSink};
 
 pub enum ControllerMsg {
-    Key(RawKey),
+    /// A real key event, with its trigger/lock edges decided by the hook (`scribe_platform::key_filter`).
+    Key(HookEvent),
     Tick,
     ProcessingDone,
     SettingsChanged,
@@ -53,16 +54,6 @@ pub struct ControllerDeps {
     pub recorder: Arc<dyn Recorder>,
     pub clock: Clock,
     pub spawn_processing: SpawnProcessing,
-}
-
-pub fn key_role(vk: u32, trigger_vk: u32, lock_vk: u32) -> KeyRole {
-    if vk == trigger_vk {
-        KeyRole::Trigger
-    } else if lock_vk != 0 && vk == lock_vk {
-        KeyRole::Lock
-    } else {
-        KeyRole::Other
-    }
 }
 
 /// Tray « Pause »: flips the hook pause flag, tells the controller, returns the new state.
@@ -164,21 +155,18 @@ impl Controller {
 
     pub fn handle(&mut self, msg: ControllerMsg) {
         match msg {
-            ControllerMsg::Key(k) => {
-                // A pending hotkey capture takes the next press, even while paused.
-                if k.down && self.svc.key_capture.offer(k.vk) {
+            ControllerMsg::Key(ev) => {
+                // A pending hotkey capture takes every key until the combination is released, even while paused.
+                if self.svc.key_capture.offer(ev.key) {
                     return;
                 }
                 if self.svc.hook_cfg.paused.load(Ordering::Relaxed) {
                     return;
                 }
-                let (trigger, lock) = {
-                    let s = self.svc.settings.read().unwrap();
-                    (s.trigger_vk, s.lock_vk)
-                };
-                let ev = KeyEvent { role: key_role(k.vk, trigger, lock), down: k.down, t_ms: k.t_ms };
-                let cmds = self.gesture.on_key(ev);
-                self.apply_gestures(cmds, k.t_ms);
+                for edge in ev.gestures {
+                    let cmds = self.gesture.on_key(edge);
+                    self.apply_gestures(cmds, edge.t_ms);
+                }
             }
             ControllerMsg::Tick => {
                 let now = (self.deps.clock)();
@@ -202,7 +190,7 @@ impl Controller {
                 let s = self.svc.settings.read().unwrap().clone();
                 self.gesture.set_config(s.gesture.clone());
                 self.session.set_max_recording_ms(s.max_recording_ms);
-                self.svc.hook_cfg.trigger_vk.store(s.trigger_vk, Ordering::Relaxed);
+                self.svc.hook_cfg.set_trigger(&s.trigger_keys);
                 self.svc.hook_cfg.lock_vk.store(s.lock_vk, Ordering::Relaxed);
             }
         }

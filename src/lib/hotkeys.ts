@@ -1,14 +1,14 @@
-import { keyName } from "./keys";
+import { chordContains, chordName, isModifier, keyName, reservedWarning } from "./keys";
 
 export type HotkeyRole = "trigger" | "lock";
-export interface Hotkeys { trigger_vk: number; lock_vk: number }
+export interface Hotkeys { trigger_keys: number[]; lock_vk: number }
 
-export const VK_ESCAPE = 0x1b;
+export const MAX_KEYS = 4;
 /** Shown when the 10 s capture window expires without a key press. */
 export const CAPTURE_TIMEOUT_MESSAGE = "Aucune touche détectée, raccourci inchangé";
-export const TYPING_KEY_WARNING = "Cette touche ne fonctionnera plus pour la saisie normale. Continuer ?";
+export const TYPING_KEY_WARNING = "Ce raccourci gênera la saisie normale de texte. Continuer ?";
 
-/** Keys used to type text: as the trigger (never swallowed by the hook) each press starts a dictation. */
+/** Keys used to type text: they are swallowed when they complete the trigger combination. */
 export function isTypingKey(vk: number): boolean {
   return (
     (vk >= 0x30 && vk <= 0x39) || // digits
@@ -18,36 +18,63 @@ export function isTypingKey(vk: number): boolean {
   );
 }
 
-/** How a capture_key call ended: the user cancelled (button or Échap), the window expired, or a key. */
-export function captureOutcome(vk: number | null, cancelled: boolean): "cancelled" | "timeout" | "key" {
-  if (cancelled || vk === VK_ESCAPE) return "cancelled";
-  return vk === null ? "timeout" : "key";
+/**
+ * How a capture_key call ended: the cancel button, Échap (the backend answers an empty combination: the
+ * hook swallows every key during a capture, so the page never sees Échap), the 10 s window, or keys.
+ */
+export function captureOutcome(keys: number[] | null, cancelled: boolean): "cancelled" | "timeout" | "keys" {
+  if (cancelled || keys?.length === 0) return "cancelled";
+  return keys === null ? "timeout" : "keys";
 }
 
 export type Assignment =
   | { ok: true; keys: Hotkeys; note: string | null; confirm: boolean }
   | { ok: false; note: string };
 
+const single = (keys: number[]) => (keys.length === 1 ? keys[0] : null);
+const sameKeys = (a: number[], b: number[]) => a.length === b.length && a.every((k, i) => k === b[i]);
+
 /**
- * Assigns a captured key to a role. Taking the other role's key swaps the two (the backend
- * rejects trigger == lock); `confirm` asks before making a typing key the trigger.
+ * Assigns a captured combination to a role (the backend rejects a lock key inside the trigger). Taking the
+ * other role's key swaps the two when both are single keys; `confirm` asks before a trigger made only of
+ * typing keys, which would be swallowed while typing.
  */
-export function assignHotkey(role: HotkeyRole, vk: number, cur: Hotkeys): Assignment {
+export function assignHotkey(role: HotkeyRole, captured: number[], cur: Hotkeys): Assignment {
   let keys: Hotkeys;
-  let note: string | null = null;
+  let swapped = false;
   if (role === "trigger") {
-    keys = vk === cur.lock_vk ? { trigger_vk: vk, lock_vk: cur.trigger_vk } : { ...cur, trigger_vk: vk };
-  } else if (vk === cur.trigger_vk) {
-    // No lock key to give back to the trigger: a swap would leave it empty.
-    if (cur.lock_vk === 0) return { ok: false, note: `${keyName(vk)} est déjà la touche de déclenchement.` };
-    keys = { trigger_vk: cur.lock_vk, lock_vk: vk };
+    if (captured.length > MAX_KEYS) return { ok: false, note: `Un raccourci compte au plus ${MAX_KEYS} touches.` };
+    const old = single(cur.trigger_keys);
+    if (chordContains(captured, cur.lock_vk)) {
+      if (single(captured) !== cur.lock_vk || old === null) {
+        return { ok: false, note: `${keyName(cur.lock_vk)} est la touche de verrouillage : elle ne peut pas faire partie du raccourci.` };
+      }
+      keys = { trigger_keys: [cur.lock_vk], lock_vk: old };
+      swapped = true;
+    } else {
+      keys = { ...cur, trigger_keys: captured };
+    }
   } else {
-    keys = { ...cur, lock_vk: vk };
+    const vk = single(captured);
+    if (vk === null) return { ok: false, note: "Le verrouillage se fait avec une seule touche." };
+    if (chordContains(cur.trigger_keys, vk)) {
+      if (single(cur.trigger_keys) !== vk) return { ok: false, note: `${keyName(vk)} fait partie du raccourci de déclenchement.` };
+      // No lock key to give back to the trigger: a swap would leave it empty.
+      if (cur.lock_vk === 0) return { ok: false, note: `${keyName(vk)} est déjà la touche de déclenchement.` };
+      keys = { trigger_keys: [cur.lock_vk], lock_vk: vk };
+      swapped = true;
+    } else {
+      keys = { ...cur, lock_vk: vk };
+    }
   }
-  const swapped = keys.trigger_vk === cur.lock_vk && keys.lock_vk === cur.trigger_vk && cur.trigger_vk !== cur.lock_vk;
-  if (swapped) note = `Touches échangées\u00a0: Déclenchement = ${keyName(keys.trigger_vk)}, Verrouillage = ${keyName(keys.lock_vk)}.`;
-  const confirm = keys.trigger_vk !== cur.trigger_vk && isTypingKey(keys.trigger_vk);
-  return { ok: true, keys, note, confirm };
+  const notes = [];
+  if (swapped) notes.push(`Touches échangées : Déclenchement = ${chordName(keys.trigger_keys)}, Verrouillage = ${keyName(keys.lock_vk)}.`);
+  const changed = !sameKeys(keys.trigger_keys, cur.trigger_keys);
+  const warning = changed ? reservedWarning(keys.trigger_keys) : null;
+  if (warning) notes.push(warning);
+  const t = keys.trigger_keys;
+  const confirm = changed && !t.some(isModifier) && t.some(isTypingKey);
+  return { ok: true, keys, note: notes.length ? notes.join(" ") : null, confirm };
 }
 
 /**
@@ -76,7 +103,7 @@ export function swallowsKey(
 
 /** What the confirmation before a typing-key trigger shows: the lock too when it changes (swap). */
 export function pendingSummary(next: Hotkeys, cur: Hotkeys): { trigger: string; lock: string | null } {
-  return { trigger: keyName(next.trigger_vk), lock: next.lock_vk !== cur.lock_vk ? keyName(next.lock_vk) : null };
+  return { trigger: chordName(next.trigger_keys), lock: next.lock_vk !== cur.lock_vk ? keyName(next.lock_vk) : null };
 }
 
 /**

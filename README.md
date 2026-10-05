@@ -20,6 +20,10 @@ et un modèle pour la transcription et pour la correction (par défaut OpenAI `g
 - **Maintenir** Ctrl droit : push-to-talk, relâcher pour transcrire.
 - **Double-tap** Ctrl droit : mode verrouillé, un nouvel appui arrête.
 - **Maintenir Ctrl droit + Espace** : verrouille en cours de dictée.
+- Le raccourci peut être une combinaison de 1 à 4 touches (Réglages > Raccourci > Changer, puis appuyer sur la
+  combinaison et relâcher), par exemple `Ctrl + Maj + A` ou `Win + Alt`. Elle se déclenche quand toutes ses
+  touches sont tenues et aucune autre ; dans une combinaison, Ctrl/Maj/Alt/Win valent des deux côtés. La touche
+  non modificatrice (le A) est avalée ; les modificateurs passent, et Alt/Win n'ouvrent pas de menu.
 - Si aucun champ texte n'est actif, le texte est copié et un toast propose de le voir.
 
 ## Tests et couverture
@@ -47,6 +51,10 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 - [ ] Copier une image, dicter, vérifier que l'image est restaurée.
 - [ ] Tenir la touche 3 s sans parler : rien n'est inséré.
 - [ ] Double-tap : pastille « Verrouillé », Ctrl+Espace ne parvient pas à l'application.
+- [ ] Raccourci `Ctrl + Maj + A` : dicte avec l'un ou l'autre Ctrl ; aucun « a » tapé ; Ctrl+A seul sélectionne toujours tout.
+- [ ] Raccourci `Win + Alt` : dicte, et le menu Démarrer ne s'ouvre pas au relâchement.
+- [ ] Pendant « Changer », Win/Alt/lettres n'ont aucun effet dans Windows ; Échap annule.
+- [ ] Win+L pendant le maintien, puis déverrouiller : le raccourci et Espace fonctionnent normalement.
 - [ ] La pastille n'enlève jamais le focus au champ.
 - [ ] Clé Anthropic invalide : texte brut inséré, toast « Inséré sans correction ».
 - [ ] Wi-Fi coupé : toast d'erreur, dictée « Erreur » dans l'historique, « Retranscrire » fonctionne après reconnexion.

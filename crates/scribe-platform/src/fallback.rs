@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn keyboard_hook_is_unavailable() {
-        let r = start_keyboard_hook(Arc::new(HookConfig::new(0xA3, 0x20)), Box::new(|_| {}));
+        let r = start_keyboard_hook(Arc::new(HookConfig::new(&[0xA3], 0x20)), Box::new(|_| {}));
         assert_eq!(r.err(), Some("hook clavier non disponible sur cette plateforme (Plan 3)".to_string()));
     }
 
