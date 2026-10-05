@@ -7,8 +7,8 @@
 
 pub const MAX_KEYS: usize = 4;
 pub const VK_ESCAPE: u32 = 0x1B;
-/// Unassigned key injected when a combination with Alt or Win is pressed, so that releasing Alt or Win
-/// does not open the window menu or the Start menu (AutoHotkey's « menu mask key », vkE8).
+/// Unassigned key injected when the combination is pressed (see [`needs_mask`]), so that Windows sees a key
+/// between the modifiers' press and release (AutoHotkey's « menu mask key », vkE8).
 pub const VK_MENU_MASK: u32 = 0xE8;
 
 const CTRL: [u32; 3] = [0x11, 0xA2, 0xA3];
@@ -25,6 +25,14 @@ pub fn is_modifier(vk: u32) -> bool {
 /// Alt and Windows open a menu when released alone.
 pub fn opens_menu(vk: u32) -> bool {
     ALT.contains(&vk) || WIN.contains(&vk)
+}
+
+/// Whether pressing the combination must inject `VK_MENU_MASK`: the hook lets modifiers through and swallows
+/// the other keys, so Windows would see Alt or Win released alone (menu, Start menu) or Ctrl + Maj pressed
+/// and released alone (keyboard layout switch).
+pub fn needs_mask(packed: u32) -> bool {
+    let has = |group: &[u32]| keys(packed).any(|k| group.contains(&k));
+    keys(packed).any(opens_menu) || (has(&CTRL) && has(&SHIFT))
 }
 
 const GROUPS: [&[u32]; 4] = [&CTRL, &SHIFT, &ALT, &WIN];
@@ -125,6 +133,8 @@ pub fn keys(packed: u32) -> impl Iterator<Item = u32> {
 /// How a capture ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recorded {
+    /// Not part of the capture: key-up or auto-repeat of a key already down when the capture started.
+    Ignored,
     Pending,
     /// All keys released: the largest set held at once (the latest one on a tie), in canonical order.
     Done(Vec<u32>),
@@ -144,7 +154,12 @@ impl ChordRecorder {
         Self::default()
     }
 
-    pub fn feed(&mut self, vk: u32, down: bool) -> Recorded {
+    /// `repeat`: an auto-repeat key-down (the key was already down).
+    pub fn feed(&mut self, vk: u32, down: bool, repeat: bool) -> Recorded {
+        if repeat && !self.held.contains(&vk) {
+            // E.g. the Entrée that clicked « Changer », still held past the repeat delay.
+            return Recorded::Ignored;
+        }
         if down {
             if vk == VK_ESCAPE {
                 return Recorded::Cancelled;
@@ -160,7 +175,7 @@ impl ChordRecorder {
         }
         // Key-up of a key held before the capture started (e.g. the Entrée that clicked « Changer »).
         let Some(i) = self.held.iter().position(|&k| k == vk) else {
-            return Recorded::Pending;
+            return Recorded::Ignored;
         };
         self.held.remove(i);
         if self.held.is_empty() {
@@ -308,8 +323,29 @@ mod tests {
         assert_eq!(pack(&[1, 2, 3, 4, 5]), pack(&[1, 2, 3, 4]), "only 4 keys fit");
     }
 
+    #[test]
+    fn repeats_of_a_captured_key_change_nothing() {
+        let mut r = ChordRecorder::new();
+        r.feed(LCTRL, true, false);
+        assert_eq!(r.feed(LCTRL, true, true), Recorded::Pending);
+        assert_eq!(r.feed(LCTRL, false, false), Recorded::Done(vec![LCTRL]));
+    }
+
+    #[test]
+    fn the_mask_is_needed_for_alt_win_and_ctrl_with_maj() {
+        assert!(needs_mask(pack(&[LALT, A])));
+        assert!(needs_mask(pack(&[LWIN, A])));
+        assert!(needs_mask(pack(&[0xA5])), "AltGr alone");
+        assert!(needs_mask(pack(&[LCTRL, LSHIFT, A])), "Ctrl + Maj would switch the layout");
+        assert!(needs_mask(pack(&[RCTRL, 0xA1])));
+        assert!(!needs_mask(pack(&[RCTRL])));
+        assert!(!needs_mask(pack(&[LCTRL, A])));
+        assert!(!needs_mask(pack(&[LSHIFT, A])));
+        assert!(!needs_mask(pack(&[A])));
+    }
+
     fn feed_all(r: &mut ChordRecorder, evs: &[(u32, bool)]) -> Vec<Recorded> {
-        evs.iter().map(|&(k, d)| r.feed(k, d)).collect()
+        evs.iter().map(|&(k, d)| r.feed(k, d, false)).collect()
     }
 
     #[test]
@@ -317,39 +353,40 @@ mod tests {
         let mut r = ChordRecorder::new();
         let out = feed_all(&mut r, &[(LCTRL, true), (LSHIFT, true), (A, true), (A, true), (A, false), (LCTRL, false)]);
         assert!(out.iter().all(|o| *o == Recorded::Pending));
-        assert_eq!(r.feed(LSHIFT, false), Recorded::Done(vec![LCTRL, LSHIFT, A]));
+        assert_eq!(r.feed(LSHIFT, false, false), Recorded::Done(vec![LCTRL, LSHIFT, A]));
     }
 
     #[test]
     fn records_a_single_key_and_modifier_only_combinations() {
         let mut r = ChordRecorder::new();
-        r.feed(RCTRL, true);
-        assert_eq!(r.feed(RCTRL, false), Recorded::Done(vec![RCTRL]));
+        r.feed(RCTRL, true, false);
+        assert_eq!(r.feed(RCTRL, false, false), Recorded::Done(vec![RCTRL]));
         let mut r = ChordRecorder::new();
         feed_all(&mut r, &[(LWIN, true), (LALT, true), (LWIN, false)]);
-        assert_eq!(r.feed(LALT, false), Recorded::Done(vec![LALT, LWIN]));
+        assert_eq!(r.feed(LALT, false, false), Recorded::Done(vec![LALT, LWIN]));
         let mut r = ChordRecorder::new();
         feed_all(&mut r, &[(RCTRL, true), (0xA1, true), (A, true), (A, false), (0xA1, false)]);
-        assert_eq!(r.feed(RCTRL, false), Recorded::Done(vec![LCTRL, LSHIFT, A]), "side-less in a combination");
+        assert_eq!(r.feed(RCTRL, false, false), Recorded::Done(vec![LCTRL, LSHIFT, A]), "side-less in a combination");
     }
 
     #[test]
     fn the_latest_largest_set_wins() {
         let mut r = ChordRecorder::new();
         feed_all(&mut r, &[(LCTRL, true), (LSHIFT, true), (LSHIFT, false), (A, true), (A, false)]);
-        assert_eq!(r.feed(LCTRL, false), Recorded::Done(vec![LCTRL, A]));
+        assert_eq!(r.feed(LCTRL, false, false), Recorded::Done(vec![LCTRL, A]));
         let mut r = ChordRecorder::new();
         feed_all(&mut r, &[(LCTRL, true), (LSHIFT, true), (A, true), (A, false), (LSHIFT, false)]);
-        assert_eq!(r.feed(LCTRL, false), Recorded::Done(vec![LCTRL, LSHIFT, A]), "a smaller set never replaces a larger one");
+        assert_eq!(r.feed(LCTRL, false, false), Recorded::Done(vec![LCTRL, LSHIFT, A]), "a smaller set never replaces a larger one");
     }
 
     #[test]
     fn escape_cancels_and_stray_key_ups_are_ignored() {
         let mut r = ChordRecorder::new();
-        assert_eq!(r.feed(0x0D, false), Recorded::Pending, "Entrée that clicked « Changer »");
-        r.feed(LCTRL, true);
-        assert_eq!(r.feed(VK_ESCAPE, true), Recorded::Cancelled);
+        assert_eq!(r.feed(0x0D, false, false), Recorded::Ignored, "key-up of the Entrée that clicked « Changer »");
+        assert_eq!(r.feed(0x0D, true, true), Recorded::Ignored, "its auto-repeat");
+        r.feed(LCTRL, true, false);
+        assert_eq!(r.feed(VK_ESCAPE, true, false), Recorded::Cancelled);
         let mut r = ChordRecorder::new();
-        assert_eq!(r.feed(VK_ESCAPE, true), Recorded::Cancelled);
+        assert_eq!(r.feed(VK_ESCAPE, true, false), Recorded::Cancelled);
     }
 }

@@ -85,6 +85,7 @@ pub fn get_settings(svc: Svc<'_>) -> Settings {
 #[tauri::command]
 pub fn save_settings(svc: Svc<'_>, settings: Settings) -> Result<(), String> {
     settings.validate()?;
+    let settings = settings.normalized();
     settings.save(&svc.paths.settings_path).map_err(err)?;
     *svc.settings.write().unwrap() = settings;
     svc.send_ctrl(ControllerMsg::SettingsChanged);

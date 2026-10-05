@@ -11,6 +11,10 @@ use scribe_core::gesture::{KeyEvent, KeyRole};
 
 use crate::{HookConfig, HookEvent, RawKey};
 
+const VK_LCONTROL: u32 = 0xA2;
+/// Scan code of the left Ctrl key-down/up that Windows sends before Alt droit on AltGr layouts (AZERTY…).
+pub const ALTGR_FAKE_CTRL_SCAN: u32 = 0x21D;
+
 /// What the hook does with one keyboard event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyDecision {
@@ -43,16 +47,20 @@ impl KeyFilter {
     /// desktop while keys are held): a stale « held » key would block or fake the combination, and a stale
     /// active combination would swallow the lock key (Space) system-wide. A `&dyn` rather than a generic, so
     /// the hook does not compile a second, untested copy of this function.
+    ///
+    /// `scan` is the hardware scan code: the left Ctrl that AltGr adds (`ALTGR_FAKE_CTRL_SCAN`) is ignored like
+    /// an injected event, so AltGr reads as Alt droit alone (as a trigger, and in a capture).
     pub fn on_event(
         &mut self,
         cfg: &HookConfig,
         vk: u32,
+        scan: u32,
         down: bool,
         injected: bool,
         t_ms: u64,
         is_pressed: &dyn Fn(u32) -> bool,
     ) -> KeyDecision {
-        if injected {
+        if injected || (vk == VK_LCONTROL && scan == ALTGR_FAKE_CTRL_SCAN) {
             return KeyDecision { event: None, swallow: false, inject_mask: false };
         }
         let trigger = cfg.trigger.load(Ordering::Relaxed);
@@ -63,10 +71,11 @@ impl KeyFilter {
         let edge = |role, down| KeyEvent { role, down, t_ms };
 
         // Combination changed in the settings while held, or one of its keys released unseen: end the press.
+        // The key of a key-up event is still down for `is_pressed`; a key-down of a combination key that is
+        // physically up is a new press after a lost key-up.
         if let Some(active) = self.active {
-            if active != trigger
-                || chord::keys(active).any(|k| !chord::same_key(active, k, vk) && !chord::key_pressed(active, k, is_pressed))
-            {
+            let lost = |k| (down || !chord::same_key(active, k, vk)) && !chord::key_pressed(active, k, is_pressed);
+            if active != trigger || chord::keys(active).any(lost) {
                 self.active = None;
                 gestures.push(edge(KeyRole::Trigger, false));
             }
@@ -92,7 +101,7 @@ impl KeyFilter {
                 if !paused && !capturing {
                     // Modifiers pass, so the system never sees them stuck; the other keys are the hotkey's own.
                     swallow |= !chord::is_modifier(vk);
-                    inject_mask = chord::keys(trigger).any(chord::opens_menu);
+                    inject_mask = chord::needs_mask(trigger);
                 }
             }
             if is_lock {
@@ -116,14 +125,13 @@ impl KeyFilter {
             self.swallowed.retain(|&k| k != vk);
             was_swallowed
         };
-        KeyDecision { event: Some(HookEvent { key: RawKey { vk, down, t_ms }, gestures }), swallow, inject_mask }
+        KeyDecision { event: Some(HookEvent { key: RawKey { vk, down, repeat, t_ms }, gestures }), swallow, inject_mask }
     }
 
     /// Whether `vk` going down completes the combination: all its keys held and no other key. Held keys that
     /// are physically up (lost key-up) are forgotten first.
     fn completes(&mut self, trigger: u32, vk: u32, is_pressed: &dyn Fn(u32) -> bool) -> bool {
         self.held.retain(|&k| k == vk || is_pressed(k));
-        self.swallowed.retain(|k| self.held.contains(k));
         chord::keys(trigger).all(|k| self.held.iter().any(|&h| chord::same_key(trigger, k, h)))
             && self.held.iter().all(|&h| chord::contains(trigger, h))
     }
@@ -164,7 +172,7 @@ mod tests {
             Self { cfg: HookConfig::new(trigger, lock), f: KeyFilter::new() }
         }
         fn with(&mut self, vk: u32, down: bool, is_pressed: &dyn Fn(u32) -> bool) -> KeyDecision {
-            self.f.on_event(&self.cfg, vk, down, false, 7, is_pressed)
+            self.f.on_event(&self.cfg, vk, 0, down, false, 7, is_pressed)
         }
         fn ev(&mut self, vk: u32, down: bool) -> KeyDecision {
             self.with(vk, down, &pressed)
@@ -177,17 +185,17 @@ mod tests {
     #[test]
     fn forwards_every_real_event_with_its_time() {
         let mut h = H::new(&[RCTRL], SPACE);
-        let d = h.f.on_event(&h.cfg, A, true, false, 42, &pressed);
+        let d = h.f.on_event(&h.cfg, A, 0, true, false, 42, &pressed);
         assert_eq!(
             d,
             KeyDecision {
-                event: Some(HookEvent { key: RawKey { vk: A, down: true, t_ms: 42 }, gestures: vec![] }),
+                event: Some(HookEvent { key: RawKey { vk: A, down: true, repeat: false, t_ms: 42 }, gestures: vec![] }),
                 swallow: false,
                 inject_mask: false
             }
         );
-        let d = h.f.on_event(&h.cfg, A, false, false, 43, &pressed);
-        assert_eq!(d.event.unwrap().key, RawKey { vk: A, down: false, t_ms: 43 });
+        let d = h.f.on_event(&h.cfg, A, 0, false, false, 43, &pressed);
+        assert_eq!(d.event.unwrap().key, RawKey { vk: A, down: false, repeat: false, t_ms: 43 });
     }
 
     #[test]
@@ -280,7 +288,16 @@ mod tests {
         let mut h = H::new(&[LCTRL, LSHIFT, A], SPACE);
         h.ev(LCTRL, true);
         h.ev(LSHIFT, true);
-        assert!(!h.ev(A, true).inject_mask, "no Alt or Win: nothing to mask");
+        assert!(h.ev(A, true).inject_mask, "Ctrl + Maj released alone would switch the keyboard layout");
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        h.ev(LCTRL, true);
+        assert!(!h.ev(A, true).inject_mask, "Ctrl + A: nothing to mask");
+        // No mask during a capture: every key is swallowed, the system sees neither Alt nor Win.
+        let mut h = H::new(&[LALT, LWIN], SPACE);
+        h.cfg.capturing.store(true, Ordering::Relaxed);
+        h.ev(LWIN, true);
+        let d = h.ev(LALT, true);
+        assert!(d.swallow && !d.inject_mask);
     }
 
     #[test]
@@ -369,14 +386,14 @@ mod tests {
     #[test]
     fn injected_events_are_ignored_and_do_not_change_state() {
         let mut h = H::new(&[RCTRL], SPACE);
-        let d = h.f.on_event(&h.cfg, RCTRL, true, true, 1, &pressed);
+        let d = h.f.on_event(&h.cfg, RCTRL, 0, true, true, 1, &pressed);
         assert_eq!(d, KeyDecision { event: None, swallow: false, inject_mask: false });
         assert!(!h.ev(SPACE, true).swallow, "an injected trigger-down does not arm the lock");
         h.ev(SPACE, false);
         h.ev(RCTRL, true);
-        let d = h.f.on_event(&h.cfg, SPACE, true, true, 1, &pressed);
+        let d = h.f.on_event(&h.cfg, SPACE, 0, true, true, 1, &pressed);
         assert_eq!(d, KeyDecision { event: None, swallow: false, inject_mask: false });
-        h.f.on_event(&h.cfg, RCTRL, false, true, 1, &pressed);
+        h.f.on_event(&h.cfg, RCTRL, 0, false, true, 1, &pressed);
         assert!(h.ev(SPACE, true).swallow, "an injected trigger-up does not disarm the lock");
     }
 
@@ -469,6 +486,60 @@ mod tests {
         assert_eq!(h.gestures(LCTRL, true), vec![], "the left Ctrl of Ctrl+C is not the trigger");
         h.ev(LCTRL, false);
         assert_eq!(h.gestures(RCTRL, true), vec![trig(true)]);
+    }
+
+    #[test]
+    fn altgr_reads_as_alt_droit_alone() {
+        // AltGr = fake left Ctrl (scan 0x21D) then Alt droit.
+        let altgr = |h: &mut H, down: bool| {
+            let fake = h.f.on_event(&h.cfg, LCTRL, ALTGR_FAKE_CTRL_SCAN, down, false, 7, &pressed);
+            assert_eq!(fake, KeyDecision { event: None, swallow: false, inject_mask: false }, "ignored, passed through");
+            h.ev(0xA5, down)
+        };
+        let mut h = H::new(&[0xA5], SPACE);
+        assert_eq!(altgr(&mut h, true).event.unwrap().gestures, vec![trig(true)], "AltGr as the trigger fires");
+        assert_eq!(altgr(&mut h, false).event.unwrap().gestures, vec![trig(false)]);
+        // With Ctrl + Alt as the trigger, AltGr + @ is not the combination.
+        let mut h = H::new(&[LCTRL, LALT], SPACE);
+        assert_eq!(altgr(&mut h, true).event.unwrap().gestures, vec![]);
+        // The real left Ctrl (scan 0x1D) is a key like any other.
+        let d = h.f.on_event(&h.cfg, LCTRL, 0x1D, true, false, 7, &pressed);
+        assert!(d.event.is_some());
+    }
+
+    #[test]
+    fn a_lost_key_up_of_the_completing_key_makes_the_next_press_a_new_tap() {
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        h.ev(LCTRL, true);
+        assert_eq!(h.gestures(A, true), vec![trig(true)]); // A's key-up is lost
+        let d = h.with(A, true, &|vk| vk != A);
+        assert_eq!(d.event.as_ref().unwrap().gestures, vec![trig(false), trig(true)], "release then a new press");
+        assert!(d.swallow);
+        assert!(!d.event.unwrap().key.repeat);
+        let d = h.ev(A, true);
+        assert!(d.event.unwrap().key.repeat, "a real auto-repeat");
+    }
+
+    #[test]
+    fn a_swallowed_key_whose_key_up_was_lost_types_normally_afterwards() {
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        h.ev(LCTRL, true);
+        assert!(h.ev(A, true).swallow); // A's key-up is lost, then Ctrl is released
+        h.ev(LCTRL, false);
+        // A pressed alone: the stale swallow must not carry over to its down or its up.
+        let d = h.with(A, true, &|vk| vk != A);
+        assert!(!d.swallow);
+        assert!(!h.ev(A, false).swallow);
+        // Same when the stale key is dropped while checking another completion.
+        let mut h = H::new(&[LCTRL, A], SPACE);
+        h.ev(LCTRL, true);
+        assert!(h.ev(A, true).swallow); // lost key-up
+        h.ev(LCTRL, false);
+        h.with(LCTRL, true, &|vk| vk != A); // forgets A
+        h.ev(LCTRL, false);
+        h.ev(0x42, true);
+        assert!(!h.ev(A, true).swallow, "B is held: no combination");
+        assert!(!h.ev(A, false).swallow, "the key-up of an unswallowed press passes");
     }
 
     #[test]

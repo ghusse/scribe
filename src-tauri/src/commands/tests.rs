@@ -101,9 +101,10 @@ fn glossary_commands_round_trip() {
 #[test]
 fn valid_settings_are_saved_applied_and_announced() {
     let f = Fixture::new();
-    let new = Settings { level: Level::Clean, trigger_keys: vec![0xA2], ..Default::default() };
+    let new = Settings { level: Level::Clean, trigger_keys: vec![0xA2, 0x41], ..Default::default() };
     with_state(&f, |s| {
-        save_settings(s.clone(), new.clone()).unwrap();
+        // Saved and applied in canonical order.
+        save_settings(s.clone(), Settings { trigger_keys: vec![0x41, 0xA3], ..new.clone() }).unwrap();
         assert_eq!(get_settings(s), new);
     });
     assert_eq!(Settings::load(&f.svc.paths.settings_path), new);
@@ -183,8 +184,8 @@ fn capture_key_returns_the_next_press_or_none_when_cancelled() {
         while !svc.key_capture.is_pending() {
             std::thread::yield_now();
         }
-        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: true, t_ms: 0 }));
-        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: false, t_ms: 1 }));
+        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: true, repeat: false, t_ms: 0 }));
+        assert!(svc.key_capture.offer(RawKey { vk: 0x41, down: false, repeat: false, t_ms: 1 }));
     });
     let key = with_state(&f, |s| tauri::async_runtime::block_on(capture_key(s)));
     presser.join().unwrap();

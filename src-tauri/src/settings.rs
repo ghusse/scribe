@@ -79,7 +79,7 @@ impl Settings {
         match std::fs::read_to_string(path) {
             Ok(text) => match serde_json::from_str::<Settings>(&text) {
                 Ok(s) => match s.validate() {
-                    Ok(()) => s,
+                    Ok(()) => s.normalized(),
                     Err(e) => {
                         tracing::warn!("réglages invalides ({e}), valeurs par défaut utilisées");
                         Settings::default()
@@ -98,6 +98,12 @@ impl Settings {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self).expect("serialize settings"))?;
         std::fs::rename(tmp, path)
+    }
+
+    /// Canonical form, applied after `validate`: the trigger keys in `chord::normalize` order.
+    pub fn normalized(mut self) -> Self {
+        self.trigger_keys = chord::normalize(&self.trigger_keys);
+        self
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -219,6 +225,16 @@ mod tests {
         let json = std::fs::read_to_string(&path).unwrap();
         assert!(json.contains("\"trigger_keys\"") && !json.contains("trigger_vk"), "{json}");
         assert_eq!(Settings::load(&path), s);
+    }
+
+    #[test]
+    fn trigger_keys_are_put_in_canonical_order() {
+        let s = Settings { trigger_keys: vec![0x41, 0xA3, 0xA0], ..Default::default() }.normalized();
+        assert_eq!(s.trigger_keys, vec![0xA2, 0xA0, 0x41]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"trigger_keys":[65,163]}"#).unwrap();
+        assert_eq!(Settings::load(&path).trigger_keys, vec![0xA2, 0x41]);
     }
 
     #[test]

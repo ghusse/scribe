@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::AtomicU32;
 use std::sync::Mutex;
 
@@ -58,6 +59,8 @@ struct Harness {
     jobs: Arc<Mutex<Vec<Job>>>,
     /// Turns raw keys into hook events as the real hook does.
     filter: KeyFilter,
+    /// Physical key state, as `GetAsyncKeyState` reports it.
+    pressed: Arc<Mutex<HashSet<u32>>>,
     _done_rx: Receiver<ControllerMsg>,
 }
 
@@ -72,20 +75,38 @@ impl Harness {
         let jobs = Arc::new(Mutex::new(Vec::new()));
         let clock_now = now.clone();
         let spawned = jobs.clone();
+        let pressed = Arc::new(Mutex::new(HashSet::new()));
+        let state = pressed.clone();
         let deps = ControllerDeps {
             recorder: rec.clone(),
             clock: Arc::new(move || clock_now.load(Ordering::SeqCst)),
             spawn_processing: Box::new(move |_svc, job, _tx| spawned.lock().unwrap().push(job)),
+            is_pressed: Arc::new(move |vk| state.lock().unwrap().contains(&vk)),
         };
         let (tx, done_rx) = mpsc::channel();
         let c = Controller::new(f.svc.clone(), tx, deps);
-        Self { f, c, rec, now, jobs, filter: KeyFilter::new(), _done_rx: done_rx }
+        Self { f, c, rec, now, jobs, filter: KeyFilter::new(), pressed, _done_rx: done_rx }
     }
 
     fn key(&mut self, vk: u32, down: bool, t_ms: u64) {
         self.now.store(t_ms, Ordering::SeqCst);
-        let d = self.filter.on_event(&self.f.svc.hook_cfg, vk, down, false, t_ms, &|_| true);
+        // The hook runs before the key state is updated.
+        let d = {
+            let pressed = self.pressed.lock().unwrap();
+            self.filter.on_event(&self.f.svc.hook_cfg, vk, 0, down, false, t_ms, &|k| pressed.contains(&k))
+        };
+        self.set_pressed(vk, down);
         self.c.handle(ControllerMsg::Key(d.event.unwrap()));
+    }
+
+    /// Changes the physical state only: the hook never sees it (key-up lost).
+    fn set_pressed(&self, vk: u32, down: bool) {
+        let mut pressed = self.pressed.lock().unwrap();
+        if down {
+            pressed.insert(vk);
+        } else {
+            pressed.remove(&vk);
+        }
     }
 
     fn tick(&mut self, t_ms: u64) {
@@ -287,6 +308,74 @@ fn pausing_discards_the_recording_and_ignores_keys() {
 }
 
 #[test]
+fn a_press_whose_key_up_is_lost_is_discarded_after_a_grace_period() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.tick(400);
+    h.set_pressed(TRIGGER, false); // Win+L: the key-up goes to the secure desktop
+    h.tick(1_000);
+    assert_eq!(h.stopped(), 0, "a real key-up may still be queued");
+    h.tick(1_499);
+    assert_eq!(h.stopped(), 0);
+    h.tick(1_500);
+    assert_eq!(h.stopped(), 1, "discarded");
+    assert!(h.jobs.lock().unwrap().is_empty(), "never pasted");
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Idle));
+    // After the unlock, the next press records again.
+    h.key(TRIGGER, true, 60_000);
+    assert_eq!(h.started(), 2);
+}
+
+#[test]
+fn the_lost_release_timer_restarts_when_the_key_is_seen_down_again() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.set_pressed(TRIGGER, false);
+    h.tick(100);
+    h.set_pressed(TRIGGER, true);
+    h.tick(400);
+    h.set_pressed(TRIGGER, false);
+    h.tick(700);
+    h.tick(1_100);
+    assert_eq!(h.stopped(), 0, "up for 400 ms only since it was last seen down");
+    h.tick(1_200);
+    assert_eq!(h.stopped(), 1);
+}
+
+#[test]
+fn a_locked_recording_survives_a_released_trigger() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 100);
+    h.key(TRIGGER, true, 200);
+    h.key(TRIGGER, false, 250); // locked, hands free
+    h.tick(2_000);
+    h.tick(3_000);
+    assert_eq!(h.stopped(), 0);
+}
+
+#[test]
+fn a_hotkey_capture_completes_while_paused() {
+    let mut h = Harness::new();
+    h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
+    let (_, rx) = h.f.svc.key_capture.begin();
+    h.key(0x77, true, 0);
+    h.key(0x77, false, 10);
+    assert_eq!(rx.try_recv(), Ok(vec![0x77]));
+    assert!(!h.f.svc.hook_cfg.capturing.load(Ordering::Relaxed), "the keyboard is given back");
+}
+
+#[test]
+fn releasing_a_trigger_held_before_a_capture_still_stops_the_dictation() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    let (_, _rx) = h.f.svc.key_capture.begin();
+    h.key(TRIGGER, false, 800);
+    assert_eq!(h.job_modes(), vec![Mode::Hold]);
+    assert!(h.f.svc.key_capture.is_pending());
+}
+
+#[test]
 fn a_pending_hotkey_capture_takes_every_key_until_the_combination_is_released() {
     let mut h = Harness::new();
     h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
@@ -394,11 +483,12 @@ fn spawned_controller_handles_messages_on_its_thread() {
         recorder: Arc::new(FakeRecorder::default()),
         clock: Arc::new(|| 0),
         spawn_processing: Box::new(|_, _, _| {}),
+        is_pressed: Arc::new(|_| true),
     };
     spawn(f.svc.clone(), rx, tx.clone(), deps);
     let (_, capture) = f.svc.key_capture.begin();
     for down in [true, false] {
-        tx.send(ControllerMsg::Key(HookEvent { key: RawKey { vk: 0x42, down, t_ms: 0 }, gestures: vec![] })).unwrap();
+        tx.send(ControllerMsg::Key(HookEvent { key: RawKey { vk: 0x42, down, repeat: false, t_ms: 0 }, gestures: vec![] })).unwrap();
     }
     assert_eq!(capture.recv_timeout(Duration::from_secs(5)), Ok(vec![0x42]));
 }

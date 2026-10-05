@@ -31,6 +31,7 @@ export type Assignment =
   | { ok: true; keys: Hotkeys; note: string | null; confirm: boolean }
   | { ok: false; note: string };
 
+const isShift = (vk: number) => vk === 0x10 || vk === 0xa0 || vk === 0xa1;
 const single = (keys: number[]) => (keys.length === 1 ? keys[0] : null);
 const sameKeys = (a: number[], b: number[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 
@@ -73,7 +74,8 @@ export function assignHotkey(role: HotkeyRole, captured: number[], cur: Hotkeys)
   const warning = changed ? reservedWarning(keys.trigger_keys) : null;
   if (warning) notes.push(warning);
   const t = keys.trigger_keys;
-  const confirm = changed && !t.some(isModifier) && t.some(isTypingKey);
+  // Maj alone does not keep typing safe: Maj + A would swallow every capital A.
+  const confirm = changed && !t.some((k) => isModifier(k) && !isShift(k)) && t.some(isTypingKey);
   return { ok: true, keys, note: notes.length ? notes.join(" ") : null, confirm };
 }
 

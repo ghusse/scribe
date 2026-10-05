@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use scribe_core::audio::AudioClip;
+use scribe_core::chord;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
 use scribe_core::session::{self, Session, SessionAction};
@@ -50,11 +51,20 @@ pub struct Job {
 /// Runs a job off the controller thread and sends `ProcessingDone` when it is over.
 pub type SpawnProcessing = Box<dyn Fn(Arc<Services>, Job, Sender<ControllerMsg>) + Send>;
 
+/// Physical key state (`scribe_platform::is_key_pressed` in the app).
+pub type KeyState = Arc<dyn Fn(u32) -> bool + Send + Sync>;
+
 pub struct ControllerDeps {
     pub recorder: Arc<dyn Recorder>,
     pub clock: Clock,
     pub spawn_processing: SpawnProcessing,
+    pub is_pressed: KeyState,
 }
+
+/// How long the trigger must look physically up, while the detector still sees it held, before the press
+/// is considered lost (Win+L sends the key-up to the secure desktop, never to the hook). Long enough that a
+/// real key-up, already queued behind a tick, always wins.
+pub const LOST_RELEASE_MS: u64 = 500;
 
 /// Tray « Pause »: flips the hook pause flag, tells the controller, returns the new state.
 pub fn toggle_pause(svc: &Services) -> bool {
@@ -91,6 +101,8 @@ pub struct Controller {
     /// The start focus snapshot is resolved off the controller thread (it can take up to
     /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
     recording: Option<(Box<dyn Recording>, Receiver<FocusSnapshot>)>,
+    /// Since when the trigger looks physically up while the detector sees it held.
+    released_since: Option<u64>,
 }
 
 fn spawn_focus_snapshot(svc: &Services) -> Receiver<FocusSnapshot> {
@@ -150,6 +162,7 @@ impl Controller {
             session: Session::new(s.max_recording_ms),
             mode: Mode::Hold,
             recording: None,
+            released_since: None,
         }
     }
 
@@ -172,6 +185,7 @@ impl Controller {
                 let now = (self.deps.clock)();
                 let cmds = self.gesture.on_tick(now);
                 self.apply_gestures(cmds, now);
+                self.check_lost_release(now);
                 if let Some(action) = self.session.on_tick(now) {
                     self.gesture.reset();
                     self.apply_action(action);
@@ -193,6 +207,27 @@ impl Controller {
                 self.svc.hook_cfg.set_trigger(&s.trigger_keys);
                 self.svc.hook_cfg.lock_vk.store(s.lock_vk, Ordering::Relaxed);
             }
+        }
+    }
+
+    /// A press whose key-up never reached the hook (session locked while dictating) is dropped: the
+    /// recording is discarded rather than pasted into whatever has the focus after the unlock.
+    fn check_lost_release(&mut self, now: u64) {
+        let trigger = self.svc.hook_cfg.trigger.load(Ordering::Relaxed);
+        let is_pressed = self.deps.is_pressed.as_ref();
+        let physically_held = chord::keys(trigger).all(|k| chord::key_pressed(trigger, k, is_pressed));
+        if !self.gesture.trigger_held() || physically_held {
+            self.released_since = None;
+            return;
+        }
+        let since = *self.released_since.get_or_insert(now);
+        if now.saturating_sub(since) < LOST_RELEASE_MS {
+            return;
+        }
+        self.released_since = None;
+        self.gesture.reset();
+        if let Some(action) = self.session.on_paused() {
+            self.apply_action(action);
         }
     }
 

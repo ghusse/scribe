@@ -20,6 +20,8 @@ use scribe_core::gesture::KeyEvent;
 pub struct RawKey {
     pub vk: u32,
     pub down: bool,
+    /// Auto-repeat key-down (the key was already down).
+    pub repeat: bool,
     pub t_ms: u64,
 }
 
@@ -58,6 +60,6 @@ impl HookConfig {
 pub type KeyCallback = Box<dyn Fn(HookEvent) + Send + Sync>;
 
 #[cfg(not(windows))]
-pub use fallback::{focus_detector, hide_overlay, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};
+pub use fallback::{focus_detector, hide_overlay, is_key_pressed, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};
 #[cfg(windows)]
-pub use windows::{focus_detector, hide_overlay, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};
+pub use windows::{focus_detector, hide_overlay, is_key_pressed, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};

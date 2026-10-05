@@ -7,6 +7,11 @@ use scribe_core::insert::KeySender;
 
 pub struct WinKeySender;
 
+/// Physical key state (any thread; async state of the input desktop, all keys up while the session is locked).
+pub fn is_key_pressed(vk: u32) -> bool {
+    unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState(vk as i32) < 0 }
+}
+
 /// Taps `chord::VK_MENU_MASK` so that releasing Alt or Win opens no menu. Injected, so the hook ignores it.
 pub fn send_menu_mask() {
     let vk = VIRTUAL_KEY(scribe_core::chord::VK_MENU_MASK as u16);

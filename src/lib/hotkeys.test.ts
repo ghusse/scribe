@@ -49,6 +49,10 @@ describe("assignHotkey", () => {
     expect(assignHotkey("trigger", [A], cur)).toMatchObject({ ok: true, confirm: true });
     expect(assignHotkey("trigger", [A, B], cur)).toMatchObject({ ok: true, confirm: true });
     expect(assignHotkey("trigger", [CTRL_L, A], cur)).toMatchObject({ ok: true, confirm: false });
+    expect(assignHotkey("trigger", [SHIFT_L, A], cur)).toMatchObject({ ok: true, confirm: true });
+    expect(assignHotkey("trigger", [0xa1, A], cur)).toMatchObject({ ok: true, confirm: true });
+    expect(assignHotkey("trigger", [CTRL_L, SHIFT_L, A], cur)).toMatchObject({ ok: true, confirm: false });
+    expect(assignHotkey("trigger", [SHIFT_L, F8], cur)).toMatchObject({ ok: true, confirm: false });
     expect(assignHotkey("trigger", [F8, A], cur)).toMatchObject({ ok: true, confirm: true });
     expect(assignHotkey("lock", [A], cur)).toMatchObject({ ok: true, confirm: false });
   });

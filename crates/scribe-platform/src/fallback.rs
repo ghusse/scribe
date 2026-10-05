@@ -39,6 +39,11 @@ pub fn key_sender() -> Arc<dyn KeySender> {
     Arc::new(NoKeys)
 }
 
+/// Physical key state: unknown here, reported as up (there is no hook, so no trigger is ever held).
+pub fn is_key_pressed(_vk: u32) -> bool {
+    false
+}
+
 pub fn prepare_overlay(_raw_hwnd: isize) {}
 
 pub fn show_overlay(_raw_hwnd: isize) {}
@@ -53,6 +58,11 @@ mod tests {
     fn keyboard_hook_is_unavailable() {
         let r = start_keyboard_hook(Arc::new(HookConfig::new(&[0xA3], 0x20)), Box::new(|_| {}));
         assert_eq!(r.err(), Some("hook clavier non disponible sur cette plateforme (Plan 3)".to_string()));
+    }
+
+    #[test]
+    fn keys_are_reported_up() {
+        assert!(!is_key_pressed(0xA3));
     }
 
     #[test]

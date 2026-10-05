@@ -84,6 +84,11 @@ impl GestureDetector {
         self.cfg = cfg;
     }
 
+    /// Whether the detector believes the trigger is physically held.
+    pub fn trigger_held(&self) -> bool {
+        matches!(self.state, State::Pressed { .. } | State::LockedHeld | State::StopHeld)
+    }
+
     pub fn reset(&mut self) {
         self.state = State::Idle;
     }
@@ -170,8 +175,27 @@ mod tests {
     #[test]
     fn hold_starts_on_press_and_stops_on_release() {
         let mut d = det();
+        assert!(!d.trigger_held());
         assert_eq!(d.on_key(trig(true, 0)), vec![Start]);
+        assert!(d.trigger_held());
         assert_eq!(d.on_key(trig(false, 800)), vec![Stop]);
+        assert!(!d.trigger_held());
+    }
+
+    #[test]
+    fn trigger_held_follows_every_state() {
+        let mut d = det();
+        d.on_key(trig(true, 0));
+        d.on_key(trig(false, 100));
+        assert!(!d.trigger_held(), "awaiting the second tap");
+        d.on_key(trig(true, 200));
+        assert!(d.trigger_held(), "locked, still held");
+        d.on_key(trig(false, 300));
+        assert!(!d.trigger_held(), "locked");
+        d.on_key(trig(true, 5_000));
+        assert!(d.trigger_held(), "stopping press");
+        d.reset();
+        assert!(!d.trigger_held());
     }
 
     #[test]

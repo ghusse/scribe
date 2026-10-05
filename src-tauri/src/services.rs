@@ -113,13 +113,15 @@ impl KeyCapture {
     }
 
     /// Hands a key event to the pending capture, if any. Returns whether it was taken (then it is not a
-    /// gesture). The capture sends the combination once all keys are released, or an empty one on Échap.
+    /// gesture); events of keys already down when the capture started are not. The capture sends the combination once all keys are released, or an empty one on Échap.
     pub fn offer(&self, key: RawKey) -> bool {
         let mut state = self.state.lock().unwrap();
         let Some(pending) = state.1.as_mut() else {
             return false;
         };
-        let done = match pending.recorder.feed(key.vk, key.down) {
+        let done = match pending.recorder.feed(key.vk, key.down, key.repeat) {
+            // A key held from before the capture: its events stay gestures (e.g. releasing the trigger).
+            Recorded::Ignored => return false,
             Recorded::Pending => return true,
             Recorded::Done(keys) => keys,
             Recorded::Cancelled => Vec::new(),
@@ -188,7 +190,7 @@ mod tests {
     }
 
     fn key(vk: u32, down: bool) -> RawKey {
-        RawKey { vk, down, t_ms: 0 }
+        RawKey { vk, down, repeat: false, t_ms: 0 }
     }
 
     #[test]
@@ -211,6 +213,19 @@ mod tests {
         assert!(!kc.is_pending());
         assert!(!kc.hook.capturing.load(Ordering::Relaxed), "the keyboard works again");
         assert!(!kc.offer(key(0x42, true)), "the capture is over");
+    }
+
+    #[test]
+    fn keys_held_before_the_capture_are_left_to_the_gestures() {
+        let kc = kc();
+        let (_, rx) = kc.begin();
+        assert!(!kc.offer(key(0xA3, false)), "release of the trigger held when the capture began");
+        assert!(!kc.offer(RawKey { vk: 0x0D, down: true, repeat: true, t_ms: 0 }), "auto-repeat of the Entrée that clicked");
+        assert!(kc.is_pending());
+        assert!(kc.offer(key(0x77, true)));
+        assert!(kc.offer(RawKey { vk: 0x77, down: true, repeat: true, t_ms: 0 }));
+        assert!(kc.offer(key(0x77, false)));
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)), Ok(vec![0x77]));
     }
 
     #[test]

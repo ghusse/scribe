@@ -88,6 +88,7 @@ fn main() {
                 recorder: Arc::new(CpalRecorder),
                 clock: Arc::new(scribe_core::clock::now_ms),
                 spawn_processing: Box::new(controller::spawn_processing),
+                is_pressed: Arc::new(scribe_platform::is_key_pressed),
             };
             controller::spawn(svc, rx, tx, deps);
             if needs_setup {
