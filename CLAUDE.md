@@ -37,11 +37,13 @@ threshold, the Rust regex and the set of Rust files it actually excludes, the vi
 thresholds, and the two CI coverage steps.
 
 - Threshold (lines, every language): `95`
-- Rust ignore regex (`package.json` > `coverage:rust`): `crates.scribe-platform.src.windows.|src-tauri.src.main[.]rs`
+- Rust ignore regex (`package.json` > `coverage:rust`):
+  `crates.scribe-platform.src.windows.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
 - Rust files excluded by that regex: `crates/scribe-platform/src/windows/focus.rs`,
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
-  `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`
+  `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
+  `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
 - UI excludes (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.ts`, `src/main/main.ts`,
   `src/overlay/overlay.ts`, `preview/**`
 - UI per-language thresholds (`vitest.config.ts` > `coverage.thresholds`): `src/**/*.ts`, `src/**/*.svelte`
@@ -50,6 +52,8 @@ thresholds, and the two CI coverage steps.
 |---|---|
 | `crates/scribe-platform/src/windows/` (`focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation); needs a live desktop session. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
+| `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
+| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
 | `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
@@ -61,6 +65,11 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
   propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.
 - `windows/keys.rs`, `windows/window.rs`: Win32 calls only.
+- `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
+  `match` and the left-click filter.
+- `adapters.rs`: overlay state/dismiss rules are `overlay::Overlay`, placement is `overlay::overlay_position`, the
+  level throttle is `controller::level_emitter`. Remaining branches: `raw_hwnd` `Some` (Win32 show/hide) / `None`
+  (webview show/hide) and the `if let Some(window)` guards.
 - `main.rs`: `bootstrap::needs_setup` (same case table as `missingKeys` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
   the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if needs_setup { show_main }`, and the

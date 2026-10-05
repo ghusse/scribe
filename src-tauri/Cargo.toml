@@ -22,3 +22,5 @@ scribe-platform = { path = "../crates/scribe-platform" }
 
 [dev-dependencies]
 tempfile = "3"
+# Mock runtime: commands are tested with a real `State` (tauri::test::mock_app).
+tauri = { version = "2", features = ["tray-icon", "test"] }

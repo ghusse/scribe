@@ -3,18 +3,16 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::Emitter;
-
-use scribe_core::clock;
+use scribe_core::audio::AudioClip;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, KeyEvent, KeyRole, Mode};
 use scribe_core::session::{self, Session, SessionAction};
-use scribe_platform::audio_capture::{start_recording, LevelCallback, RecordingHandle};
+use scribe_platform::audio_capture::LevelCallback;
 use scribe_platform::RawKey;
 
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
-use crate::overlay::{self, OverlayEvent, ToastLevel};
-use crate::services::Services;
+use crate::overlay::{OverlayEvent, ToastLevel};
+use crate::services::{Services, UiSink};
 
 pub enum ControllerMsg {
     Key(RawKey),
@@ -24,6 +22,37 @@ pub enum ControllerMsg {
     /// Sent by the tray after flipping `hook_cfg.paused`; carries the new value so a quick
     /// on/off toggle still discards the recording that was in flight when pause was set.
     PauseChanged(bool),
+}
+
+/// Microphone access (cpal in the app).
+pub trait Recorder: Send + Sync {
+    fn start(&self, on_level: LevelCallback) -> Result<Box<dyn Recording>, String>;
+}
+
+/// A recording in progress.
+pub trait Recording: Send {
+    /// Stops capture and returns 16 kHz mono audio.
+    fn stop(self: Box<Self>) -> Result<AudioClip, String>;
+}
+
+/// Monotonic milliseconds, same clock as the keyboard hook timestamps.
+pub type Clock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+/// A finished recording handed over to processing.
+pub struct Job {
+    pub clip: AudioClip,
+    pub mode: Mode,
+    /// Resolves to the focus snapshot taken when the recording began.
+    pub focus_start: Receiver<FocusSnapshot>,
+}
+
+/// Runs a job off the controller thread and sends `ProcessingDone` when it is over.
+pub type SpawnProcessing = Box<dyn Fn(Arc<Services>, Job, Sender<ControllerMsg>) + Send>;
+
+pub struct ControllerDeps {
+    pub recorder: Arc<dyn Recorder>,
+    pub clock: Clock,
+    pub spawn_processing: SpawnProcessing,
 }
 
 pub fn key_role(vk: u32, trigger_vk: u32, lock_vk: u32) -> KeyRole {
@@ -36,15 +65,41 @@ pub fn key_role(vk: u32, trigger_vk: u32, lock_vk: u32) -> KeyRole {
     }
 }
 
-struct Controller {
+/// Tray « Pause »: flips the hook pause flag, tells the controller, returns the new state.
+pub fn toggle_pause(svc: &Services) -> bool {
+    let paused = !svc.hook_cfg.paused.load(Ordering::Relaxed);
+    svc.hook_cfg.paused.store(paused, Ordering::Relaxed);
+    // The controller drops an in-flight recording on pause.
+    svc.send_ctrl(ControllerMsg::PauseChanged(paused));
+    paused
+}
+
+/// Forwards the microphone level to the UI at most every `min_interval_ms`.
+pub fn level_emitter(ui: Arc<dyn UiSink>, clock: Clock, min_interval_ms: u64) -> LevelCallback {
+    // u64::MAX = « never emitted »: the first level always goes through.
+    let last = Arc::new(AtomicU64::new(u64::MAX));
+    Arc::new(move |rms: f32| {
+        let now = clock();
+        let prev = last.load(Ordering::Relaxed);
+        if prev == u64::MAX || now.saturating_sub(prev) >= min_interval_ms {
+            last.store(now, Ordering::Relaxed);
+            ui.audio_level(rms);
+        }
+    })
+}
+
+const LEVEL_INTERVAL_MS: u64 = 50;
+
+pub struct Controller {
     svc: Arc<Services>,
     tx: Sender<ControllerMsg>,
+    deps: ControllerDeps,
     gesture: GestureDetector,
     session: Session,
     mode: Mode,
     /// The start focus snapshot is resolved off the controller thread (it can take up to
     /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
-    recording: Option<(RecordingHandle, Receiver<FocusSnapshot>)>,
+    recording: Option<(Box<dyn Recording>, Receiver<FocusSnapshot>)>,
 }
 
 fn spawn_focus_snapshot(svc: &Services) -> Receiver<FocusSnapshot> {
@@ -56,7 +111,22 @@ fn spawn_focus_snapshot(svc: &Services) -> Receiver<FocusSnapshot> {
     rx
 }
 
-pub fn spawn(svc: Arc<Services>, rx: Receiver<ControllerMsg>, tx: Sender<ControllerMsg>) {
+/// The app's `SpawnProcessing`: runs `dictation::process` on the async runtime.
+pub fn spawn_processing(svc: Arc<Services>, job: Job, tx: Sender<ControllerMsg>) {
+    tauri::async_runtime::spawn(async move {
+        // Sent on drop, so a panic in process() cannot leave the session stuck in Processing.
+        let _done = ProcessingDoneGuard(tx);
+        let rx = job.focus_start;
+        // Bounded by FOCUS_TIMEOUT_MS inside the snapshot thread.
+        let focus_start = tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown()))
+            .await
+            .unwrap_or_else(|_| FocusSnapshot::unknown());
+        dictation::process(svc, Captured { clip: job.clip, mode: job.mode, focus_start }).await;
+    });
+}
+
+/// Starts the ticker and the controller threads.
+pub fn spawn(svc: Arc<Services>, rx: Receiver<ControllerMsg>, tx: Sender<ControllerMsg>, deps: ControllerDeps) {
     let tick_tx = tx.clone();
     std::thread::Builder::new()
         .name("scribe-ticker".into())
@@ -67,15 +137,7 @@ pub fn spawn(svc: Arc<Services>, rx: Receiver<ControllerMsg>, tx: Sender<Control
             }
         })
         .expect("ticker thread");
-    let s = svc.settings.read().unwrap().clone();
-    let mut c = Controller {
-        svc,
-        tx,
-        gesture: GestureDetector::new(s.gesture.clone()),
-        session: Session::new(s.max_recording_ms),
-        mode: Mode::Hold,
-        recording: None,
-    };
+    let mut c = Controller::new(svc, tx, deps);
     std::thread::Builder::new()
         .name("scribe-controller".into())
         .spawn(move || {
@@ -87,14 +149,25 @@ pub fn spawn(svc: Arc<Services>, rx: Receiver<ControllerMsg>, tx: Sender<Control
 }
 
 impl Controller {
-    fn handle(&mut self, msg: ControllerMsg) {
+    pub fn new(svc: Arc<Services>, tx: Sender<ControllerMsg>, deps: ControllerDeps) -> Self {
+        let s = svc.settings.read().unwrap().clone();
+        Self {
+            svc,
+            tx,
+            deps,
+            gesture: GestureDetector::new(s.gesture.clone()),
+            session: Session::new(s.max_recording_ms),
+            mode: Mode::Hold,
+            recording: None,
+        }
+    }
+
+    pub fn handle(&mut self, msg: ControllerMsg) {
         match msg {
             ControllerMsg::Key(k) => {
-                if k.down {
-                    if let Some(capture) = self.svc.key_capture.lock().unwrap().take() {
-                        let _ = capture.send(k.vk);
-                        return;
-                    }
+                // A pending hotkey capture takes the next press, even while paused.
+                if k.down && self.svc.key_capture.offer(k.vk) {
+                    return;
                 }
                 if self.svc.hook_cfg.paused.load(Ordering::Relaxed) {
                     return;
@@ -108,7 +181,7 @@ impl Controller {
                 self.apply_gestures(cmds, k.t_ms);
             }
             ControllerMsg::Tick => {
-                let now = clock::now_ms();
+                let now = (self.deps.clock)();
                 let cmds = self.gesture.on_tick(now);
                 self.apply_gestures(cmds, now);
                 if let Some(action) = self.session.on_tick(now) {
@@ -143,70 +216,48 @@ impl Controller {
         }
     }
 
-    fn level_emitter(&self) -> LevelCallback {
-        let app = self.svc.app.clone();
-        let last = Arc::new(AtomicU64::new(0));
-        Arc::new(move |rms: f32| {
-            let now = clock::now_ms();
-            if now.saturating_sub(last.load(Ordering::Relaxed)) >= 50 {
-                last.store(now, Ordering::Relaxed);
-                let _ = app.emit_to("overlay", "audio-level", rms);
-            }
-        })
-    }
-
     fn apply_action(&mut self, action: SessionAction) {
-        let app = self.svc.app.clone();
+        let overlay = &self.svc.overlay;
         match action {
-            SessionAction::BeginRecording => match start_recording(self.level_emitter()) {
-                Ok(handle) => {
-                    self.mode = Mode::Hold;
-                    overlay::emit(&app, OverlayEvent::Recording { locked: false });
-                    self.recording = Some((handle, spawn_focus_snapshot(&self.svc)));
+            SessionAction::BeginRecording => {
+                let on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
+                match self.deps.recorder.start(on_level) {
+                    Ok(handle) => {
+                        self.mode = Mode::Hold;
+                        overlay.emit(OverlayEvent::Recording { locked: false });
+                        self.recording = Some((handle, spawn_focus_snapshot(&self.svc)));
+                    }
+                    Err(e) => {
+                        self.session.abort();
+                        self.gesture.reset();
+                        overlay.toast(ToastLevel::Error, format!("Micro indisponible : {e}"), None, None);
+                    }
                 }
-                Err(e) => {
-                    self.session.abort();
-                    self.gesture.reset();
-                    overlay::toast(&app, ToastLevel::Error, format!("Micro indisponible : {e}"), None, None);
-                }
-            },
+            }
             SessionAction::SetMode(mode) => {
                 self.mode = mode;
-                overlay::emit(&app, OverlayEvent::Recording { locked: mode == Mode::Locked });
+                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked });
             }
             SessionAction::DiscardRecording => {
                 if let Some((handle, _)) = self.recording.take() {
                     let _ = handle.stop();
                 }
-                overlay::emit(&app, OverlayEvent::Idle);
+                overlay.emit(OverlayEvent::Idle);
             }
             SessionAction::FinishRecording => {
-                let Some((handle, focus_rx)) = self.recording.take() else {
+                let Some((handle, focus_start)) = self.recording.take() else {
                     self.session.on_processing_done();
                     return;
                 };
-                overlay::emit(&app, OverlayEvent::Processing);
+                overlay.emit(OverlayEvent::Processing);
                 match handle.stop() {
                     Ok(clip) => {
-                        let svc = self.svc.clone();
-                        let tx = self.tx.clone();
-                        let mode = self.mode;
-                        tauri::async_runtime::spawn(async move {
-                            // Sent on drop, so a panic in process() cannot leave the session
-                            // stuck in Processing.
-                            let _done = ProcessingDoneGuard(tx);
-                            // Bounded by FOCUS_TIMEOUT_MS inside the snapshot thread.
-                            let focus_start = tauri::async_runtime::spawn_blocking(move || {
-                                focus_rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown())
-                            })
-                            .await
-                            .unwrap_or_else(|_| FocusSnapshot::unknown());
-                            dictation::process(svc, Captured { clip, mode, focus_start }).await;
-                        });
+                        let job = Job { clip, mode: self.mode, focus_start };
+                        (self.deps.spawn_processing)(self.svc.clone(), job, self.tx.clone());
                     }
                     Err(e) => {
                         self.session.on_processing_done();
-                        overlay::toast(&app, ToastLevel::Error, format!("Enregistrement perdu : {e}"), None, None);
+                        overlay.toast(ToastLevel::Error, format!("Enregistrement perdu : {e}"), None, None);
                     }
                 }
             }
@@ -224,26 +275,4 @@ impl Drop for ProcessingDoneGuard {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn processing_done_is_sent_even_on_panic() {
-        let (tx, rx) = mpsc::channel();
-        let r = std::panic::catch_unwind(move || {
-            let _done = ProcessingDoneGuard(tx);
-            panic!("process failed");
-        });
-        assert!(r.is_err());
-        assert!(matches!(rx.try_recv(), Ok(ControllerMsg::ProcessingDone)));
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn maps_virtual_keys_to_roles() {
-        assert_eq!(key_role(0xA3, 0xA3, 0x20), KeyRole::Trigger);
-        assert_eq!(key_role(0x20, 0xA3, 0x20), KeyRole::Lock);
-        assert_eq!(key_role(0x41, 0xA3, 0x20), KeyRole::Other);
-        assert_eq!(key_role(0x20, 0xA3, 0), KeyRole::Other);
-    }
-}
+mod tests;

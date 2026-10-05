@@ -1,9 +1,10 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+//! Overlay state machine: what the pill shows, and whether a dismiss from the overlay may hide it.
+//! The window itself is behind `OverlayWindow` (Tauri webview + Win32 in the app, a fake in tests).
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ToastLevel {
     Info,
@@ -12,7 +13,7 @@ pub enum ToastLevel {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OverlayEvent {
     Idle,
@@ -21,119 +22,217 @@ pub enum OverlayEvent {
     Toast { level: ToastLevel, message: String, preview: Option<String>, dictation_id: Option<i64> },
 }
 
-fn raw_hwnd(app: &AppHandle) -> Option<isize> {
-    #[cfg(windows)]
-    {
-        app.get_webview_window("overlay").and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app;
-        None
-    }
+/// The overlay window: delivers events to its webview and shows/hides it without taking focus.
+pub trait OverlayWindow: Send + Sync {
+    fn send(&self, ev: &OverlayEvent);
+    fn show(&self);
+    fn hide(&self);
 }
 
-/// Bottom-centre of the primary monitor, non-activating.
-pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let Some(win) = app.get_webview_window("overlay") else { return Ok(()) };
-    if let Some(monitor) = win.primary_monitor()? {
-        let size = win.outer_size()?;
-        let area = monitor.size();
-        let margin = (80.0 * monitor.scale_factor()) as i32;
-        let x = monitor.position().x + (area.width as i32 - size.width as i32) / 2;
-        let y = monitor.position().y + area.height as i32 - size.height as i32 - margin;
-        win.set_position(PhysicalPosition::new(x, y))?;
-    }
-    if let Some(h) = raw_hwnd(app) {
-        scribe_platform::prepare_overlay(h);
-    }
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Idle,
+    Recording,
+    Processing,
+    Toast,
 }
 
-fn show(app: &AppHandle) {
-    match raw_hwnd(app) {
-        Some(h) => scribe_platform::show_overlay(h),
-        None => {
-            if let Some(w) = app.get_webview_window("overlay") {
-                let _ = w.show();
-            }
-        }
-    }
-}
-
-pub fn hide(app: &AppHandle) {
-    match raw_hwnd(app) {
-        Some(h) => scribe_platform::hide_overlay(h),
-        None => {
-            if let Some(w) = app.get_webview_window("overlay") {
-                let _ = w.hide();
-            }
-        }
-    }
-}
-
-const KIND_IDLE: u8 = 0;
-const KIND_RECORDING: u8 = 1;
-const KIND_PROCESSING: u8 = 2;
-const KIND_TOAST: u8 = 3;
-
-/// Kind of the last event emitted to the overlay, so that a late dismiss coming
-/// from the overlay (toast auto-hide timer) cannot hide a newer recording pill.
-static LAST_KIND: AtomicU8 = AtomicU8::new(KIND_IDLE);
-
-fn kind_code(ev: &OverlayEvent) -> u8 {
+fn kind_of(ev: &OverlayEvent) -> Kind {
     match ev {
-        OverlayEvent::Idle => KIND_IDLE,
-        OverlayEvent::Recording { .. } => KIND_RECORDING,
-        OverlayEvent::Processing => KIND_PROCESSING,
-        OverlayEvent::Toast { .. } => KIND_TOAST,
+        OverlayEvent::Idle => Kind::Idle,
+        OverlayEvent::Recording { .. } => Kind::Recording,
+        OverlayEvent::Processing => Kind::Processing,
+        OverlayEvent::Toast { .. } => Kind::Toast,
     }
 }
 
-/// A dismiss requested by the overlay only applies to a toast (or an already idle overlay).
-fn dismiss_allowed(last_kind: u8) -> bool {
-    last_kind == KIND_TOAST || last_kind == KIND_IDLE
+pub struct Overlay {
+    window: Arc<dyn OverlayWindow>,
+    /// Kind of the last event emitted. The lock is held across the window calls, so a dismiss and an
+    /// emit never interleave: a toast expiring while the user starts speaking cannot hide the new pill.
+    last: Mutex<Kind>,
 }
 
-/// Hides the overlay on behalf of the user/overlay, unless the backend has since
-/// moved on to a recording or processing state.
-pub fn dismiss(app: &AppHandle) {
-    // Atomically turn a toast into idle; anything else (recording, processing) is left alone.
-    let allowed = match LAST_KIND.compare_exchange(KIND_TOAST, KIND_IDLE, Ordering::SeqCst, Ordering::SeqCst) {
-        Ok(_) => true,
-        Err(current) => dismiss_allowed(current),
-    };
-    if allowed {
-        hide(app);
+impl Overlay {
+    pub fn new(window: Arc<dyn OverlayWindow>) -> Self {
+        Self { window, last: Mutex::new(Kind::Idle) }
+    }
+
+    pub fn emit(&self, ev: OverlayEvent) {
+        let mut last = self.last.lock().unwrap();
+        *last = kind_of(&ev);
+        self.window.send(&ev);
+        if *last == Kind::Idle {
+            self.window.hide()
+        } else {
+            self.window.show()
+        }
+    }
+
+    pub fn toast(&self, level: ToastLevel, message: impl Into<String>, preview: Option<String>, dictation_id: Option<i64>) {
+        self.emit(OverlayEvent::Toast { level, message: message.into(), preview, dictation_id });
+    }
+
+    /// Hides the overlay on behalf of the user/overlay (toast closed or expired), unless the backend
+    /// has since moved on to a recording or processing state.
+    pub fn dismiss(&self) {
+        let mut last = self.last.lock().unwrap();
+        if matches!(*last, Kind::Toast | Kind::Idle) {
+            *last = Kind::Idle;
+            self.window.hide();
+        }
     }
 }
 
-pub fn emit(app: &AppHandle, ev: OverlayEvent) {
-    let idle = matches!(ev, OverlayEvent::Idle);
-    LAST_KIND.store(kind_code(&ev), Ordering::SeqCst);
-    let _ = app.emit_to("overlay", "overlay", &ev);
-    if idle { hide(app) } else { show(app) }
+/// Bottom-centre of the monitor, `margin_px` (logical) above its bottom edge, in physical pixels.
+pub fn overlay_position(monitor_pos: (i32, i32), monitor_size: (u32, u32), window_size: (u32, u32), scale: f64, margin_px: f64) -> (i32, i32) {
+    let margin = (margin_px * scale) as i32;
+    let x = monitor_pos.0 + (monitor_size.0 as i32 - window_size.0 as i32) / 2;
+    let y = monitor_pos.1 + monitor_size.1 as i32 - window_size.1 as i32 - margin;
+    (x, y)
 }
 
-pub fn toast(app: &AppHandle, level: ToastLevel, message: impl Into<String>, preview: Option<String>, dictation_id: Option<i64>) {
-    emit(app, OverlayEvent::Toast { level, message: message.into(), preview, dictation_id });
+#[cfg(test)]
+pub mod fake {
+    use std::sync::Mutex;
+
+    use super::{OverlayEvent, OverlayWindow};
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Call {
+        Send(OverlayEvent),
+        Show,
+        Hide,
+    }
+
+    /// Records every window call; `visible` is the resulting visibility.
+    #[derive(Default)]
+    pub struct FakeWindow {
+        pub calls: Mutex<Vec<Call>>,
+        /// Called at the start of `hide`, to widen race windows in tests.
+        pub on_hide: Mutex<Option<Box<dyn Fn() + Send>>>,
+    }
+
+    impl FakeWindow {
+        pub fn events(&self) -> Vec<OverlayEvent> {
+            let calls = self.calls.lock().unwrap();
+            calls.iter().filter_map(|c| if let Call::Send(ev) = c { Some(ev.clone()) } else { None }).collect()
+        }
+        pub fn last_event(&self) -> Option<OverlayEvent> {
+            self.events().pop()
+        }
+        pub fn visible(&self) -> bool {
+            let calls = self.calls.lock().unwrap();
+            calls.iter().rev().find(|c| !matches!(c, Call::Send(_))) == Some(&Call::Show)
+        }
+    }
+
+    impl OverlayWindow for FakeWindow {
+        fn send(&self, ev: &OverlayEvent) {
+            self.calls.lock().unwrap().push(Call::Send(ev.clone()));
+        }
+        fn show(&self) {
+            self.calls.lock().unwrap().push(Call::Show);
+        }
+        fn hide(&self) {
+            if let Some(f) = self.on_hide.lock().unwrap().as_ref() {
+                f();
+            }
+            self.calls.lock().unwrap().push(Call::Hide);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::fake::{Call, FakeWindow};
     use super::*;
 
-    #[test]
-    fn late_dismiss_does_not_hide_recording_or_processing() {
-        assert!(!dismiss_allowed(kind_code(&OverlayEvent::Recording { locked: false })));
-        assert!(!dismiss_allowed(kind_code(&OverlayEvent::Recording { locked: true })));
-        assert!(!dismiss_allowed(kind_code(&OverlayEvent::Processing)));
+    fn overlay() -> (Arc<FakeWindow>, Overlay) {
+        let w = Arc::new(FakeWindow::default());
+        (w.clone(), Overlay::new(w))
     }
 
     #[test]
-    fn dismiss_hides_toast_and_idle() {
-        let toast = OverlayEvent::Toast { level: ToastLevel::Copied, message: "x".into(), preview: None, dictation_id: Some(1) };
-        assert!(dismiss_allowed(kind_code(&toast)));
-        assert!(dismiss_allowed(kind_code(&OverlayEvent::Idle)));
+    fn idle_hides_and_everything_else_shows() {
+        let (w, o) = overlay();
+        o.emit(OverlayEvent::Recording { locked: false });
+        assert!(w.visible());
+        o.emit(OverlayEvent::Processing);
+        assert!(w.visible());
+        o.emit(OverlayEvent::Idle);
+        assert!(!w.visible());
+        o.toast(ToastLevel::Copied, "copié", Some("texte".into()), Some(4));
+        assert!(w.visible());
+        assert_eq!(
+            w.last_event(),
+            Some(OverlayEvent::Toast { level: ToastLevel::Copied, message: "copié".into(), preview: Some("texte".into()), dictation_id: Some(4) })
+        );
+        assert_eq!(w.calls.lock().unwrap()[0], Call::Send(OverlayEvent::Recording { locked: false }));
+    }
+
+    #[test]
+    fn dismiss_hides_a_toast_or_idle_overlay() {
+        let (w, o) = overlay();
+        o.toast(ToastLevel::Info, "x", None, None);
+        o.dismiss();
+        assert!(!w.visible());
+        // Now idle: a second dismiss hides again (harmless) and keeps the state idle.
+        o.dismiss();
+        assert_eq!(w.calls.lock().unwrap().iter().filter(|c| **c == Call::Hide).count(), 2);
+    }
+
+    #[test]
+    fn late_dismiss_does_not_hide_recording_or_processing() {
+        for ev in [OverlayEvent::Recording { locked: false }, OverlayEvent::Recording { locked: true }, OverlayEvent::Processing] {
+            let (w, o) = overlay();
+            o.emit(ev);
+            o.dismiss();
+            assert!(w.visible());
+            assert!(!w.calls.lock().unwrap().contains(&Call::Hide));
+        }
+    }
+
+    #[test]
+    fn dismiss_racing_a_new_recording_never_hides_the_pill() {
+        // The dismiss is inside hide() when the recording starts: the emit must wait for it, so the
+        // recording's show() comes last and the pill stays visible.
+        let (w, o) = overlay();
+        let o = Arc::new(o);
+        o.toast(ToastLevel::Info, "x", None, None);
+        let (in_hide_tx, in_hide_rx) = mpsc::channel();
+        *w.on_hide.lock().unwrap() = Some(Box::new(move || {
+            let _ = in_hide_tx.send(());
+            std::thread::sleep(Duration::from_millis(50));
+        }));
+        let o2 = o.clone();
+        let dismiss = std::thread::spawn(move || o2.dismiss());
+        in_hide_rx.recv().unwrap();
+        o.emit(OverlayEvent::Recording { locked: false });
+        dismiss.join().unwrap();
+        assert!(w.visible(), "{:?}", w.calls.lock().unwrap());
+        let calls = w.calls.lock().unwrap();
+        let n = calls.len();
+        assert_eq!(calls[n - 3..], [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false }), Call::Show]);
+    }
+
+    #[test]
+    fn events_serialize_for_the_overlay_webview() {
+        let ev = OverlayEvent::Toast { level: ToastLevel::Uncertain, message: "m".into(), preview: None, dictation_id: Some(2) };
+        assert_eq!(
+            serde_json::to_value(&ev).unwrap(),
+            serde_json::json!({"kind": "toast", "level": "uncertain", "message": "m", "preview": null, "dictation_id": 2})
+        );
+        assert_eq!(serde_json::to_value(OverlayEvent::Recording { locked: true }).unwrap(), serde_json::json!({"kind": "recording", "locked": true}));
+    }
+
+    #[test]
+    fn overlay_sits_bottom_centre_above_the_margin() {
+        assert_eq!(overlay_position((0, 0), (1920, 1080), (320, 80), 1.0, 80.0), (800, 920));
+        // Scaled margin, secondary-monitor origin.
+        assert_eq!(overlay_position((-1920, 100), (1920, 1080), (320, 80), 1.5, 80.0), (-1120, 980));
     }
 }

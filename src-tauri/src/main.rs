@@ -1,13 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod adapters;
 mod bootstrap;
 mod commands;
 mod controller;
 mod dictation;
 mod overlay;
+mod providers;
 mod secrets;
 mod services;
 mod settings;
+#[cfg(test)]
+mod testing;
 mod tray;
 
 use std::sync::{mpsc, Arc, Mutex, RwLock};
@@ -17,8 +21,11 @@ use tauri::{Manager, WindowEvent};
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
-use crate::controller::ControllerMsg;
-use crate::services::{AppPaths, Services};
+use crate::adapters::{CpalRecorder, TauriOverlayWindow, TauriUi};
+use crate::controller::{ControllerDeps, ControllerMsg};
+use crate::overlay::{Overlay, ToastLevel};
+use crate::secrets::{KeyringStore, SecretStore};
+use crate::services::{AppPaths, KeyCapture, Services};
 use crate::settings::Settings;
 
 const AUDIO_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
@@ -35,9 +42,9 @@ fn main() {
             let db = Db::open(&paths.db_path).map_err(|e| e.to_string())?;
             let hook_cfg = Arc::new(HookConfig::new(settings.trigger_vk, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
-            let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(id).is_some());
+            let secret_store: Arc<dyn SecretStore> = Arc::new(KeyringStore::system());
+            let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
             let svc = Arc::new(Services {
-                app: app.handle().clone(),
                 db: Mutex::new(db),
                 settings: RwLock::new(settings),
                 paths,
@@ -45,7 +52,11 @@ fn main() {
                 focus: scribe_platform::focus_detector(),
                 clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard),
                 keys: scribe_platform::key_sender(),
-                key_capture: Mutex::new(None),
+                secrets: secret_store,
+                providers: Box::new(providers::build),
+                overlay: Overlay::new(Arc::new(TauriOverlayWindow(app.handle().clone()))),
+                ui: Arc::new(TauriUi(app.handle().clone())),
+                key_capture: KeyCapture::default(),
                 ctrl_tx: Mutex::new(tx.clone()),
             });
             app.manage(svc.clone());
@@ -58,7 +69,7 @@ fn main() {
                     std::thread::sleep(AUDIO_PURGE_INTERVAL);
                     dictation::purge_audio(&purge_svc);
                 })?;
-            overlay::setup(app.handle())?;
+            adapters::setup_overlay(app.handle())?;
             tray::setup(app.handle())?;
 
             let key_tx = tx.clone();
@@ -70,12 +81,17 @@ fn main() {
                 }
                 Err(e) => {
                     tracing::error!("{e}");
-                    overlay::toast(app.handle(), overlay::ToastLevel::Error, bootstrap::hook_unavailable_message(&e), None, None);
+                    svc.overlay.toast(ToastLevel::Error, bootstrap::hook_unavailable_message(&e), None, None);
                 }
             }
-            controller::spawn(svc, rx, tx);
+            let deps = ControllerDeps {
+                recorder: Arc::new(CpalRecorder),
+                clock: Arc::new(scribe_core::clock::now_ms),
+                spawn_processing: Box::new(controller::spawn_processing),
+            };
+            controller::spawn(svc, rx, tx, deps);
             if needs_setup {
-                tray::show_main(app.handle());
+                adapters::show_main(app.handle());
             }
             Ok(())
         })
