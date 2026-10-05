@@ -2,7 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import { missingKeys } from "../lib/apiKeys";
+  import { needsSetup } from "../lib/apiKeys";
   import { needsAttention, type SaveState } from "../lib/autosave";
   import History from "./History.svelte";
   import Glossary from "./Glossary.svelte";
@@ -30,8 +30,7 @@
     // Same rule as needs_setup in src-tauri/src/bootstrap.rs.
     Promise.all([api.getSettings(), api.keyStatus()])
       .then(([st, k]) => {
-        const missing = missingKeys(st, k).length > 0;
-        if (missing && tab === "history" && focusRequest === null) tab = "settings";
+        if (needsSetup(st, k) && tab === "history" && focusRequest === null) tab = "settings";
       })
       .catch(() => {});
     return () => {

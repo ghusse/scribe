@@ -2,63 +2,53 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
   import { api, type OverlayEvent } from "../lib/api";
+  import { barHeight, createOverlay, emptyLevels, toastActions, type OverlayView } from "./model";
 
-  let ov = $state<OverlayEvent>({ kind: "idle" });
-  let levels = $state<number[]>(Array(12).fill(0));
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  let view = $state<OverlayView>({ ov: { kind: "idle" }, levels: emptyLevels() });
+  let actions = $derived(toastActions(view.ov));
+  const overlay = createOverlay(
+    {
+      dismiss: api.overlayDismiss,
+      copy: api.copyDictation,
+      openHistory: api.openHistory,
+      schedule: (fn, ms) => setTimeout(fn, ms),
+      cancel: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      report: (e) => console.error(e),
+    },
+    (v) => (view = v),
+  );
 
   onMount(() => {
-    const unOverlay = listen<OverlayEvent>("overlay", (e) => {
-      clearTimeout(hideTimer);
-      ov = e.payload;
-      if (ov.kind === "recording" && !ov.locked) levels = Array(12).fill(0);
-      if (ov.kind === "toast") hideTimer = setTimeout(dismiss, ov.level === "error" ? 10000 : 6000);
-    });
-    const unLevel = listen<number>("audio-level", (e) => {
-      levels = [...levels.slice(1), Math.min(1, e.payload * 6)];
-    });
+    const unOverlay = listen<OverlayEvent>("overlay", (e) => overlay.event(e.payload));
+    const unLevel = listen<number>("audio-level", (e) => overlay.level(e.payload));
     return () => {
+      overlay.destroy();
       unOverlay.then((f) => f());
       unLevel.then((f) => f());
     };
   });
-
-  function dismiss() {
-    clearTimeout(hideTimer);
-    ov = { kind: "idle" };
-    api.overlayDismiss();
-  }
-
-  async function copy(id: number | null) {
-    if (id !== null) await api.copyDictation(id);
-    dismiss();
-  }
 </script>
 
-{#if ov.kind === "recording"}
-  <div class="pill">
+{#if view.ov.kind === "recording"}
+  <div class="pill" role="status" aria-label="Enregistrement">
     <span class="dot"></span>
     <div class="bars">
-      {#each levels as l}<span style="height: {4 + l * 24}px"></span>{/each}
+      {#each view.levels as l}<span style="height: {barHeight(l)}px"></span>{/each}
     </div>
-    {#if ov.locked}<span class="tag">Verrouillé</span>{/if}
+    {#if view.ov.locked}<span class="tag">Verrouillé</span>{/if}
   </div>
-{:else if ov.kind === "processing"}
-  <div class="pill"><span class="spinner"></span><span class="label">Transcription…</span></div>
-{:else if ov.kind === "toast"}
-  <div class="toast {ov.level}">
+{:else if view.ov.kind === "processing"}
+  <div class="pill" role="status"><span class="spinner"></span><span class="label">Transcription…</span></div>
+{:else if view.ov.kind === "toast"}
+  <div class="toast {view.ov.level}" role="status">
     <div class="text">
-      <strong>{ov.message}</strong>
-      {#if ov.preview}<p>{ov.preview}</p>{/if}
+      <strong>{view.ov.message}</strong>
+      {#if view.ov.preview}<p>{view.ov.preview}</p>{/if}
     </div>
     <div class="actions">
-      {#if ov.dictation_id !== null && ov.level !== "error"}
-        <button onclick={() => copy(ov.kind === "toast" ? ov.dictation_id : null)}>Copier</button>
-      {/if}
-      {#if ov.dictation_id !== null}
-        <button onclick={() => api.openHistory(ov.kind === "toast" ? ov.dictation_id : null)}>Voir</button>
-      {/if}
-      <button class="close" onclick={dismiss} aria-label="Fermer">×</button>
+      {#if actions.copy}<button onclick={overlay.copy}>Copier</button>{/if}
+      {#if actions.view}<button onclick={overlay.openHistory}>Voir</button>{/if}
+      <button class="close" onclick={overlay.dismiss} aria-label="Fermer">×</button>
     </div>
   </div>
 {/if}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Provider } from "./api";
-import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
+import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, needsSetup, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
 
 const p = (id: string, label: string): Provider => ({ id, label, base_url: "", stt_models: [], llm_api: null, llm_models: [] });
 const providers = [p("openai", "OpenAI"), p("anthropic", "Anthropic"), p("mistral", "Mistral")];
@@ -95,5 +95,27 @@ describe("setup banner and warnings", () => {
   it("words the inline warning per role", () => {
     expect(missingKeyWarning("Anthropic", "correction")).toBe("⚠ Aucune clé Anthropic : la correction échouera.");
     expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ Aucune clé OpenAI : la transcription échouera.");
+  });
+});
+
+// Same cases as needs_setup_follows_the_key_usage_rule in src-tauri/src/bootstrap.rs: the two rules must not diverge.
+describe("needsSetup (parity with bootstrap::needs_setup)", () => {
+  const settings = (stt: string, llm: string, level: "raw" | "clean" | "formatted") => ({ stt_provider: stt, llm_provider: llm, level });
+  const keys = (stored: string[]) => Object.fromEntries(stored.map((k) => [k, true]));
+  const cases: [string, ReturnType<typeof settings>, string[], boolean][] = [
+    ["no key at all", settings("openai", "anthropic", "formatted"), [], true],
+    ["correction key missing", settings("openai", "anthropic", "formatted"), ["openai"], true],
+    ["transcription key missing", settings("openai", "anthropic", "formatted"), ["anthropic"], true],
+    ["both stored", settings("openai", "anthropic", "formatted"), ["openai", "anthropic"], false],
+    ["raw: no correction key needed", settings("openai", "anthropic", "raw"), ["openai"], false],
+    ["raw: transcription key still needed", settings("openai", "anthropic", "raw"), ["anthropic"], true],
+    ["one provider for both roles", settings("openai", "openai", "formatted"), ["openai"], false],
+  ];
+  it.each(cases)("%s", (_name, st, stored, expected) => {
+    expect(needsSetup(st, keys(stored))).toBe(expected);
+  });
+
+  it("a key marked false is not stored", () => {
+    expect(needsSetup(settings("openai", "openai", "clean"), { openai: false })).toBe(true);
   });
 });

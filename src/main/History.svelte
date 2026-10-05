@@ -1,7 +1,8 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
   import { onMount, tick, untrack } from "svelte";
-  import { api, type Dictation, type Outcome } from "../lib/api";
+  import { api, type Dictation } from "../lib/api";
+  import { canCopy, canRetranscribe, displayText, editDraft, editPayload, latestOnly, OUTCOME_BADGES, STALE, timingLine } from "../lib/history";
 
   let { focus = null, onfocused }: { focus?: { id: number } | null; onfocused?: () => void } = $props();
 
@@ -18,11 +19,13 @@
   let highlighted = $state<number | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const badges: Record<Outcome, string> = { pasted: "Inséré", pasted_uncertain: "Inséré ?", clipboard: "Copié", error: "Erreur" };
+  // Search results can come back out of order: only the latest request's page is shown.
+  const latest = latestOnly();
 
   async function load(reset = true) {
     try {
-      const page = await api.listDictations(query || null, PAGE, reset ? 0 : items.length);
+      const page = await latest(api.listDictations(query || null, PAGE, reset ? 0 : items.length));
+      if (page === STALE) return;
       items = reset ? page : [...items, ...page];
       hasMore = page.length === PAGE;
       error = null;
@@ -52,12 +55,12 @@
 
   function startEdit(d: Dictation) {
     editing = d.id;
-    draft = d.edited_text ?? d.final_text ?? d.raw_text ?? "";
+    draft = editDraft(d);
   }
 
   async function saveEdit(d: Dictation) {
     // On failure keep the editor open (and the draft) so the error stays visible.
-    if (!(await run(d.id, () => api.saveEditedText(d.id, draft.trim() === "" ? null : draft)))) return;
+    if (!(await run(d.id, () => api.saveEditedText(d.id, editPayload(draft))))) return;
     editing = null;
     await load(true);
   }
@@ -82,6 +85,7 @@
     if (!untrack(() => focus)) load(true);
     const unChanged = listen("history-changed", () => load(true));
     return () => {
+      clearTimeout(searchTimer);
       unChanged.then((f) => f());
     };
   });
@@ -96,11 +100,11 @@
 {#each items as d (d.id)}
   <article id="d-{d.id}" class:highlighted={highlighted === d.id}>
     <header>
-      <span class="badge {d.outcome}">{badges[d.outcome]}</span>
+      <span class="badge {d.outcome}">{OUTCOME_BADGES[d.outcome]}</span>
       <span class="muted">{new Date(d.created_at).toLocaleString("fr-FR")}</span>
       {#if d.app_name}<span class="muted">· {d.app_name}</span>{/if}
       <span class="muted right">
-        {(d.duration_ms / 1000).toFixed(1)} s{#if d.stt_ms !== null} · STT {d.stt_ms} ms{/if}{#if d.llm_ms !== null} · LLM {d.llm_ms} ms{/if}
+        {timingLine(d)}
       </span>
     </header>
 
@@ -111,7 +115,7 @@
         <button onclick={() => (editing = null)}>Annuler</button>
       </div>
     {:else}
-      <p class="text">{d.edited_text ?? d.final_text ?? d.raw_text ?? "—"}</p>
+      <p class="text">{displayText(d)}</p>
     {/if}
     {#if d.error}<p class="error small">{d.error}</p>{/if}
 
@@ -125,9 +129,9 @@
     {/if}
 
     <div class="row">
-      <button onclick={() => run(d.id, () => api.copyDictation(d.id))} disabled={!d.raw_text && !d.final_text}>Copier</button>
-      <button onclick={() => startEdit(d)} disabled={!d.raw_text && !d.final_text}>Corriger</button>
-      <button onclick={() => run(d.id, () => api.retranscribe(d.id))} disabled={!d.audio_path || busy === d.id}>
+      <button onclick={() => run(d.id, () => api.copyDictation(d.id))} disabled={!canCopy(d)}>Copier</button>
+      <button onclick={() => startEdit(d)} disabled={!canCopy(d)}>Corriger</button>
+      <button onclick={() => run(d.id, () => api.retranscribe(d.id))} disabled={!canRetranscribe(d, busy)}>
         {busy === d.id ? "…" : "Retranscrire"}
       </button>
       <button onclick={() => (expanded = expanded === d.id ? null : d.id)}>{expanded === d.id ? "Moins" : "Détails"}</button>

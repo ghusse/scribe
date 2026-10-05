@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Term } from "../lib/api";
+  import { joinVariants, noteOrNull, splitVariants } from "../lib/glossary";
 
   let terms = $state<Term[]>([]);
   let term = $state("");
@@ -9,8 +10,6 @@
   let error = $state<string | null>(null);
   let editId = $state<number | null>(null);
   let edit = $state({ term: "", variants: "", note: "" });
-
-  const split = (s: string) => s.split(",").map((v) => v.trim()).filter(Boolean);
 
   async function load() {
     try {
@@ -23,7 +22,7 @@
   async function add(e: Event) {
     e.preventDefault();
     try {
-      await api.addTerm(term, split(variants), note || null);
+      await api.addTerm(term, splitVariants(variants), noteOrNull(note));
       term = variants = note = "";
       error = null;
       await load();
@@ -34,12 +33,12 @@
 
   function startEdit(t: Term) {
     editId = t.id;
-    edit = { term: t.term, variants: t.variants.join(", "), note: t.note ?? "" };
+    edit = { term: t.term, variants: joinVariants(t.variants), note: t.note ?? "" };
   }
 
   async function saveEdit(id: number) {
     try {
-      await api.updateTerm(id, edit.term, split(edit.variants), edit.note || null);
+      await api.updateTerm(id, edit.term, splitVariants(edit.variants), noteOrNull(edit.note));
       editId = null;
       error = null;
       await load();
@@ -82,7 +81,7 @@
           <td><button class="primary" onclick={() => saveEdit(t.id)}>OK</button> <button onclick={() => (editId = null)}>Annuler</button></td>
         {:else}
           <td><strong>{t.term}</strong></td>
-          <td>{t.variants.join(", ")}</td>
+          <td>{joinVariants(t.variants)}</td>
           <td>{t.note ?? ""}</td>
           <td>{t.use_count}</td>
           <td><button onclick={() => startEdit(t)}>Modifier</button> <button class="danger" onclick={() => remove(t.id)}>Supprimer</button></td>

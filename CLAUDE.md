@@ -19,7 +19,10 @@ Prerequisites: `rustup component add llvm-tools-preview` and `cargo install carg
 Svelte components are covered through component tests (`@testing-library/svelte` + jsdom, see
 `src/main/ModelPicker.test.ts`, which also shows how to observe a `$bindable` prop through a props object with
 a getter/setter); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
-with `vi.mock`.
+with `vi.mock` and the shared doubles in `tests/tauri.ts` (`commands({...})` answers each command, `emit` fires
+an event, `calls` lists a command's arguments), with settings and providers from `tests/fixtures.ts`. Decision logic
+stays out of components (`src/overlay/model.ts`, `src/lib/history.ts`, `src/lib/glossary.ts`, ...) and is tested
+there as plain functions.
 
 ## Test rules
 
@@ -86,7 +89,7 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   blocking event-loop round-trip in tauri-runtime-wry), never in `show`/`hide`. Commands
   that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
-- `main.rs`: `bootstrap::needs_setup` (same case table as `missingKeys` in `src/lib/apiKeys.ts`),
+- `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
   the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if needs_setup { show_main }`, and the
   `CloseRequested` match before `prevent_close` + `hide`.

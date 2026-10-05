@@ -22,6 +22,14 @@ export function missingKeys(s: UsageSettings, keyStatus: Record<string, boolean>
     .map(([provider, roles]) => ({ provider, roles }));
 }
 
+/**
+ * First launch: open on the settings when a required key is missing. Same rule and case table as
+ * needs_setup in src-tauri/src/bootstrap.rs (which shows the main window at startup).
+ */
+export function needsSetup(s: UsageSettings, keyStatus: Record<string, boolean>): boolean {
+  return missingKeys(s, keyStatus).length > 0;
+}
+
 /** Status of one provider's key: stored, missing but needed, or missing and unused. */
 export function keyState(id: string, s: UsageSettings, keyStatus: Record<string, boolean>): "saved" | "required" | "unconfigured" {
   if (keyStatus[id]) return "saved";
