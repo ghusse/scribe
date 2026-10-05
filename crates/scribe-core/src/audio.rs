@@ -51,18 +51,24 @@ pub fn duration_ms(clip: &AudioClip) -> u64 {
 /// keeps short utterances surrounded by silence from being classified as silent.
 pub fn loudest_frame_dbfs(clip: &AudioClip) -> f32 {
     let frame = (clip.sample_rate / 50).max(1) as usize;
-    clip.samples
-        .chunks(frame)
-        .map(|f| {
-            let mean_sq = f.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / f.len() as f64;
-            let rms = mean_sq.sqrt();
-            if rms <= 0.0 { f32::NEG_INFINITY } else { (20.0 * (rms / 32768.0).log10()) as f32 }
-        })
-        .fold(f32::NEG_INFINITY, f32::max)
+    clip.samples.chunks(frame).map(frame_dbfs).fold(f32::NEG_INFINITY, f32::max)
+}
+
+/// Minimum number of 20 ms frames above the threshold (60 ms in total) for a clip to count as
+/// speech: a single key click or mouse click is shorter and must not reach the transcriber,
+/// which tends to answer "Merci." on near-silence.
+pub const MIN_VOICED_FRAMES: usize = 3;
+
+fn frame_dbfs(f: &[i16]) -> f32 {
+    let mean_sq = f.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / f.len() as f64;
+    let rms = mean_sq.sqrt();
+    if rms <= 0.0 { f32::NEG_INFINITY } else { (20.0 * (rms / 32768.0).log10()) as f32 }
 }
 
 pub fn is_silent(clip: &AudioClip, threshold_dbfs: f32) -> bool {
-    clip.samples.is_empty() || loudest_frame_dbfs(clip) < threshold_dbfs
+    let frame = (clip.sample_rate / 50).max(1) as usize;
+    let voiced = clip.samples.chunks(frame).filter(|f| frame_dbfs(f) >= threshold_dbfs).count();
+    voiced < MIN_VOICED_FRAMES
 }
 
 pub fn encode_wav(clip: &AudioClip) -> Result<Vec<u8>, String> {
@@ -130,6 +136,16 @@ mod tests {
         s.extend(sine(0.2, 300.0, TARGET_RATE, 200));
         s.extend(vec![0.0; 16_000]);
         assert!(!is_silent(&clip(&s), -45.0));
+    }
+
+    #[test]
+    fn single_click_inside_silence_is_silent() {
+        let mut s = vec![0.0; 16_000];
+        s.extend(sine(0.5, 2_000.0, TARGET_RATE, 15)); // ~15 ms click
+        s.extend(vec![0.0; 16_000]);
+        let c = clip(&s);
+        assert!(loudest_frame_dbfs(&c) > -45.0);
+        assert!(is_silent(&c, -45.0));
     }
 
     #[test]

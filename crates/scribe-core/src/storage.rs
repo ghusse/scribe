@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 
 use crate::model::{Dictation, Level, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
@@ -157,6 +158,13 @@ impl Db {
 
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        // Unicode-aware lowercase: SQLite's LIKE/lower() only fold ASCII ("Été" vs "été").
+        conn.create_scalar_function(
+            "scribe_fold",
+            1,
+            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|t| t.to_lowercase())),
+        )?;
         let db = Db { conn };
         db.migrate()?;
         Ok(db)
@@ -165,8 +173,11 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         let version: i64 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 1 {
-            self.conn.execute_batch(SCHEMA_V1)?;
-            self.conn.execute_batch("PRAGMA user_version = 1;")?;
+            // One transaction: a failure part-way must not leave tables behind with user_version 0.
+            let tx = self.conn.unchecked_transaction()?;
+            tx.execute_batch(SCHEMA_V1)?;
+            tx.execute_batch("PRAGMA user_version = 1;")?;
+            tx.commit()?;
         }
         Ok(())
     }
@@ -191,14 +202,16 @@ impl Db {
     }
 
     pub fn list_dictations(&self, query: Option<&str>, limit: u32, offset: u32) -> Result<Vec<Dictation>> {
-        let pattern = query.map(str::trim).filter(|q| !q.is_empty()).map(|q| format!("%{q}%"));
+        // instr() on folded text: literal substring match (no LIKE wildcards), Unicode case-insensitive.
+        let needle = query.map(str::trim).filter(|q| !q.is_empty()).map(str::to_lowercase);
         let sql = format!(
             "SELECT {DICTATION_COLS} FROM dictations \
-             WHERE (?1 IS NULL OR raw_text LIKE ?1 OR final_text LIKE ?1 OR edited_text LIKE ?1) \
+             WHERE (?1 IS NULL OR instr(scribe_fold(raw_text), ?1) > 0 OR instr(scribe_fold(final_text), ?1) > 0 \
+             OR instr(scribe_fold(edited_text), ?1) > 0) \
              ORDER BY id DESC LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![pattern, limit, offset], row_to_dictation)?;
+        let rows = stmt.query_map(params![needle, limit, offset], row_to_dictation)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -211,9 +224,11 @@ impl Db {
         Ok(())
     }
 
+    /// Retranscription replaces the result: a user edit of the previous transcript is stale, so
+    /// it is cleared (the history then shows the new final text).
     pub fn update_transcription(&self, id: i64, u: &TranscriptionUpdate) -> Result<()> {
         self.conn.execute(
-            "UPDATE dictations SET raw_text = ?2, final_text = ?3, transcriber = ?4, corrector = ?5, \
+            "UPDATE dictations SET raw_text = ?2, final_text = ?3, edited_text = NULL, transcriber = ?4, corrector = ?5, \
              stt_ms = ?6, llm_ms = ?7, outcome = ?8, error = ?9 WHERE id = ?1",
             params![id, u.raw_text, u.final_text, u.transcriber, u.corrector, u.stt_ms, u.llm_ms,
                     u.outcome.as_str(), u.error],
@@ -344,6 +359,61 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(db.list_dictations(Some("  "), 10, 0).unwrap().len(), 2);
         assert_eq!(db.list_dictations(None, 1, 1).unwrap()[0].final_text.as_deref(), Some("Premier Kubernetes"));
+    }
+
+    #[test]
+    fn search_is_literal_and_unicode_case_insensitive() {
+        let db = Db::open_in_memory().unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "Été chargé", None)).unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T11:00:00.000Z", "Remise de 50% sur 500", None)).unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T12:00:00.000Z", "Il a 50 ans", None)).unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T13:00:00.000Z", "snake_case", None)).unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T14:00:00.000Z", "snakeXcase", None)).unwrap();
+        let texts = |q: &str| -> Vec<String> {
+            db.list_dictations(Some(q), 10, 0).unwrap().into_iter().filter_map(|d| d.final_text).collect()
+        };
+        assert_eq!(texts("été"), vec!["Été chargé".to_string()]);
+        assert_eq!(texts("ÉTÉ CHARGÉ"), vec!["Été chargé".to_string()]);
+        assert_eq!(texts("50%"), vec!["Remise de 50% sur 500".to_string()]);
+        assert_eq!(texts("snake_case"), vec!["snake_case".to_string()]);
+    }
+
+    #[test]
+    fn failed_migration_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scribe.db");
+        // A pre-existing table makes the last CREATE TABLE of the schema fail.
+        Connection::open(&path).unwrap().execute_batch("CREATE TABLE bench_runs (x INTEGER);").unwrap();
+        assert!(Db::open(&path).is_err());
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM sqlite_master WHERE name = 'dictations'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+        conn.execute_batch("DROP TABLE bench_runs;").unwrap();
+        drop(conn);
+        let db = Db::open(&path).unwrap();
+        db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "ok", None)).unwrap();
+    }
+
+    #[test]
+    fn retranscription_clears_stale_edit() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "Ancien", None)).unwrap();
+        db.set_edited_text(id, Some("X")).unwrap();
+        db.update_transcription(id, &TranscriptionUpdate {
+            raw_text: Some("brut".into()),
+            final_text: Some("X".into()),
+            transcriber: None,
+            corrector: None,
+            stt_ms: None,
+            llm_ms: None,
+            outcome: Outcome::Clipboard,
+            error: None,
+        }).unwrap();
+        let d = db.get_dictation(id).unwrap().unwrap();
+        assert_eq!(d.edited_text, None);
+        assert_eq!(d.best_text(), Some("X"));
     }
 
     #[test]

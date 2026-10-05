@@ -109,6 +109,33 @@ pub fn is_blank_or_hallucination(text: &str) -> bool {
     normalized.is_empty() || HALLUCINATIONS.contains(&normalized)
 }
 
+fn normalize_quotes_lower(s: &str) -> String {
+    s.to_lowercase().replace('’', "'")
+}
+
+/// Removes known credit phrases appended as trailing sentences after real speech
+/// (the usual Whisper failure on trailing silence): "Bonjour à tous. Sous-titres réalisés par…".
+/// Only whole trailing sentences are removed: "Merci d'avoir regardé ma PR" is kept.
+pub fn strip_trailing_hallucinations(text: &str) -> String {
+    let mut s = text.trim();
+    'outer: loop {
+        let body = s.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | '…') || c.is_whitespace());
+        for phrase in HALLUCINATIONS {
+            let n = phrase.chars().count();
+            let Some((start, _)) = body.char_indices().rev().nth(n - 1) else { continue };
+            if normalize_quotes_lower(&body[start..]) != *phrase {
+                continue;
+            }
+            let head = body[..start].trim_end();
+            if head.is_empty() || head.ends_with(['.', '!', '?', '…']) {
+                s = head;
+                continue 'outer;
+            }
+        }
+        return s.to_string();
+    }
+}
+
 pub async fn run(
     cfg: &PipelineConfig,
     wav: &[u8],
@@ -128,7 +155,7 @@ pub async fn run(
         Err(e) => return Err(PipelineError::Transcription(e)),
     };
     let stt_ms = t0.elapsed().as_millis() as u64;
-    let raw = raw.trim().to_string();
+    let raw = strip_trailing_hallucinations(&raw);
     if is_blank_or_hallucination(&raw) {
         return Err(PipelineError::Empty);
     }
@@ -290,6 +317,27 @@ mod tests {
             assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await, Err(PipelineError::Empty), "{raw}");
             assert_eq!(llm.calls.load(Ordering::SeqCst), 0);
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn trailing_credit_after_real_speech_is_removed() {
+        let stt = FakeStt::new(vec![Ok("Bonjour à tous. Sous-titres réalisés par la communauté d'Amara.org".into())]);
+        let llm = FakeLlm::new(Ok("<output>X</output>".into()), 0);
+        let out = run(&cfg(Level::Raw), b"wav", &[], None, &stt, &llm).await.unwrap();
+        assert_eq!(out.final_text, "Bonjour à tous.");
+        assert_eq!(out.raw, "Bonjour à tous.");
+    }
+
+    #[test]
+    fn strip_trailing_hallucinations_only_removes_whole_sentences() {
+        assert_eq!(strip_trailing_hallucinations("Bonjour. Merci d’avoir regardé !"), "Bonjour.");
+        assert_eq!(
+            strip_trailing_hallucinations("C'est prêt ? Thanks for watching. Sous-titrage ST' 501"),
+            "C'est prêt ?"
+        );
+        assert_eq!(strip_trailing_hallucinations("Merci d'avoir regardé ma PR."), "Merci d'avoir regardé ma PR.");
+        assert_eq!(strip_trailing_hallucinations("Je dis merci d'avoir regardé"), "Je dis merci d'avoir regardé");
+        assert_eq!(strip_trailing_hallucinations("Thanks for watching"), "");
     }
 
     #[test]

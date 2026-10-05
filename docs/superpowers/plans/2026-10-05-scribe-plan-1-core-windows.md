@@ -452,7 +452,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
   - `gesture::KeyRole { Trigger, Lock, Other }`, `gesture::KeyEvent { role, down: bool, t_ms: u64 }`
   - `gesture::GestureCommand { Start, Lock, Stop, Cancel }`
   - `gesture::GestureConfig { hold_threshold_ms: u64, double_tap_window_ms: u64, double_tap_enabled: bool, lock_key_enabled: bool }` (serde, `Default`)
-  - `gesture::GestureDetector::new(cfg)`, `.on_key(KeyEvent) -> Vec<GestureCommand>`, `.on_tick(now_ms) -> Vec<GestureCommand>`, `.reset()`, `.set_config(cfg)`
+  - `gesture::GestureDetector::new(cfg)`, `.on_key(KeyEvent) -> Vec<GestureCommand>`, `.on_tick(now_ms) -> Vec<GestureCommand>`, `.reset()`, `.set_config(cfg)` (ne réinitialise pas le geste en cours), `.on_command_ignored()`
 
 - [ ] **Step 1: Écrire `clock.rs` et déclarer les modules**
 
@@ -672,13 +672,21 @@ impl GestureDetector {
         Self { cfg, state: State::Idle }
     }
 
+    /// Updates the thresholds without touching the gesture in progress.
     pub fn set_config(&mut self, cfg: GestureConfig) {
         self.cfg = cfg;
-        self.state = State::Idle;
     }
 
     pub fn reset(&mut self) {
         self.state = State::Idle;
+    }
+
+    /// Called when the session ignored a command: wait for the trigger release if it may be held.
+    pub fn on_command_ignored(&mut self) {
+        self.state = match self.state {
+            State::Pressed { .. } | State::LockedHeld | State::StopHeld => State::StopHeld,
+            _ => State::Idle,
+        };
     }
 
     pub fn on_key(&mut self, ev: KeyEvent) -> Vec<GestureCommand> {
@@ -770,6 +778,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
   - `session::SessionState { Idle, Recording { mode: Mode, started_at_ms: u64 }, Processing }`
   - `session::SessionAction { BeginRecording, SetMode(Mode), FinishRecording, DiscardRecording }`
   - `session::Session::new(max_recording_ms: u64)`, `.state()`, `.on_gesture(cmd, now_ms) -> Option<SessionAction>`, `.on_tick(now_ms) -> Option<SessionAction>`, `.on_processing_done()`, `.abort()`, `.set_max_recording_ms(u64)`
+  - `session::feed(&mut GestureDetector, &mut Session, Vec<GestureCommand>, now_ms) -> Vec<SessionAction>` (appelle `GestureDetector::on_command_ignored()` dès qu'une commande est ignorée)
 
 - [ ] **Step 1: Écrire les tests**
 
@@ -4555,7 +4564,7 @@ use tauri::Emitter;
 use scribe_core::clock;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, KeyEvent, KeyRole, Mode};
-use scribe_core::session::{Session, SessionAction};
+use scribe_core::session::{self, Session, SessionAction};
 use scribe_platform::audio_capture::{start_recording, LevelCallback, RecordingHandle};
 use scribe_platform::RawKey;
 
@@ -4637,15 +4646,13 @@ impl Controller {
                     (s.trigger_vk, s.lock_vk)
                 };
                 let ev = KeyEvent { role: key_role(k.vk, trigger, lock), down: k.down, t_ms: k.t_ms };
-                for cmd in self.gesture.on_key(ev) {
-                    self.apply_gesture(cmd, k.t_ms);
-                }
+                let cmds = self.gesture.on_key(ev);
+                self.apply_gestures(cmds, k.t_ms);
             }
             ControllerMsg::Tick => {
                 let now = clock::now_ms();
-                for cmd in self.gesture.on_tick(now) {
-                    self.apply_gesture(cmd, now);
-                }
+                let cmds = self.gesture.on_tick(now);
+                self.apply_gestures(cmds, now);
                 if let Some(action) = self.session.on_tick(now) {
                     self.gesture.reset();
                     self.apply_action(action);
@@ -4662,8 +4669,10 @@ impl Controller {
         }
     }
 
-    fn apply_gesture(&mut self, cmd: GestureCommand, now: u64) {
-        if let Some(action) = self.session.on_gesture(cmd, now) {
+    /// `session::feed` keeps the detector in step when the session ignores a command
+    /// (e.g. a double-tap during Processing).
+    fn apply_gestures(&mut self, cmds: Vec<GestureCommand>, now: u64) {
+        for action in session::feed(&mut self.gesture, &mut self.session, cmds, now) {
             self.apply_action(action);
         }
     }

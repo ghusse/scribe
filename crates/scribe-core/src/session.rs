@@ -1,4 +1,4 @@
-use crate::gesture::{GestureCommand, Mode};
+use crate::gesture::{GestureCommand, GestureDetector, Mode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
@@ -77,10 +77,77 @@ impl Session {
     }
 }
 
+/// Feeds the detector's commands to the session and keeps both in step: as soon as the session
+/// ignores a command (press during Processing, stray Stop…), the detector is told so and the rest
+/// of the batch is dropped. Without this, a double-tap during Processing would leave the detector
+/// in Locked while the session is Idle, and the next real press would emit an ignored Stop.
+pub fn feed(
+    gesture: &mut GestureDetector,
+    session: &mut Session,
+    cmds: Vec<GestureCommand>,
+    now_ms: u64,
+) -> Vec<SessionAction> {
+    let mut actions = Vec::new();
+    for cmd in cmds {
+        match session.on_gesture(cmd, now_ms) {
+            Some(a) => actions.push(a),
+            None => {
+                gesture.on_command_ignored();
+                break;
+            }
+        }
+    }
+    actions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gesture::GestureCommand::*;
+    use crate::gesture::{GestureConfig, KeyEvent, KeyRole};
+
+    fn trig(down: bool, t: u64) -> KeyEvent {
+        KeyEvent { role: KeyRole::Trigger, down, t_ms: t }
+    }
+
+    fn key(g: &mut GestureDetector, s: &mut Session, down: bool, t: u64) -> Vec<SessionAction> {
+        let cmds = g.on_key(trig(down, t));
+        feed(g, s, cmds, t)
+    }
+
+    fn tick(g: &mut GestureDetector, s: &mut Session, t: u64) -> Vec<SessionAction> {
+        let cmds = g.on_tick(t);
+        feed(g, s, cmds, t)
+    }
+
+    #[test]
+    fn double_tap_during_processing_does_not_desync_next_press() {
+        let mut g = GestureDetector::new(GestureConfig::default());
+        let mut s = Session::new(600_000);
+        assert_eq!(key(&mut g, &mut s, true, 0), vec![SessionAction::BeginRecording]);
+        assert_eq!(key(&mut g, &mut s, false, 1_000), vec![SessionAction::FinishRecording]);
+        // double-tap while processing: ignored
+        for (down, t) in [(true, 1_200), (false, 1_250), (true, 1_350), (false, 1_400)] {
+            assert_eq!(key(&mut g, &mut s, down, t), vec![]);
+        }
+        assert_eq!(tick(&mut g, &mut s, 2_000), vec![]);
+        s.on_processing_done();
+        assert_eq!(key(&mut g, &mut s, true, 5_000), vec![SessionAction::BeginRecording]);
+        assert_eq!(key(&mut g, &mut s, false, 9_000), vec![SessionAction::FinishRecording]);
+    }
+
+    #[test]
+    fn press_held_through_end_of_processing_does_not_start_on_autorepeat() {
+        let mut g = GestureDetector::new(GestureConfig::default());
+        let mut s = Session::new(600_000);
+        key(&mut g, &mut s, true, 0);
+        key(&mut g, &mut s, false, 1_000);
+        assert_eq!(key(&mut g, &mut s, true, 1_200), vec![]);
+        s.on_processing_done();
+        assert_eq!(key(&mut g, &mut s, true, 1_230), vec![]); // autorepeat
+        assert_eq!(key(&mut g, &mut s, false, 2_000), vec![]);
+        assert_eq!(key(&mut g, &mut s, true, 3_000), vec![SessionAction::BeginRecording]);
+    }
 
     #[test]
     fn start_then_stop_goes_to_processing() {

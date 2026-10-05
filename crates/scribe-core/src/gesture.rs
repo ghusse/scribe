@@ -61,7 +61,8 @@ enum State {
     /// Locked, trigger still physically held (second tap or lock key).
     LockedHeld,
     Locked,
-    /// Stop already emitted, waiting for the trigger release.
+    /// Nothing more to emit for this press (Stop already emitted, or the press was
+    /// ignored by the session): waiting for the trigger release.
     StopHeld,
 }
 
@@ -77,13 +78,24 @@ impl GestureDetector {
         Self { cfg, state: State::Idle }
     }
 
+    /// Updates the thresholds without touching the gesture in progress, so that saving the
+    /// settings during a (locked) recording does not turn the stopping tap into a Cancel.
     pub fn set_config(&mut self, cfg: GestureConfig) {
         self.cfg = cfg;
-        self.state = State::Idle;
     }
 
     pub fn reset(&mut self) {
         self.state = State::Idle;
+    }
+
+    /// Called when the session ignored a command (e.g. a press during Processing): brings the
+    /// detector back in step. If the trigger may still be held, wait for its release so that
+    /// auto-repeat cannot start a recording mid-press.
+    pub fn on_command_ignored(&mut self) {
+        self.state = match self.state {
+            State::Pressed { .. } | State::LockedHeld | State::StopHeld => State::StopHeld,
+            _ => State::Idle,
+        };
     }
 
     pub fn on_key(&mut self, ev: KeyEvent) -> Vec<GestureCommand> {
@@ -237,6 +249,38 @@ mod tests {
         let mut d = det();
         let ev = KeyEvent { role: KeyRole::Other, down: true, t_ms: 0 };
         assert_eq!(d.on_key(ev), vec![]);
+    }
+
+    #[test]
+    fn set_config_keeps_locked_recording_so_tap_still_stops() {
+        let mut d = det();
+        d.on_key(trig(true, 0));
+        d.on_key(trig(false, 100));
+        assert_eq!(d.on_key(trig(true, 200)), vec![Lock]);
+        d.on_key(trig(false, 260));
+        d.set_config(GestureConfig { hold_threshold_ms: 400, ..Default::default() });
+        assert_eq!(d.on_key(trig(true, 60_000)), vec![Stop]);
+        assert_eq!(d.on_key(trig(false, 60_120)), vec![]);
+        assert_eq!(d.on_tick(60_600), vec![]);
+    }
+
+    #[test]
+    fn set_config_keeps_hold_recording_so_release_still_stops() {
+        let mut d = det();
+        d.on_key(trig(true, 0));
+        d.set_config(GestureConfig::default());
+        assert_eq!(d.on_key(trig(false, 900)), vec![Stop]);
+    }
+
+    #[test]
+    fn ignored_press_waits_for_release_and_ignores_autorepeat() {
+        let mut d = det();
+        assert_eq!(d.on_key(trig(true, 0)), vec![Start]);
+        d.on_command_ignored();
+        assert_eq!(d.on_key(trig(true, 30)), vec![]); // autorepeat
+        assert_eq!(d.on_key(trig(false, 100)), vec![]);
+        assert_eq!(d.on_tick(1_000), vec![]);
+        assert_eq!(d.on_key(trig(true, 2_000)), vec![Start]);
     }
 
     #[test]
