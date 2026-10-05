@@ -138,9 +138,28 @@ mod tests {
 
     #[test]
     fn raw_level_does_not_read_the_correction_key() {
-        let store = MemorySecretStore::with(&[("openai", "sk-o"), ("anthropic", "sk-a")]);
+        /// Records every key lookup so the test can see which secrets were read.
+        struct Spy(MemorySecretStore, std::sync::Mutex<Vec<String>>);
+        impl SecretStore for Spy {
+            fn get(&self, provider: &str) -> Option<String> {
+                self.1.lock().unwrap().push(provider.to_string());
+                self.0.get(provider)
+            }
+            fn set(&self, provider: &str, key: &str) -> Result<(), String> {
+                self.0.set(provider, key)
+            }
+            fn delete(&self, provider: &str) -> Result<(), String> {
+                self.0.delete(provider)
+            }
+        }
+        let store = Spy(MemorySecretStore::with(&[("openai", "sk-o"), ("anthropic", "sk-a")]), Default::default());
         let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Raw), &store).unwrap();
         assert_eq!(llm.name(), "aucun");
+        assert_eq!(*store.1.lock().unwrap(), vec!["openai".to_string()], "only the transcription key is read");
+        store.1.lock().unwrap().clear();
+        let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted), &store).unwrap();
+        assert_ne!(llm.name(), "aucun");
+        assert_eq!(*store.1.lock().unwrap(), vec!["openai".to_string(), "anthropic".to_string()]);
         let store = MemorySecretStore::with(&[("openai", "sk-o")]);
         let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted), &store).unwrap();
         assert_eq!(llm.name(), "aucun", "missing correction key: raw text instead of a failure");

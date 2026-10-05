@@ -51,27 +51,42 @@ fn raw_hwnd(app: &AppHandle) -> Option<isize> {
 }
 
 /// The overlay webview, shown and hidden without activation through Win32 when available.
-pub struct TauriOverlayWindow(pub AppHandle);
+///
+/// The HWND is resolved once, at construction on the main thread: `WebviewWindow::hwnd()` is a
+/// synchronous round-trip to the event loop, and `show`/`hide` run with the `Overlay` lock held,
+/// so they must only post (Win32 calls or Tauri's fire-and-forget `show`/`hide`), never wait.
+pub struct TauriOverlayWindow {
+    app: AppHandle,
+    hwnd: Option<isize>,
+}
+
+impl TauriOverlayWindow {
+    /// Call on the main thread (the setup hook), after the overlay window exists.
+    pub fn new(app: AppHandle) -> Self {
+        let hwnd = raw_hwnd(&app);
+        Self { app, hwnd }
+    }
+}
 
 impl OverlayWindow for TauriOverlayWindow {
     fn send(&self, ev: &OverlayEvent) {
-        let _ = self.0.emit_to(OVERLAY_WINDOW, "overlay", ev);
+        let _ = self.app.emit_to(OVERLAY_WINDOW, "overlay", ev);
     }
     fn show(&self) {
-        match raw_hwnd(&self.0) {
+        match self.hwnd {
             Some(h) => scribe_platform::show_overlay(h),
             None => {
-                if let Some(w) = self.0.get_webview_window(OVERLAY_WINDOW) {
+                if let Some(w) = self.app.get_webview_window(OVERLAY_WINDOW) {
                     let _ = w.show();
                 }
             }
         }
     }
     fn hide(&self) {
-        match raw_hwnd(&self.0) {
+        match self.hwnd {
             Some(h) => scribe_platform::hide_overlay(h),
             None => {
-                if let Some(w) = self.0.get_webview_window(OVERLAY_WINDOW) {
+                if let Some(w) = self.app.get_webview_window(OVERLAY_WINDOW) {
                     let _ = w.hide();
                 }
             }

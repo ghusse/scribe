@@ -69,10 +69,12 @@ What is left in excluded files is wiring only; every decision lives in a tested 
 - `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
   `match` and the left-click filter.
 - `adapters.rs`: overlay state/dismiss rules are `overlay::Overlay`, placement is `overlay::overlay_position`, the
-  level throttle is `controller::level_emitter`. Remaining branches: `raw_hwnd` `Some` (Win32 show/hide) / `None`
+  level throttle is `controller::level_emitter`. Remaining branches: cached HWND `Some` (Win32 show/hide) / `None`
   (webview show/hide) and the `if let Some(window)` guards. `TauriOverlayWindow` methods run with the `Overlay`
   lock held, from any thread, while the overlay window belongs to the main thread: they must never wait on
-  another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. Commands
+  another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. The HWND
+  is therefore resolved once in `TauriOverlayWindow::new` on the main thread (`WebviewWindow::hwnd()` is a
+  blocking event-loop round-trip in tauri-runtime-wry), never in `show`/`hide`. Commands
   that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `missingKeys` in `src/lib/apiKeys.ts`),

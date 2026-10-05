@@ -179,6 +179,21 @@ fn unavailable_microphone_aborts_and_resets() {
 }
 
 #[test]
+fn microphone_failure_resets_the_detector_for_a_quick_retry() {
+    let mut h = Harness::new();
+    *h.rec.start_error.lock().unwrap() = Some("aucun périphérique".into());
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 100);
+    // Microphone back; the user presses again inside the double-tap window.
+    // A detector left in its tap state would read this as a lock gesture and
+    // swallow the press instead of starting a recording.
+    *h.rec.start_error.lock().unwrap() = None;
+    h.key(TRIGGER, true, 200);
+    assert_eq!(h.started(), 1);
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false }));
+}
+
+#[test]
 fn lost_recording_is_reported_and_the_session_goes_idle() {
     let mut h = Harness::new();
     *h.rec.stop_error.lock().unwrap() = Some("micro débranché".into());

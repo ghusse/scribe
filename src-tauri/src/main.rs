@@ -54,7 +54,7 @@ fn main() {
                 keys: scribe_platform::key_sender(),
                 secrets: secret_store,
                 providers: Box::new(providers::build),
-                overlay: Overlay::new(Arc::new(TauriOverlayWindow(app.handle().clone()))),
+                overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
                 key_capture: KeyCapture::default(),
                 ctrl_tx: Mutex::new(tx.clone()),
