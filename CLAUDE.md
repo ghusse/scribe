@@ -38,9 +38,11 @@ thresholds, and the two CI coverage steps.
 
 - Threshold (lines, every language): `95`
 - Rust ignore regex (`package.json` > `coverage:rust`):
-  `crates.scribe-platform.src.windows.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
+  `crates.scribe-platform.src.windows.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
-- Rust files excluded by that regex: `crates/scribe-platform/src/windows/focus.rs`,
+- Rust files excluded by that regex: `crates/scribe-platform/src/device/clipboard.rs`,
+  `crates/scribe-platform/src/device/microphone.rs`, `crates/scribe-platform/src/device/mod.rs`,
+  `crates/scribe-platform/src/windows/focus.rs`,
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
   `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
   `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
@@ -50,7 +52,8 @@ thresholds, and the two CI coverage steps.
 
 | Excluded | Why |
 |---|---|
-| `crates/scribe-platform/src/windows/` (`focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation); needs a live desktop session. |
+| `crates/scribe-platform/src/windows/` (`focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation); needs a live desktop session. `mod.rs` re-exports the Windows entry points (`lib.rs` re-exports them, or `fallback.rs` off Windows). |
+| `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
 | `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
@@ -64,7 +67,13 @@ What is left in excluded files is wiring only; every decision lives in a tested 
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
   propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.
-- `windows/keys.rs`, `windows/window.rs`: Win32 calls only. `show_overlay`/`hide_overlay` must stay
+- `device/microphone.rs`: the recording-thread protocol is `audio_capture::spawn_recorder`, sample conversions
+  `audio_capture::{i16_to_f32, u16_to_f32}`, level metering, partial audio and the final clip
+  `audio_capture::CaptureBuffer` (`push`, `set_error`, `finish`). Remaining branches: the cpal error paths
+  (no device, unusable config, unsupported format, open/play failure → `ready` error) and the sample-format `match`.
+- `device/clipboard.rs`: what to read first (text, then image, else `Unsupported`) and how to restore each
+  `ClipboardContent` are `clipboard::BackendClipboard`. Remaining branches: arboard error mapping (`?`).
+- `windows/keys.rs`, `windows/window.rs`, `windows/mod.rs`: Win32 calls and re-exports only. `show_overlay`/`hide_overlay` must stay
   non-blocking across threads (`ShowWindowAsync`, `SWP_ASYNCWINDOWPOS`): see the next point.
 - `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
   `match` and the left-click filter.

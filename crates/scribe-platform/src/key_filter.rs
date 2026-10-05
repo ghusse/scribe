@@ -28,7 +28,8 @@ impl KeyFilter {
 
     /// `is_pressed(vk)` queries the physical key state; it is asked only before swallowing, to recover
     /// from a lost key-up (e.g. Win+L switches to the secure desktop while the trigger is held), which
-    /// would otherwise swallow the lock key (Space) system-wide.
+    /// would otherwise swallow the lock key (Space) system-wide. A `&dyn` rather than a generic, so the hook
+    /// does not compile a second, untested copy of this function.
     pub fn on_event(
         &mut self,
         cfg: &HookConfig,
@@ -36,7 +37,7 @@ impl KeyFilter {
         down: bool,
         injected: bool,
         t_ms: u64,
-        is_pressed: impl Fn(u32) -> bool,
+        is_pressed: &dyn Fn(u32) -> bool,
     ) -> KeyDecision {
         if injected {
             return KeyDecision { key: None, swallow: false };
@@ -79,16 +80,16 @@ mod tests {
     }
 
     fn ev(f: &mut KeyFilter, cfg: &HookConfig, vk: u32, down: bool) -> KeyDecision {
-        f.on_event(cfg, vk, down, false, 7, pressed)
+        f.on_event(cfg, vk, down, false, 7, &pressed)
     }
 
     #[test]
     fn forwards_every_real_event_with_its_time() {
         let cfg = HookConfig::new(TRIGGER, LOCK);
         let mut f = KeyFilter::new();
-        let d = f.on_event(&cfg, OTHER, true, false, 42, pressed);
+        let d = f.on_event(&cfg, OTHER, true, false, 42, &pressed);
         assert_eq!(d, KeyDecision { key: Some(RawKey { vk: OTHER, down: true, t_ms: 42 }), swallow: false });
-        let d = f.on_event(&cfg, OTHER, false, false, 43, pressed);
+        let d = f.on_event(&cfg, OTHER, false, false, 43, &pressed);
         assert_eq!(d.key, Some(RawKey { vk: OTHER, down: false, t_ms: 43 }));
     }
 
@@ -146,13 +147,13 @@ mod tests {
     fn injected_events_are_ignored_and_do_not_change_state() {
         let cfg = HookConfig::new(TRIGGER, LOCK);
         let mut f = KeyFilter::new();
-        let d = f.on_event(&cfg, TRIGGER, true, true, 1, pressed);
+        let d = f.on_event(&cfg, TRIGGER, true, true, 1, &pressed);
         assert_eq!(d, KeyDecision { key: None, swallow: false });
         assert!(!ev(&mut f, &cfg, LOCK, true).swallow, "an injected trigger-down does not arm the lock");
         ev(&mut f, &cfg, TRIGGER, true);
-        let d = f.on_event(&cfg, LOCK, true, true, 1, pressed);
+        let d = f.on_event(&cfg, LOCK, true, true, 1, &pressed);
         assert_eq!(d, KeyDecision { key: None, swallow: false }, "an injected lock is neither forwarded nor swallowed");
-        f.on_event(&cfg, TRIGGER, false, true, 1, pressed);
+        f.on_event(&cfg, TRIGGER, false, true, 1, &pressed);
         assert!(ev(&mut f, &cfg, LOCK, true).swallow, "an injected trigger-up does not disarm the lock");
     }
 
@@ -162,11 +163,11 @@ mod tests {
         let cfg = HookConfig::new(TRIGGER, LOCK);
         let mut f = KeyFilter::new();
         ev(&mut f, &cfg, TRIGGER, true);
-        let d = f.on_event(&cfg, LOCK, true, false, 7, released);
+        let d = f.on_event(&cfg, LOCK, true, false, 7, &released);
         assert!(!d.swallow, "the trigger is physically up: Space must reach the application");
         assert!(d.key.is_some());
         // The stale state is cleared: no more queries needed, still not swallowed.
-        let d = f.on_event(&cfg, LOCK, true, false, 7, |_| panic!("state should be reset"));
+        let d = f.on_event(&cfg, LOCK, true, false, 7, &|_| panic!("state should be reset"));
         assert!(!d.swallow);
     }
 
@@ -175,8 +176,8 @@ mod tests {
         let cfg = HookConfig::new(TRIGGER, LOCK);
         let mut f = KeyFilter::new();
         ev(&mut f, &cfg, TRIGGER, true);
-        assert!(f.on_event(&cfg, LOCK, true, false, 7, |vk| vk == TRIGGER).swallow);
-        assert!(!f.on_event(&cfg, LOCK, true, false, 7, |vk| vk != TRIGGER).swallow);
+        assert!(f.on_event(&cfg, LOCK, true, false, 7, &|vk| vk == TRIGGER).swallow);
+        assert!(!f.on_event(&cfg, LOCK, true, false, 7, &|vk| vk != TRIGGER).swallow);
     }
 
     #[test]

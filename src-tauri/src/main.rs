@@ -50,7 +50,7 @@ fn main() {
                 paths,
                 hook_cfg: hook_cfg.clone(),
                 focus: scribe_platform::focus_detector(),
-                clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard),
+                clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard::default()),
                 keys: scribe_platform::key_sender(),
                 secrets: secret_store,
                 providers: Box::new(providers::build),

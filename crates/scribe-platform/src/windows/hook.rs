@@ -71,7 +71,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN,
                 (kb.flags.0 & LLKHF_INJECTED.0) != 0,
                 scribe_core::clock::now_ms(),
-                |vk| GetAsyncKeyState(vk as i32) < 0,
+                &|vk| GetAsyncKeyState(vk as i32) < 0,
             );
             if let Some(k) = decision.key {
                 (s.on_key)(k);
