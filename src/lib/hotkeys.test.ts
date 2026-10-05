@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignHotkey, captureOutcome, isTypingKey } from "./hotkeys";
+import { assignHotkey, CAPTURE_GRACE_MS, captureOutcome, isTypingKey, pendingSummary, swallowsKey } from "./hotkeys";
 
 const CTRL_R = 0xa3, SPACE = 0x20, F8 = 0x77, A = 0x41;
 const cur = { trigger_vk: CTRL_R, lock_vk: SPACE };
@@ -51,5 +51,36 @@ describe("isTypingKey", () => {
   it("covers letters, digits, Space, Enter and Tab only", () => {
     for (const vk of [0x41, 0x5a, 0x30, 0x39, 0x60, 0x20, 0x0d, 0x09]) expect(isTypingKey(vk)).toBe(true);
     for (const vk of [CTRL_R, F8, 0xa5, 0x1b, 0x14]) expect(isTypingKey(vk)).toBe(false);
+  });
+});
+
+describe("swallowsKey", () => {
+  it("blocks Space/Enter on the capturing role's button so they cannot cancel or restart the capture", () => {
+    expect(swallowsKey(" ", "lock", "lock", null, 0)).toBe(true);
+    expect(swallowsKey("Enter", "lock", "lock", null, 0)).toBe(true);
+    expect(swallowsKey("Enter", "trigger", "lock", null, 0)).toBe(false);
+  });
+  it("keeps blocking just after the capture ended (the key may arrive after the hook's reply)", () => {
+    const ended = { role: "lock" as const, at: 1000 };
+    expect(swallowsKey(" ", "lock", null, ended, 1000 + CAPTURE_GRACE_MS - 1)).toBe(true);
+    expect(swallowsKey(" ", "lock", null, ended, 1000 + CAPTURE_GRACE_MS)).toBe(false);
+    expect(swallowsKey(" ", "trigger", null, ended, 1001)).toBe(false);
+  });
+  it("never blocks Tab, and nothing when idle", () => {
+    expect(swallowsKey("Tab", "lock", "lock", null, 0)).toBe(false);
+    expect(swallowsKey("Enter", "lock", null, null, 0)).toBe(false);
+  });
+});
+
+describe("pendingSummary", () => {
+  it("shows the lock as well when the assignment swaps the keys", () => {
+    const a = assignHotkey("trigger", SPACE, cur);
+    if (!a.ok) throw new Error("expected ok");
+    expect(pendingSummary(a.keys, cur)).toEqual({ trigger: "Espace", lock: "Ctrl droit" });
+  });
+  it("shows only the trigger when the lock is unchanged", () => {
+    const a = assignHotkey("trigger", A, cur);
+    if (!a.ok) throw new Error("expected ok");
+    expect(pendingSummary(a.keys, cur).lock).toBeNull();
   });
 });

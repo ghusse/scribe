@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editAction, needsAttention, testSignature, type SaveState } from "./autosave";
+import { editAction, needsAttention, staleGuard, testSignature, type SaveState } from "./autosave";
 
 describe("editAction", () => {
   it("schedules a save for a real change, even while another save is in flight", () => {
@@ -30,5 +30,20 @@ describe("testSignature", () => {
   });
   it("ignores unrelated settings", () => {
     expect(testSignature({ ...base, ...{ restore_delay_ms: 5 } })).toBe(testSignature(base));
+  });
+});
+
+describe("staleGuard", () => {
+  it("drops a provider test result when a key was saved while the test ran", () => {
+    const g = staleGuard();
+    const t = g.token(); // test starts
+    g.invalidate(); // writeKey during the test
+    expect(g.isCurrent(t)).toBe(false);
+  });
+  it("keeps a result when nothing changed, and a new token is current again", () => {
+    const g = staleGuard();
+    expect(g.isCurrent(g.token())).toBe(true);
+    g.invalidate();
+    expect(g.isCurrent(g.token())).toBe(true);
   });
 });

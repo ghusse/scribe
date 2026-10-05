@@ -49,3 +49,32 @@ export function assignHotkey(role: HotkeyRole, vk: number, cur: Hotkeys): Assign
   const confirm = keys.trigger_vk !== cur.trigger_vk && isTypingKey(keys.trigger_vk);
   return { ok: true, keys, note, confirm };
 }
+
+/**
+ * After a capture ends, the captured key's own keydown/keyup can still reach the page (the hook
+ * lets it through, and its IPC reply may arrive first): keep guarding the button that long.
+ */
+export const CAPTURE_GRACE_MS = 300;
+
+/**
+ * Whether a keydown on a role's « Changer / Annuler » button must not activate it: during that
+ * role's capture (or just after) the key is the one being captured, so Space or Enter would
+ * otherwise cancel the capture or start a new one. Tab still moves the focus; Échap cancels
+ * through the hook, and the mouse still works.
+ */
+export function swallowsKey(
+  key: string,
+  role: HotkeyRole,
+  capturing: HotkeyRole | null,
+  ended: { role: HotkeyRole; at: number } | null,
+  now: number,
+): boolean {
+  if (key === "Tab") return false;
+  if (capturing === role) return true;
+  return ended !== null && ended.role === role && now - ended.at < CAPTURE_GRACE_MS;
+}
+
+/** What the confirmation before a typing-key trigger shows: the lock too when it changes (swap). */
+export function pendingSummary(next: Hotkeys, cur: Hotkeys): { trigger: string; lock: string | null } {
+  return { trigger: keyName(next.trigger_vk), lock: next.lock_vk !== cur.lock_vk ? keyName(next.lock_vk) : null };
+}

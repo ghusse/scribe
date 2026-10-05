@@ -23,3 +23,16 @@ export function needsAttention(state: SaveState): boolean {
 export function testSignature(s: Pick<Settings, "stt_provider" | "stt_model" | "llm_provider" | "llm_model" | "llm_effort" | "level">): string {
   return JSON.stringify([s.stt_provider, s.stt_model, s.llm_provider, s.llm_model, s.llm_effort, s.level]);
 }
+
+/**
+ * Drops late async results: take a token before the call, `invalidate()` whenever what the result
+ * depends on changes (settings, a saved or deleted key), and keep the result only if still current.
+ */
+export function staleGuard() {
+  let gen = 0;
+  return {
+    token: () => gen,
+    invalidate: () => void gen++,
+    isCurrent: (t: number) => t === gen,
+  };
+}

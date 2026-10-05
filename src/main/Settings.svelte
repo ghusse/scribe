@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { api, effortLevels, type Provider, type ProviderTest, type Settings } from "../lib/api";
   import { keyName } from "../lib/keys";
-  import { editAction, testSignature, type SaveState } from "../lib/autosave";
+  import { editAction, staleGuard, testSignature, type SaveState } from "../lib/autosave";
   import { checkNumbers, formLabel, NUMBER_FIELDS, parseNumber, type NumberFieldId } from "../lib/validation";
-  import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
+  import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, pendingSummary, swallowsKey, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
   import { canSaveKey, deleteKeyQuestion, keyPlaceholder, keyState, keyUsage, missingKeys, unsavedDraftMessage, unsavedDrafts } from "../lib/apiKeys";
   import ModelPicker from "./ModelPicker.svelte";
 
@@ -143,6 +143,7 @@
   async function writeKey(id: string, key: string, done: string): Promise<boolean> {
     keyBusy[id] = true;
     test = null;
+    testGuard.invalidate(); // a test still running used the old key
     clearTimeout(feedbackTimers[id]);
     try {
       await api.setApiKey(id, key);
@@ -165,10 +166,29 @@
     return writeKey(id, keyDrafts[id], "✓ Clé enregistrée");
   }
 
+  // The row's input / « Supprimer » button, to put the focus back when the confirmation closes.
+  let keyInputs = $state<Record<string, HTMLInputElement>>({});
+  let deleteButtons = $state<Record<string, HTMLButtonElement>>({});
+
   async function deleteKey(id: string) {
     confirmDelete = null;
+    await tick();
+    keyInputs[id]?.focus();
     await writeKey(id, "", "✓ Clé supprimée");
   }
+
+  async function cancelDelete(id: string) {
+    confirmDelete = null;
+    await tick();
+    deleteButtons[id]?.focus();
+  }
+
+  const escCancelsDelete = (id: string) => (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelDelete(id);
+    }
+  };
 
   const autofocus = (node: HTMLElement) => node.focus();
 
@@ -177,9 +197,11 @@
   let testing = $state(false);
   let testBlock = $state<string | null>(null);
   let testSig = $derived(s ? testSignature(s) : "");
+  const testGuard = staleGuard();
   $effect(() => {
     void testSig; // a result for other providers/models is stale
     test = null;
+    testGuard.invalidate();
   });
 
   async function runTest() {
@@ -194,9 +216,9 @@
         error = "Réglages non enregistrés : corrigez l'erreur avant de tester.";
         return;
       }
-      const sig = testSig;
+      const token = testGuard.token();
       const result = await api.testProviders();
-      if (sig === testSig) test = result;
+      if (testGuard.isCurrent(token)) test = result;
     } catch (e) {
       error = String(e);
     } finally {
@@ -235,8 +257,26 @@
     } catch (e) {
       hotkeyNote = `Capture impossible : ${e}`;
     } finally {
+      captureEnded = { role, at: performance.now() };
       capturing = null;
     }
+  }
+
+  // The captured key also reaches the focused « Annuler » button: Space/Enter must not activate it
+  // (that would cancel the capture or start another one). Its keyup is swallowed too.
+  let captureEnded: { role: HotkeyRole; at: number } | null = null;
+  let swallowedCode: string | null = null;
+
+  function hotkeyKeydown(e: KeyboardEvent, role: HotkeyRole) {
+    if (!swallowsKey(e.key, role, capturing, captureEnded, performance.now())) return;
+    e.preventDefault();
+    swallowedCode = e.code;
+  }
+
+  function hotkeyKeyup(e: KeyboardEvent) {
+    if (swallowedCode === null || e.code !== swallowedCode) return;
+    e.preventDefault();
+    swallowedCode = null;
   }
 
   function applyKeys(a: Extract<Assignment, { ok: true }>) {
@@ -273,7 +313,8 @@
 {/snippet}
 
 {#snippet hotkeyButton(role: HotkeyRole)}
-  <button onclick={() => (capturing === role ? cancelCapture() : capture(role))} disabled={(capturing !== null && capturing !== role) || pendingAssign !== null}>
+  <button onclick={() => (capturing === role ? cancelCapture() : capture(role))}
+    onkeydown={(e) => hotkeyKeydown(e, role)} onkeyup={hotkeyKeyup} disabled={(capturing !== null && capturing !== role) || pendingAssign !== null}>
     {capturing === role ? "Annuler" : "Changer"}
   </button>
 {/snippet}
@@ -288,15 +329,15 @@
         {#if confirmDelete === p.id}
           <span class="confirm">{deleteKeyQuestion(p.label)}</span>
           <span class="actions">
-            <button type="button" class="danger" onclick={() => deleteKey(p.id)}>Supprimer</button>
-            <button type="button" onclick={() => (confirmDelete = null)} use:autofocus>Annuler</button>
+            <button type="button" class="danger" onclick={() => deleteKey(p.id)} onkeydown={escCancelsDelete(p.id)}>Supprimer</button>
+            <button type="button" onclick={() => cancelDelete(p.id)} onkeydown={escCancelsDelete(p.id)} use:autofocus>Annuler</button>
           </span>
         {:else}
-          <input type="password" placeholder={keyPlaceholder(keyStatus[p.id])} bind:value={keyDrafts[p.id]} />
+          <input type="password" placeholder={keyPlaceholder(keyStatus[p.id])} bind:value={keyDrafts[p.id]} bind:this={keyInputs[p.id]} />
           <span class="actions">
             <button type="submit" class:primary={canSaveKey(keyDrafts[p.id])} disabled={!canSaveKey(keyDrafts[p.id]) || keyBusy[p.id]}>Enregistrer</button>
             {#if keyStatus[p.id]}
-              <button type="button" class="danger" disabled={keyBusy[p.id]} onclick={() => (confirmDelete = p.id)}>Supprimer</button>
+              <button type="button" class="danger" disabled={keyBusy[p.id]} onclick={() => (confirmDelete = p.id)} bind:this={deleteButtons[p.id]}>Supprimer</button>
             {/if}
           </span>
         {/if}
@@ -369,8 +410,9 @@
       <button onclick={() => (s!.lock_vk = 0)} disabled={capturing !== null || pendingAssign !== null}>Aucune</button>
     </div>
     {#if pendingAssign}
+      {@const sum = pendingSummary(pendingAssign.keys, { trigger_vk: s.trigger_vk, lock_vk: s.lock_vk })}
       <p class="inline-confirm" role="status">
-        <span>Déclenchement = <strong>{keyName(pendingAssign.keys.trigger_vk)}</strong>. {TYPING_KEY_WARNING}</span>
+        <span>Déclenchement = <strong>{sum.trigger}</strong>{#if sum.lock}, Verrouillage = <strong>{sum.lock}</strong>{/if}. {TYPING_KEY_WARNING}</span>
         <button class="primary" onclick={() => applyKeys(pendingAssign!)}>Continuer</button>
         <button onclick={() => (pendingAssign = null)} use:autofocus>Annuler</button>
       </p>
