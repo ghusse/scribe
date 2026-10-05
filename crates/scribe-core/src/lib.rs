@@ -6,3 +6,5 @@ pub mod audio;
 pub mod model;
 pub mod storage;
 pub mod prompt;
+pub mod focus;
+pub mod insert;
