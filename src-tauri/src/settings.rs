@@ -53,6 +53,16 @@ impl Default for Settings {
     }
 }
 
+/// Upload cap: 16 kHz mono 16-bit WAV is 1.92 MB/min, and the transcription APIs
+/// (OpenAI, Groq) reject files above 25 MB (~13 min). 10 min keeps a safe margin, so a
+/// long dictation (or its retranscription from the history) is never refused for size.
+pub const MAX_RECORDING_MS_CAP: u64 = 600_000;
+/// The paste path sleeps this long before ProcessingDone; the session ignores hotkeys meanwhile.
+pub const MAX_RESTORE_DELAY_MS: u64 = 2_000;
+/// LLM timeout bounds: keep `base + per_char * len` reasonable and far from u64 overflow.
+pub const MAX_LLM_TIMEOUT_BASE_MS: u64 = 60_000;
+pub const MAX_LLM_TIMEOUT_PER_CHAR_MS: u64 = 1_000;
+
 /// About 100 years: anything above is a typo, and would overflow date arithmetic.
 pub const MAX_AUDIO_RETENTION_DAYS: u32 = 36_500;
 
@@ -76,10 +86,19 @@ fn is_secure_base_url(url: &str) -> bool {
 impl Settings {
     pub fn load(path: &Path) -> Settings {
         match std::fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!("réglages illisibles ({e}), valeurs par défaut utilisées");
-                Settings::default()
-            }),
+            Ok(text) => match serde_json::from_str::<Settings>(&text) {
+                Ok(s) => match s.validate() {
+                    Ok(()) => s,
+                    Err(e) => {
+                        tracing::warn!("réglages invalides ({e}), valeurs par défaut utilisées");
+                        Settings::default()
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("réglages illisibles ({e}), valeurs par défaut utilisées");
+                    Settings::default()
+                }
+            },
             Err(_) => Settings::default(),
         }
     }
@@ -100,6 +119,9 @@ impl Settings {
         if self.max_recording_ms < 10_000 {
             return Err("la durée maximale doit être d'au moins 10 secondes".into());
         }
+        if self.max_recording_ms > MAX_RECORDING_MS_CAP {
+            return Err(format!("la durée maximale ne peut pas dépasser {} minutes", MAX_RECORDING_MS_CAP / 60_000));
+        }
         if self.min_recording_ms >= self.max_recording_ms {
             return Err("la durée minimale doit être inférieure à la durée maximale".into());
         }
@@ -111,6 +133,12 @@ impl Settings {
         }
         if self.audio_retention_days > MAX_AUDIO_RETENTION_DAYS {
             return Err(format!("la durée de conservation de l'audio ne peut pas dépasser {MAX_AUDIO_RETENTION_DAYS} jours"));
+        }
+        if self.restore_delay_ms > MAX_RESTORE_DELAY_MS {
+            return Err(format!("le délai de restauration du presse-papiers ne peut pas dépasser {MAX_RESTORE_DELAY_MS} ms"));
+        }
+        if self.llm_timeout_base_ms > MAX_LLM_TIMEOUT_BASE_MS || self.llm_timeout_per_char_ms > MAX_LLM_TIMEOUT_PER_CHAR_MS {
+            return Err("le délai de correction est trop élevé".into());
         }
         if !is_secure_base_url(&self.stt_base_url) {
             return Err("l'adresse du service de transcription doit commencer par https:// (http:// accepté seulement pour localhost)".into());
@@ -166,6 +194,21 @@ mod tests {
     }
 
     #[test]
+    fn invalid_files_fall_back_to_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for bad in [
+            r#"{"stt_base_url":"http://api.example.com/v1"}"#,
+            r#"{"trigger_vk":0}"#,
+            r#"{"max_recording_ms":1800000}"#,
+            r#"{"llm_timeout_per_char_ms":18446744073709551615}"#,
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            assert_eq!(Settings::load(&path), Settings::default(), "should fall back: {bad}");
+        }
+    }
+
+    #[test]
     fn validation_rejects_inconsistent_keys() {
         assert!(Settings::default().validate().is_ok());
         assert!(Settings { trigger_vk: 0, ..Default::default() }.validate().is_err());
@@ -187,6 +230,12 @@ mod tests {
             Settings { stt_base_url: "http://api.example.com/v1".into(), ..Default::default() },
             Settings { stt_base_url: "http://localhost.evil.com/v1".into(), ..Default::default() },
             Settings { stt_base_url: "https://".into(), ..Default::default() },
+            Settings { max_recording_ms: MAX_RECORDING_MS_CAP + 1, ..Default::default() },
+            Settings { max_recording_ms: 1_800_000, ..Default::default() },
+            Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS + 1, ..Default::default() },
+            Settings { restore_delay_ms: u64::MAX, ..Default::default() },
+            Settings { llm_timeout_base_ms: u64::MAX, ..Default::default() },
+            Settings { llm_timeout_per_char_ms: u64::MAX, ..Default::default() },
         ];
         for s in bad {
             assert!(s.validate().is_err(), "should be rejected: {s:?}");
@@ -197,6 +246,9 @@ mod tests {
             Settings { stt_base_url: "http://localhost:8080/v1".into(), ..Default::default() },
             Settings { stt_base_url: "http://127.0.0.1/v1".into(), ..Default::default() },
             Settings { stt_base_url: "https://api.groq.com/openai/v1".into(), ..Default::default() },
+            Settings { max_recording_ms: MAX_RECORDING_MS_CAP, ..Default::default() },
+            Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS, ..Default::default() },
+            Settings { restore_delay_ms: 0, ..Default::default() },
         ];
         for s in good {
             assert!(s.validate().is_ok(), "should be accepted: {s:?}");

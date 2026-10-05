@@ -21,8 +21,9 @@ pub enum ControllerMsg {
     Tick,
     ProcessingDone,
     SettingsChanged,
-    /// Sent by the tray after flipping `hook_cfg.paused`.
-    PauseChanged,
+    /// Sent by the tray after flipping `hook_cfg.paused`; carries the new value so a quick
+    /// on/off toggle still discards the recording that was in flight when pause was set.
+    PauseChanged(bool),
 }
 
 pub fn key_role(vk: u32, trigger_vk: u32, lock_vk: u32) -> KeyRole {
@@ -116,8 +117,8 @@ impl Controller {
                 }
             }
             ControllerMsg::ProcessingDone => self.session.on_processing_done(),
-            ControllerMsg::PauseChanged => {
-                if self.svc.hook_cfg.paused.load(Ordering::Relaxed) {
+            ControllerMsg::PauseChanged(paused) => {
+                if paused {
                     self.gesture.reset();
                     if let Some(action) = self.session.on_paused() {
                         self.apply_action(action);
@@ -191,6 +192,9 @@ impl Controller {
                         let tx = self.tx.clone();
                         let mode = self.mode;
                         tauri::async_runtime::spawn(async move {
+                            // Sent on drop, so a panic in process() cannot leave the session
+                            // stuck in Processing.
+                            let _done = ProcessingDoneGuard(tx);
                             // Bounded by FOCUS_TIMEOUT_MS inside the snapshot thread.
                             let focus_start = tauri::async_runtime::spawn_blocking(move || {
                                 focus_rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown())
@@ -198,7 +202,6 @@ impl Controller {
                             .await
                             .unwrap_or_else(|_| FocusSnapshot::unknown());
                             dictation::process(svc, Captured { clip, mode, focus_start }).await;
-                            let _ = tx.send(ControllerMsg::ProcessingDone);
                         });
                     }
                     Err(e) => {
@@ -211,9 +214,30 @@ impl Controller {
     }
 }
 
+/// Sends `ProcessingDone` when dropped, including during a panic unwind.
+struct ProcessingDoneGuard(Sender<ControllerMsg>);
+
+impl Drop for ProcessingDoneGuard {
+    fn drop(&mut self) {
+        let _ = self.0.send(ControllerMsg::ProcessingDone);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn processing_done_is_sent_even_on_panic() {
+        let (tx, rx) = mpsc::channel();
+        let r = std::panic::catch_unwind(move || {
+            let _done = ProcessingDoneGuard(tx);
+            panic!("process failed");
+        });
+        assert!(r.is_err());
+        assert!(matches!(rx.try_recv(), Ok(ControllerMsg::ProcessingDone)));
+        assert!(rx.try_recv().is_err());
+    }
 
     #[test]
     fn maps_virtual_keys_to_roles() {

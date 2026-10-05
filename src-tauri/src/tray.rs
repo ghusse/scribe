@@ -34,7 +34,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 svc.hook_cfg.paused.store(paused, Ordering::Relaxed);
                 let _ = pause.set_checked(paused);
                 // The controller drops an in-flight recording on pause.
-                let _ = svc.ctrl_tx.lock().unwrap().send(ControllerMsg::PauseChanged);
+                let _ = svc.ctrl_tx.lock().unwrap().send(ControllerMsg::PauseChanged(paused));
             }
             "quit" => app.exit(0),
             _ => {}

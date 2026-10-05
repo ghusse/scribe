@@ -68,7 +68,8 @@ impl Default for PipelineConfig {
 }
 
 pub fn llm_timeout(cfg: &PipelineConfig, raw: &str) -> Duration {
-    Duration::from_millis(cfg.llm_timeout_base_ms + cfg.llm_timeout_per_char_ms * raw.chars().count() as u64)
+    let per_char = cfg.llm_timeout_per_char_ms.saturating_mul(raw.chars().count() as u64);
+    Duration::from_millis(cfg.llm_timeout_base_ms.saturating_add(per_char))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -351,5 +352,7 @@ mod tests {
         let c = PipelineConfig::default();
         assert_eq!(llm_timeout(&c, ""), Duration::from_millis(3_000));
         assert_eq!(llm_timeout(&c, &"a".repeat(1_000)), Duration::from_millis(8_000));
+        let huge = PipelineConfig { llm_timeout_per_char_ms: u64::MAX, ..PipelineConfig::default() };
+        assert_eq!(llm_timeout(&huge, "ab"), Duration::from_millis(u64::MAX));
     }
 }
