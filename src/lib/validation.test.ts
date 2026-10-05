@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import type { Settings } from "./api";
+import { checkModelId, checkNumbers, formLabel, NUMBER_FIELDS, parseNumber, rangeMessage } from "./validation";
+
+const ok: Settings = {
+  trigger_vk: 0xa3, lock_vk: 0x20,
+  gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
+  level: "formatted", stt_provider: "openai", stt_model: "gpt-transcribe", llm_provider: "anthropic", llm_model: "claude-opus-5-5",
+  llm_effort: "low", restore_delay_ms: 150, min_recording_ms: 300, max_recording_ms: 600000, silence_threshold_dbfs: -45,
+  llm_timeout_base_ms: 3000, llm_timeout_per_char_ms: 5, hint_budget_chars: 800, audio_retention_days: 30,
+};
+const edited = (edit: (s: Settings) => void) => {
+  const s = structuredClone(ok);
+  edit(s);
+  return s;
+};
+
+describe("checkNumbers", () => {
+  it("accepts the defaults and the bounds themselves", () => {
+    expect(checkNumbers(ok)).toBeNull();
+    expect(checkNumbers(edited((s) => { s.gesture.hold_threshold_ms = 100; s.restore_delay_ms = 0; s.max_recording_ms = 60000; }))).toBeNull();
+    expect(checkNumbers(edited((s) => { s.gesture.hold_threshold_ms = 2000; s.audio_retention_days = 36500; }))).toBeNull();
+  });
+  it("rejects the intermediate value of a half-typed number, quoting the range", () => {
+    expect(checkNumbers(edited((s) => (s.gesture.hold_threshold_ms = 2)))).toEqual({
+      field: "hold_threshold_ms", message: "Seuil de maintien : entre 100 et 2000 ms",
+    });
+  });
+  it("rejects values above the max", () => {
+    expect(checkNumbers(edited((s) => (s.gesture.double_tap_window_ms = 5000)))?.field).toBe("double_tap_window_ms");
+    expect(checkNumbers(edited((s) => (s.restore_delay_ms = 2001)))?.message).toBe("Délai avant restauration du presse-papier : entre 0 et 2000 ms");
+    expect(checkNumbers(edited((s) => (s.max_recording_ms = 11 * 60000)))?.message).toBe("Durée maximale d'une dictée : entre 1 et 10 min");
+  });
+  it("rejects empty, decimal and negative values", () => {
+    expect(checkNumbers(edited((s) => (s.audio_retention_days = NaN)))?.message).toBe("Conserver l'audio : entrez un nombre entier entre 0 et 36500 jours");
+    expect(checkNumbers(edited((s) => (s.gesture.hold_threshold_ms = 250.5)))?.field).toBe("hold_threshold_ms");
+    expect(checkNumbers(edited((s) => (s.audio_retention_days = -1)))?.field).toBe("audio_retention_days");
+    expect(checkNumbers(edited((s) => ((s as unknown as { restore_delay_ms: null }).restore_delay_ms = null)))?.field).toBe("restore_delay_ms");
+  });
+  it("allows fractional minutes", () => {
+    expect(checkNumbers(edited((s) => (s.max_recording_ms = 90000)))).toBeNull();
+  });
+});
+
+describe("labels and messages share the constants", () => {
+  it("builds both from the same field", () => {
+    expect(formLabel(NUMBER_FIELDS.hold_threshold_ms)).toBe("Seuil de maintien (ms)");
+    expect(formLabel(NUMBER_FIELDS.audio_retention_days)).toBe("Conserver l'audio (jours, 0 = toujours)");
+    expect(rangeMessage(NUMBER_FIELDS.double_tap_window_ms)).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
+  });
+});
+
+describe("parseNumber", () => {
+  it("maps an empty field to NaN", () => {
+    expect(parseNumber("")).toBeNaN();
+    expect(parseNumber("  ")).toBeNaN();
+    expect(parseNumber("250")).toBe(250);
+  });
+});
+
+describe("checkModelId", () => {
+  it("trims and refuses empty ids", () => {
+    expect(checkModelId("  gpt-4o-mini ")).toEqual({ ok: true, value: "gpt-4o-mini" });
+    expect(checkModelId("   ").ok).toBe(false);
+  });
+});
