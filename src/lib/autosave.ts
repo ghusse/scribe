@@ -64,13 +64,14 @@ export function statusView(state: SaveState, error: string | null, flashing: boo
     case "saving":
       return { ...base, tone: "muted", text: "Enregistrement…" };
     case "saved":
-      return { ...base, tone: "success", text: flashing ? "✓ Réglages enregistrés" : "", visible: flashing };
+      // The text stays while hidden so the bar fades out with the message still in it.
+      return { ...base, tone: "success", text: "✓ Réglages enregistrés", visible: flashing };
     case "invalid":
-      return { ...base, tone: "danger", text: `⚠ Non enregistré : ${error ?? "valeur invalide"}`, alert: true };
+      return { ...base, tone: "danger", text: `⚠ Non enregistré\u00a0: ${error ?? "valeur invalide"}`, alert: true };
     case "failed": {
       const full = error ?? "erreur inconnue";
       const first = full.split("\n")[0];
-      return { tone: "danger", text: `⚠ Non enregistré : ${first}`, alert: true, retry: true, details: full, visible: true };
+      return { tone: "danger", text: `⚠ Non enregistré\u00a0: ${first}`, alert: true, retry: true, details: full, visible: true };
     }
   }
 }

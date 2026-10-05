@@ -23,16 +23,16 @@ describe("checkNumbers", () => {
   });
   it("rejects the intermediate value of a half-typed number, quoting the range", () => {
     expect(checkNumbers(edited((s) => (s.gesture.hold_threshold_ms = 2)))).toEqual({
-      field: "hold_threshold_ms", message: "Seuil de maintien : entre 100 et 2000 ms",
+      field: "hold_threshold_ms", message: "Seuil de maintien : entre 100 et 2000 ms",
     });
   });
   it("rejects values above the max", () => {
     expect(checkNumbers(edited((s) => (s.gesture.double_tap_window_ms = 5000)))?.field).toBe("double_tap_window_ms");
-    expect(checkNumbers(edited((s) => (s.restore_delay_ms = 2001)))?.message).toBe("Restauration du presse-papier : entre 0 et 2000 ms");
-    expect(checkNumbers(edited((s) => (s.max_recording_ms = 11 * 60000)))?.message).toBe("Durée max. d'une dictée : entre 1 et 10 min");
+    expect(checkNumbers(edited((s) => (s.restore_delay_ms = 2001)))?.message).toBe("Restauration du presse-papier : entre 0 et 2000 ms");
+    expect(checkNumbers(edited((s) => (s.max_recording_ms = 11 * 60000)))?.message).toBe("Durée max. d'une dictée : entre 1 et 10 min");
   });
   it("rejects empty, decimal and negative values", () => {
-    expect(checkNumbers(edited((s) => (s.audio_retention_days = NaN)))?.message).toBe("Conservation de l'audio : entrez un nombre entier entre 0 et 36500 jours");
+    expect(checkNumbers(edited((s) => (s.audio_retention_days = NaN)))?.message).toBe("Conservation de l'audio : entrez un nombre entier entre 0 et 36500 jours");
     expect(checkNumbers(edited((s) => (s.gesture.hold_threshold_ms = 250.5)))?.field).toBe("hold_threshold_ms");
     expect(checkNumbers(edited((s) => (s.audio_retention_days = -1)))?.field).toBe("audio_retention_days");
     expect(checkNumbers(edited((s) => ((s as unknown as { restore_delay_ms: null }).restore_delay_ms = null)))?.field).toBe("restore_delay_ms");
@@ -44,9 +44,9 @@ describe("checkNumbers", () => {
 
 describe("labels and messages share the constants", () => {
   it("builds both from the same field", () => {
-    expect(fieldHelp(NUMBER_FIELDS.restore_delay_ms)).toBe("Augmentez si le texte collé est parfois l'ancien contenu. Défaut : 150 ms.");
-    expect(fieldHelp(NUMBER_FIELDS.max_recording_min)).toBe("Défaut : 10 min.");
-    expect(rangeMessage(NUMBER_FIELDS.double_tap_window_ms)).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
+    expect(fieldHelp(NUMBER_FIELDS.restore_delay_ms)).toBe("Augmentez si le texte collé est parfois l'ancien contenu. Défaut : 150 ms.");
+    expect(fieldHelp(NUMBER_FIELDS.max_recording_min)).toBe("Défaut : 10 min.");
+    expect(rangeMessage(NUMBER_FIELDS.double_tap_window_ms)).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
   });
 });
 

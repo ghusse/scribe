@@ -13,7 +13,7 @@ describe("assignHotkey", () => {
     expect(assignHotkey("trigger", SPACE, cur)).toEqual({
       ok: true,
       keys: { trigger_vk: SPACE, lock_vk: CTRL_R },
-      note: "Touches échangées : Déclenchement = Espace, Verrouillage = Ctrl droit.",
+      note: "Touches échangées : Déclenchement = Espace, Verrouillage = Ctrl droit.",
       confirm: true,
     });
   });

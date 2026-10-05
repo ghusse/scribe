@@ -16,12 +16,25 @@ describe("translateProviderError", () => {
     expect(translateProviderError("erreur réseau : error sending request", "Groq")).toBe("fournisseur injoignable");
     expect(translateProviderError("délai dépassé", "Groq")).toBe("fournisseur injoignable");
   });
-  it("translates a missing key reported before any call", () => {
-    expect(translateProviderError("configuration : clé API manquante pour « OpenAI »", null)).toBe("aucune clé OpenAI enregistrée");
+  it("translates a missing key, in both backend forms", () => {
+    // build_providers (transcription key)
+    expect(translateProviderError("configuration : clé API manquante pour « OpenAI »", null)).toBe("aucune clé OpenAI enregistrée, ajoutez-la dans Clés API");
+    // build_corrector / NoCorrector (correction key): the most common failure
+    expect(translateProviderError("configuration : clé API Anthropic manquante", "Anthropic")).toBe("aucune clé Anthropic enregistrée, ajoutez-la dans Clés API");
+  });
+  it("translates the exact backend Display strings", () => {
+    expect(translateProviderError("clé API refusée", "OpenAI")).toBe("clé refusée par OpenAI, vérifiez la clé");
+    expect(translateProviderError("erreur réseau : dns error", "OpenAI")).toBe("fournisseur injoignable");
+    expect(translateProviderError("délai dépassé", "OpenAI")).toBe("fournisseur injoignable");
+    expect(translateProviderError('HTTP 404 : {"error":"nope"}', "OpenAI")).toBe("modèle inconnu chez ce fournisseur");
+    expect(translateProviderError("configuration : fournisseur de correction inconnu : foo", null)).toBe("fournisseur inconnu");
+  });
+  it("translates a bad request (HTTP 400)", () => {
+    expect(translateProviderError('HTTP 400 : {"error":{"message":"invalid model"}}', "OpenAI")).toBe("requête refusée par le fournisseur (HTTP 400), voir Détails");
   });
   it("gives up on anything else (the raw text is shown in the details)", () => {
     expect(translateProviderError("réponse invalide : pas de <output>", "Anthropic")).toBeNull();
-    expect(translateProviderError("HTTP 400 : bad request", "Anthropic")).toBeNull();
+    expect(translateProviderError("le modèle a refusé la requête", "Anthropic")).toBeNull();
   });
 });
 
@@ -35,7 +48,8 @@ describe("testLine", () => {
     expect(testLine("Correction", "Anthropic", "claude-opus-5-5", { Err: "clé API refusée" })).toEqual({
       ok: false, title: "Correction · Anthropic / claude-opus-5-5", text: "✗ clé refusée par Anthropic, vérifiez la clé", raw: "clé API refusée",
     });
-    expect(testLine("Correction", "Anthropic", "x", { Err: "HTTP 400 : nope" }).text).toBe("✗ échec");
+    expect(testLine("Correction", "Anthropic", "x", { Err: "réponse invalide : vide" }).text).toBe("✗ erreur du fournisseur, voir Détails");
+    expect(testLine("Correction", "Anthropic", "x", { Err: "configuration : clé API Anthropic manquante" }).text).toBe("✗ aucune clé Anthropic enregistrée, ajoutez-la dans Clés API");
   });
   it("marks the correction unused in raw mode", () => {
     expect(testLine("Correction", "Anthropic", "x", null)).toEqual({ ok: true, title: "Correction", text: "— non utilisée (niveau brut)", raw: null });

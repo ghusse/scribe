@@ -21,7 +21,7 @@ export const LEVEL_OPTIONS: { value: Level; label: string }[] = [
 export const RAW_LEVEL_NOTE = "Correction désactivée en mode brut";
 
 export const HOTKEY_HELP =
-  "Maintenez pour dicter, relâchez pour envoyer. Double-tap (ou maintien + touche de verrouillage) pour dicter mains libres ; appuyez à nouveau pour arrêter.";
+  "Maintenez pour dicter, relâchez pour envoyer. Double-tap (ou maintien + touche de verrouillage) pour dicter mains libres\u00a0; appuyez à nouveau pour arrêter.";
 
 export const KEYS_HELP =
-  "Stockées dans le coffre Windows. Chaque clé s'enregistre avec son bouton ; les autres réglages s'enregistrent automatiquement.";
+  "Stockées dans le coffre Windows. Chaque clé s'enregistre avec son bouton\u00a0; les autres réglages s'enregistrent automatiquement.";

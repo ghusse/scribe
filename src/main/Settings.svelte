@@ -245,7 +245,7 @@
     try {
       await flush();
       if (saveState === "invalid" || saveState === "failed") {
-        error = "Réglages non enregistrés : corrigez l'erreur avant de tester.";
+        error = "Réglages non enregistrés\u00a0: corrigez l'erreur avant de tester.";
         return;
       }
       const token = testGuard.token();
@@ -287,7 +287,7 @@
         else applyKeys(a);
       }
     } catch (e) {
-      hotkeyNote = `Capture impossible : ${e}`;
+      hotkeyNote = `Capture impossible\u00a0: ${e}`;
     } finally {
       captureEnded = { role, at: performance.now() };
       capturing = null;
@@ -379,7 +379,7 @@
     <span class="who">
       <span class="label">{p.label}</span>
       <span class="status {st}">{KEY_STATE_LABELS[st]}</span>
-      {#if usage[p.id]}<span class="usage">utilisée pour : {rolesText(usage[p.id])}</span>{/if}
+      {#if usage[p.id]}<span class="usage">utilisée pour&nbsp;: {rolesText(usage[p.id])}</span>{/if}
     </span>
     {#if confirmDelete === p.id}
       <span class="confirm">{deleteKeyQuestion(p.label)}</span>
@@ -421,7 +421,7 @@
       </div>
       <label class="check"><input type="checkbox" bind:checked={s.gesture.double_tap_enabled} /> Double-tap pour verrouiller</label>
       <div class="hotkey">
-        <span class="label">Touche de verrouillage (pendant le maintien)</span>
+        <span class="label">Verrouillage (pendant le maintien)</span>
         <strong>{capturing === "lock" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(s.lock_vk)}</strong>
         {@render hotkeyButton("lock")}
         <button onclick={() => (s!.lock_vk = 0)} aria-label="Désactiver la touche de verrouillage"
@@ -493,11 +493,11 @@
       {/if}
       <div class="test-result" role="status">
         {#each testLines as l}
-          <p class:ok={l.ok} class:fail={!l.ok}><span class="title">{l.title}</span> : {l.text}</p>
+          <p class:ok={l.ok} class:fail={!l.ok}><span class="title">{l.title}</span>&nbsp;: {l.text}</p>
           {#if l.raw}<details><summary>Détails</summary><pre>{l.raw}</pre></details>{/if}
         {/each}
         {#if error}
-          <p class="fail">{errorSummary ? `✗ Test impossible : ${errorSummary}` : error}</p>
+          <p class="fail">{errorSummary ? `✗ Test impossible\u00a0: ${errorSummary}` : error}</p>
           {#if errorSummary}<details><summary>Détails</summary><pre>{error}</pre></details>{/if}
         {/if}
       </div>
@@ -532,7 +532,7 @@
 
   <div class="statusbar {bar.tone}" class:hidden={!bar.visible}>
     <span class="msg" role="status">
-      {#if !bar.alert && bar.visible}
+      {#if !bar.alert}
         {#if bar.tone === "muted"}<span class="spinner"></span>{:else}{#key savedFlash}<span class="tick">✓</span>{/key}{/if}
         {bar.tone === "muted" ? bar.text : bar.text.replace(/^✓ /, "")}
       {/if}
@@ -546,7 +546,7 @@
   </div>
 {:else if loadError}
   <section class="load-error" role="alert">
-    <p>Impossible de charger les réglages : {loadError}</p>
+    <p>Impossible de charger les réglages&nbsp;: {loadError}</p>
     <button onclick={load}>Réessayer</button>
   </section>
 {:else}
@@ -618,6 +618,7 @@
   :global(input[aria-invalid="true"]) { border-color: var(--danger); outline-color: var(--danger); }
   .inline-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
   .note { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+  .note.indent { margin-left: 232px; }
   .loading { color: var(--muted); font-size: 14px; }
   .load-error p { margin: 0 0 10px; color: var(--danger); font-size: 14px; }
 
@@ -641,7 +642,7 @@
   @media (max-width: 640px) {
     label { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
     label.field .help { grid-column: 1; }
-    .indent, .key-line { margin-left: 0; }
+    .indent, .key-line, .note.indent { margin-left: 0; }
     .hotkeys { grid-template-columns: minmax(0, 1fr) auto auto; }
     .hotkey > .label, .hotkeys label.check { grid-column: 1 / -1; }
     .hotkey > .label { margin-top: 4px; }

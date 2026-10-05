@@ -55,16 +55,17 @@ describe("statusView", () => {
   });
   it("shows the success only while it flashes", () => {
     expect(statusView("saved", null, true)).toMatchObject({ tone: "success", text: "✓ Réglages enregistrés", visible: true });
-    expect(statusView("saved", null, false)).toMatchObject({ visible: false, text: "" });
+    // Same text while hidden: the opacity transition fades the message out instead of blanking it first.
+    expect(statusView("saved", null, false)).toMatchObject({ visible: false, text: "✓ Réglages enregistrés" });
   });
   it("keeps an invalid value visible, without retry", () => {
-    expect(statusView("invalid", "Seuil de maintien : entre 100 et 2000 ms", false)).toEqual({
-      tone: "danger", text: "⚠ Non enregistré : Seuil de maintien : entre 100 et 2000 ms", alert: true, retry: false, details: null, visible: true,
+    expect(statusView("invalid", "Seuil de maintien : entre 100 et 2000 ms", false)).toEqual({
+      tone: "danger", text: "⚠ Non enregistré : Seuil de maintien : entre 100 et 2000 ms", alert: true, retry: false, details: null, visible: true,
     });
   });
   it("offers retry and details for a failed save", () => {
     expect(statusView("failed", "disque plein\nos error 112", false)).toEqual({
-      tone: "danger", text: "⚠ Non enregistré : disque plein", alert: true, retry: true, details: "disque plein\nos error 112", visible: true,
+      tone: "danger", text: "⚠ Non enregistré : disque plein", alert: true, retry: true, details: "disque plein\nos error 112", visible: true,
     });
   });
 });

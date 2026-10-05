@@ -45,7 +45,7 @@ export function assignHotkey(role: HotkeyRole, vk: number, cur: Hotkeys): Assign
     keys = { ...cur, lock_vk: vk };
   }
   const swapped = keys.trigger_vk === cur.lock_vk && keys.lock_vk === cur.trigger_vk && cur.trigger_vk !== cur.lock_vk;
-  if (swapped) note = `Touches échangées : Déclenchement = ${keyName(keys.trigger_vk)}, Verrouillage = ${keyName(keys.lock_vk)}.`;
+  if (swapped) note = `Touches échangées\u00a0: Déclenchement = ${keyName(keys.trigger_vk)}, Verrouillage = ${keyName(keys.lock_vk)}.`;
   const confirm = keys.trigger_vk !== cur.trigger_vk && isTypingKey(keys.trigger_vk);
   return { ok: true, keys, note, confirm };
 }

@@ -6,10 +6,13 @@ export type TestOutcome = { Ok: number } | { Err: string };
  * e.g. « clé refusée par Anthropic, vérifiez la clé ». Null when there is nothing better than the raw text.
  */
 export function translateProviderError(raw: string, provider: string | null): string | null {
-  const missing = /clé API manquante pour « (.+?) »/.exec(raw);
-  if (missing) return `aucune clé ${missing[1]} enregistrée`;
+  // build_providers (transcription): « clé API manquante pour « OpenAI » »;
+  // build_corrector (correction): « clé API Anthropic manquante ».
+  const missing = /clé API manquante pour « (.+?) »/.exec(raw) ?? /clé API (.+?) manquante/.exec(raw);
+  if (missing) return `aucune clé ${missing[1]} enregistrée, ajoutez-la dans Clés API`;
   if (/clé API refusée/.test(raw) || /\bHTTP (401|403)\b/.test(raw)) return provider ? `clé refusée par ${provider}, vérifiez la clé` : "clé refusée, vérifiez la clé";
   if (/\bHTTP 404\b/.test(raw)) return "modèle inconnu chez ce fournisseur";
+  if (/\bHTTP 400\b/.test(raw)) return "requête refusée par le fournisseur (HTTP 400), voir Détails";
   if (/\bHTTP 429\b/.test(raw)) return "trop de requêtes, réessayez dans un instant";
   const server = /\bHTTP (5\d\d)\b/.exec(raw);
   if (server) return `erreur du fournisseur (HTTP ${server[1]}), réessayez plus tard`;
@@ -34,5 +37,5 @@ export function testLine(role: string, provider: string, model: string, outcome:
   if (outcome === null) return { ok: true, title: `${role}`, text: "— non utilisée (niveau brut)", raw: null };
   if ("Ok" in outcome) return { ok: true, title, text: `✓ fonctionne (${Math.round(outcome.Ok)} ms)`, raw: null };
   const fr = translateProviderError(outcome.Err, provider);
-  return { ok: false, title, text: `✗ ${fr ?? "échec"}`, raw: outcome.Err };
+  return { ok: false, title, text: `✗ ${fr ?? "erreur du fournisseur, voir Détails"}`, raw: outcome.Err };
 }

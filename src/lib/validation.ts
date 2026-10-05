@@ -28,7 +28,7 @@ export type NumberFieldId = keyof typeof NUMBER_FIELDS;
 
 /** The grey help under a number field: its explanation, then the default value. */
 export function fieldHelp(f: NumberField): string {
-  return `${f.help ? `${f.help} ` : ""}Défaut : ${f.default} ${f.unit}.`;
+  return `${f.help ? `${f.help} ` : ""}Défaut\u00a0: ${f.default} ${f.unit}.`;
 }
 
 /** Choices of the audio retention select (0 = forever); a stored value outside them is kept as an extra option. */
@@ -40,7 +40,7 @@ export function retentionOptions(current: number): { value: number; label: strin
 }
 
 export function rangeMessage(f: NumberField): string {
-  return `${f.label} : entre ${f.min} et ${f.max} ${f.unit}`;
+  return `${f.label}\u00a0: entre ${f.min} et ${f.max} ${f.unit}`;
 }
 
 /** The value of a number input: NaN when empty or not a number (so the check rejects it). */
@@ -53,7 +53,7 @@ export function checkNumbers(s: Settings): { field: NumberFieldId; message: stri
   for (const [id, f] of Object.entries(NUMBER_FIELDS) as [NumberFieldId, NumberField][]) {
     const v = f.get(s);
     if (typeof v !== "number" || !Number.isFinite(v) || (f.integer && !Number.isInteger(v))) {
-      return { field: id, message: `${f.label} : entrez un nombre${f.integer ? " entier" : ""} entre ${f.min} et ${f.max} ${f.unit}` };
+      return { field: id, message: `${f.label}\u00a0: entrez un nombre${f.integer ? " entier" : ""} entre ${f.min} et ${f.max} ${f.unit}` };
     }
     if (v < f.min || v > f.max) return { field: id, message: rangeMessage(f) };
   }
@@ -63,5 +63,5 @@ export function checkNumbers(s: Settings): { field: NumberFieldId; message: stri
 /** Hand-typed model id: trimmed, never empty. */
 export function checkModelId(raw: string): { ok: true; value: string } | { ok: false; message: string } {
   const value = raw.trim();
-  return value ? { ok: true, value } : { ok: false, message: "Identifiant du modèle : ne peut pas être vide" };
+  return value ? { ok: true, value } : { ok: false, message: "Identifiant du modèle\u00a0: ne peut pas être vide" };
 }

@@ -85,5 +85,5 @@ export function setupBannerParts(missing: { provider: string; roles: KeyRole[] }
 
 /** Under a provider select whose key is missing. */
 export function missingKeyWarning(label: string, role: KeyRole): string {
-  return `⚠ Aucune clé ${label} : la ${ROLE_LABELS[role].toLowerCase()} échouera.`;
+  return `⚠ Aucune clé ${label}\u00a0: la ${ROLE_LABELS[role].toLowerCase()} échouera.`;
 }

@@ -93,7 +93,7 @@ describe("setup banner and warnings", () => {
     expect(setupBannerParts(missingKeys(s, { openai: true, anthropic: true }), label)).toEqual([]);
   });
   it("words the inline warning per role", () => {
-    expect(missingKeyWarning("Anthropic", "correction")).toBe("⚠ Aucune clé Anthropic : la correction échouera.");
-    expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ Aucune clé OpenAI : la transcription échouera.");
+    expect(missingKeyWarning("Anthropic", "correction")).toBe("⚠ Aucune clé Anthropic : la correction échouera.");
+    expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ Aucune clé OpenAI : la transcription échouera.");
   });
 });
