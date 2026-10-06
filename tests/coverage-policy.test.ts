@@ -86,9 +86,9 @@ describe("coverage policy", () => {
       expect(coverage.thresholds).toEqual(expected);
     });
 
-    it("runs both gates from npm run coverage", () => {
-      expect(packageJson.scripts["coverage:ui"]).toBe("vitest run --coverage");
-      expect(packageJson.scripts.coverage).toBe("npm run coverage:ui && npm run coverage:rust");
+    it("runs both gates from bun run coverage", () => {
+      expect(packageJson.scripts["coverage:ui"]).toBe("bun --bun vitest run --coverage");
+      expect(packageJson.scripts.coverage).toBe("bun run coverage:ui && bun run coverage:rust");
     });
   });
 
@@ -96,11 +96,11 @@ describe("coverage policy", () => {
     const ci = read(".github/workflows/ci.yml").replace(/\r\n/g, "\n");
 
     it("runs the UI and Rust gates as separate steps, the Rust one even when the UI one fails", () => {
-      expect(ci).toContain("        run: npm run coverage:ui\n");
+      expect(ci).toContain("        run: bun run coverage:ui\n");
       expect(ci).toMatch(
-        /\n {8}if: \$\{\{ !cancelled\(\) && steps\.build\.outcome == 'success' \}\}\n {8}run: npm run coverage:rust\n/,
+        /\n {8}if: \$\{\{ !cancelled\(\) && steps\.build\.outcome == 'success' \}\}\n {8}run: bun run coverage:rust\n/,
       );
-      expect(ci).not.toMatch(/run: npm run coverage\n/);
+      expect(ci).not.toMatch(/run: bun run coverage\n/);
     });
   });
 });

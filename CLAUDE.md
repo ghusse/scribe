@@ -8,15 +8,15 @@ its own gate: the Rust workspace total (cargo-llvm-cov), and in vitest one thres
 fails below any of them.
 
 ```bash
-npm run coverage:ui     # vitest + @vitest/coverage-v8, thresholds in vitest.config.ts (lines: 95, per glob)
-npm run coverage:rust   # cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex ...
-npm run coverage        # both, locally (CI runs them as two independent steps)
+bun run coverage:ui     # vitest on the bun runtime + @vitest/coverage-istanbul, thresholds in vitest.config.ts (lines: 95, per glob)
+bun run coverage:rust   # cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex ...
+bun run coverage        # both, locally (CI runs them as two independent steps)
 ```
 
 Reports: UI in `coverage/ui/` (html + lcov); Rust in the terminal (`cargo llvm-cov --workspace --html` for html).
 Prerequisites: `rustup component add llvm-tools-preview` and `cargo install cargo-llvm-cov`.
 
-Svelte components are covered through component tests (`@testing-library/svelte` + jsdom, see
+Svelte components are covered through component tests (`@testing-library/svelte` + happy-dom, see
 `src/main/ModelPicker.test.ts`, which also shows how to observe a `$bindable` prop through a props object with
 a getter/setter); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
 with `vi.mock` and the shared doubles in `tests/tauri.ts` (`commands({...})` answers each command, `emit` fires
@@ -35,7 +35,7 @@ there as plain functions.
 Excluding a file is allowed **only** for thin OS/framework adapters with no decision logic (raw Windows FFI,
 device/clipboard glue, Tauri bootstrap, UI entry files). Any logic in such a file must first be extracted into a
 tested module. Every exclusion is listed below and must match the tooling **exactly**.
-`tests/coverage-policy.test.ts` (run by `npm test`) fails when the lines below and the tooling disagree: the
+`tests/coverage-policy.test.ts` (run by `bun run test`) fails when the lines below and the tooling disagree: the
 threshold, the Rust regex and the set of Rust files it actually excludes, the vitest excludes and per-glob
 thresholds, and the two CI coverage steps.
 
@@ -107,4 +107,4 @@ When you add or remove an exclusion, update this list, the regex/globs above, an
 
 ## Checks before finishing
 
-`cargo test --workspace`, `npm test`, `npm run check`, `npm run build`, `npm run coverage:ui`, `npm run coverage:rust`.
+`cargo test --workspace`, `bun run test`, `bun run check`, `bun run build`, `bun run coverage:ui`, `bun run coverage:rust`.
