@@ -66,3 +66,12 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 - [ ] Wi-Fi coupé : toast d'erreur, dictée « Erreur » dans l'historique, « Retranscrire » fonctionne après reconnexion.
 - [ ] Ajouter « Kubernetes » au glossaire, dicter « cube ernetes » : orthographe corrigée, compteur d'usages incrémenté.
 - [ ] Tray : Pause désactive le raccourci ; Quitter ferme l'app ; fermer la fenêtre la masque seulement.
+
+## Licence
+
+Copyright (C) 2026 Guillaume Gautreau.
+
+Scribe est distribué sous la licence [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). Vous pouvez
+l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée distribuée ou mise à disposition
+d'utilisateurs, y compris à travers un service en ligne, doit l'être sous la même licence, avec son code source
+complet.
