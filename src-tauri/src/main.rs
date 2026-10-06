@@ -91,7 +91,7 @@ fn main() {
                 is_pressed: Arc::new(scribe_platform::is_key_pressed),
             };
             controller::spawn(svc, rx, tx, deps);
-            if needs_setup {
+            if bootstrap::shows_main_at_launch(needs_setup, std::env::args()) {
                 adapters::show_main(app.handle());
             }
             Ok(())

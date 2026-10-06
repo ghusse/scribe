@@ -12,6 +12,15 @@ pub fn needs_setup(settings: &Settings, has_key: impl Fn(&str) -> bool) -> bool 
     !has_key(&settings.stt_provider) || (settings.level != Level::Raw && !has_key(&settings.llm_provider))
 }
 
+/// Command-line flag for a launch that must stay in the tray (start with Windows).
+pub const MINIMIZED_FLAG: &str = "--minimized";
+
+/// The main window opens at launch, except for a `--minimized` launch; a missing key opens it anyway so the
+/// user can finish the setup.
+pub fn shows_main_at_launch(needs_setup: bool, args: impl IntoIterator<Item = String>) -> bool {
+    needs_setup || !args.into_iter().any(|a| a == MINIMIZED_FLAG)
+}
+
 /// Closing the main window only hides it: Scribe keeps running in the tray. Other windows (the overlay)
 /// close normally.
 pub fn hides_on_close(window_label: &str) -> bool {
@@ -59,6 +68,18 @@ mod tests {
             true
         });
         assert_eq!(asked.into_inner(), vec!["mistral", "openai"]);
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn the_main_window_opens_at_launch_unless_minimized_with_a_complete_setup() {
+        assert!(shows_main_at_launch(false, args(&["scribe-app.exe"])), "manual launch");
+        assert!(!shows_main_at_launch(false, args(&["scribe-app.exe", "--minimized"])), "start with Windows");
+        assert!(shows_main_at_launch(true, args(&["scribe-app.exe", "--minimized"])), "setup to finish");
+        assert!(shows_main_at_launch(false, args(&["scribe-app.exe", "--minimized=no", "-minimized"])), "only the exact flag");
     }
 
     #[test]

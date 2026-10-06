@@ -15,6 +15,9 @@ Au premier lancement (clés manquantes), la fenêtre principale s'ouvre sur l'on
 et un modèle pour la transcription et pour la correction (par défaut OpenAI `gpt-transcribe` et Anthropic
 `claude-opus-5-5`), renseignez les clés API correspondantes, puis « Tester la configuration ».
 
+La fenêtre principale s'ouvre à chaque lancement ; fermée, Scribe reste dans la zone de notification. Lancé avec
+`--minimized` (démarrage avec Windows), il démarre directement dans la zone de notification, sauf s'il manque une clé.
+
 ## Utilisation
 
 - **Maintenir** Ctrl droit : push-to-talk, relâcher pour transcrire.

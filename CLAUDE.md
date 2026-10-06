@@ -94,7 +94,7 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
-  the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if needs_setup { show_main }`, and the
+  the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
   `CloseRequested` match before `prevent_close` + `hide`.
 
 Test-only Rust code is **not** excluded and counts toward the Rust total: `src-tauri/src/testing.rs` (shared
