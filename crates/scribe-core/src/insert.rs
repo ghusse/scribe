@@ -1,3 +1,6 @@
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
+
 use crate::focus::{FocusSnapshot, FocusState};
 use crate::model::Outcome;
 
@@ -66,6 +69,10 @@ fn occurrences(haystack: &str, needle: &str) -> usize {
     haystack.matches(needle).count()
 }
 
+/// Below this many letters and digits the text is too common to be recognised: a « 1 » or « ok » shows up in
+/// any terminal output that scrolls by.
+pub const MIN_VERIFIABLE_CHARS: usize = 4;
+
 /// Compares the focused field before and after the paste. One more occurrence of the text than before means
 /// it landed (dictating the same sentence twice still counts).
 pub fn verify(before: Option<&str>, after: Option<&str>, text: &str) -> Verdict {
@@ -73,16 +80,45 @@ pub fn verify(before: Option<&str>, after: Option<&str>, text: &str) -> Verdict 
     let (Some(before), Some(after)) = (before, after) else {
         return Verdict::Unknown;
     };
-    if needle.is_empty() {
+    if needle.chars().count() < MIN_VERIFIABLE_CHARS {
         return Verdict::Unknown;
     }
-    let (before, after) = (fingerprint(before), fingerprint(after));
-    if occurrences(&after, &needle) > occurrences(&before, &needle) {
+    if before == after {
+        // Only a field that shows some text proves the paste missed. Web editors (VS Code's terminal and Monaco,
+        // Google Docs) take the paste in a hidden, empty helper field and apply it to their own model: it stays
+        // empty although the text landed.
+        return if fingerprint(before).is_empty() { Verdict::Unknown } else { Verdict::NotInserted };
+    }
+    // Changed: the text shows up, or the app rendered it otherwise (a placeholder for a long paste, a spacing or
+    // punctuation fix): only the first case is a proof.
+    if occurrences(&fingerprint(after), &needle) > occurrences(&fingerprint(before), &needle) {
         Verdict::Inserted
-    } else if after == before {
-        Verdict::NotInserted
     } else {
         Verdict::Unknown
+    }
+}
+
+/// Bounds every read: UI Automation calls into the target app and can block for seconds when it is hung. A read
+/// that does not answer in time counts as unreadable (the thread is left to finish on its own).
+pub struct TimedFieldReader {
+    inner: Arc<dyn FieldReader>,
+    timeout: Duration,
+}
+
+impl TimedFieldReader {
+    pub fn new(inner: Arc<dyn FieldReader>, timeout_ms: u64) -> Self {
+        Self { inner, timeout: Duration::from_millis(timeout_ms) }
+    }
+}
+
+impl FieldReader for TimedFieldReader {
+    fn focused_text(&self) -> Option<String> {
+        let (tx, rx) = mpsc::channel();
+        let inner = self.inner.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(inner.focused_text());
+        });
+        rx.recv_timeout(self.timeout).ok().flatten()
     }
 }
 
@@ -139,15 +175,20 @@ pub fn perform(
             if keys.send_paste().is_err() {
                 return InsertResult::PasteFailed;
             }
-            // Only a field readable before the paste can be compared: re-read it until the text shows up.
+            // Only a field readable before the paste can be compared. Re-read it while it has not changed (the app
+            // may apply the paste late); stop as soon as it changed or can no longer be read.
             let mut verdict = Verdict::Unknown;
             let mut waited = 0;
             if before.is_some() {
                 for _ in 0..VERIFY_ATTEMPTS {
                     sleep(VERIFY_INTERVAL_MS);
                     waited += VERIFY_INTERVAL_MS;
-                    verdict = verify(before.as_deref(), field.focused_text().as_deref(), text);
-                    if verdict == Verdict::Inserted {
+                    let Some(after) = field.focused_text() else {
+                        verdict = Verdict::Unknown;
+                        break;
+                    };
+                    verdict = verify(before.as_deref(), Some(&after), text);
+                    if verdict != Verdict::NotInserted {
                         break;
                     }
                 }
@@ -277,10 +318,33 @@ mod tests {
         assert_eq!(verify(some("à demain"), some("à demain"), "À demain"), Verdict::NotInserted, "an unchanged field");
         assert_eq!(verify(some("à demain"), some("à demain\nà demain"), "à demain"), Verdict::Inserted, "same text twice");
         assert_eq!(verify(some("abc"), some("abc"), "à demain"), Verdict::NotInserted);
+        assert_eq!(verify(some("a,b c"), some("a, b c."), "a, b, c"), Verdict::Unknown, "too short to recognise");
         assert_eq!(verify(some("abc"), some("abc [Pasted text #1 +3 lines]"), "à demain"), Verdict::Unknown);
         assert_eq!(verify(None, some("à demain"), "à demain"), Verdict::Unknown, "nothing to compare with");
         assert_eq!(verify(some(""), None, "à demain"), Verdict::Unknown);
         assert_eq!(verify(some(""), some("..."), "..."), Verdict::Unknown, "no letter to look for");
+    }
+
+    #[test]
+    fn an_empty_field_that_stays_empty_does_not_prove_a_missed_paste() {
+        // xterm.js, Monaco, Google Docs: the focused element is a hidden helper field the page empties itself.
+        assert_eq!(verify(Some(""), Some(""), "Bonjour Scribe."), Verdict::Unknown);
+        assert_eq!(verify(Some(" \n"), Some(" \n"), "Bonjour Scribe."), Verdict::Unknown);
+    }
+
+    #[test]
+    fn a_change_that_does_not_show_the_text_proves_nothing() {
+        // Same letters, other spacing or punctuation (a selection replaced by its own text, an auto-format).
+        assert_eq!(verify(Some("Bonjour Scribe"), Some("Bonjour, Scribe."), "Bonjour, Scribe."), Verdict::Unknown);
+    }
+
+    #[test]
+    fn short_texts_are_not_verified() {
+        // A terminal printing « 12 » or « oui » would otherwise confirm a paste of « 12 » or « oui ».
+        for text in ["12", "oui", "à", "a b c"] {
+            assert_eq!(verify(Some("$ "), Some("$ 12 oui à a b c"), text), Verdict::Unknown, "{text}");
+        }
+        assert_eq!(verify(Some("$ "), Some("$ 1234"), "1234"), Verdict::Inserted, "four digits are enough");
     }
 
     #[test]
@@ -328,6 +392,35 @@ mod tests {
             assert_eq!(delays.iter().sum::<u64>(), 1000, "the restore delay counts the reading time: {delays:?}");
             assert_eq!(cb.get(), ClipboardContent::Text("ancien".into()));
         }
+    }
+
+    #[test]
+    fn a_field_that_becomes_unreadable_stops_the_verification() {
+        let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
+        let delays = Delays::default();
+        let field = FakeField::new(&[Some("début"), None, Some("début")]);
+        let r = perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| delays.push(ms));
+        assert_eq!(r, InsertResult::PastedUncertain, "falls back on the prediction");
+        assert_eq!(delays.get(), vec![100, 50], "one read, then the rest of the restore delay");
+        assert_eq!(cb.get(), ClipboardContent::Text("ancien".into()));
+    }
+
+    struct SlowField(u64);
+    impl FieldReader for SlowField {
+        fn focused_text(&self) -> Option<String> {
+            std::thread::sleep(Duration::from_millis(self.0));
+            Some("texte".into())
+        }
+    }
+
+    #[test]
+    fn a_hung_app_cannot_hold_the_read() {
+        let fast = TimedFieldReader::new(Arc::new(SlowField(0)), 2_000);
+        assert_eq!(fast.focused_text().as_deref(), Some("texte"));
+        let slow = TimedFieldReader::new(Arc::new(SlowField(2_000)), 20);
+        let start = std::time::Instant::now();
+        assert_eq!(slow.focused_text(), None);
+        assert!(start.elapsed() < Duration::from_millis(1_000), "{:?}", start.elapsed());
     }
 
     #[test]

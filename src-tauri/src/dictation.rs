@@ -16,6 +16,8 @@ use crate::services::{now_rfc3339, Services};
 use crate::settings::Settings;
 
 pub const FOCUS_TIMEOUT_MS: u64 = 300;
+/// Same bound for each read of the focused field when checking a paste (a hung app then counts as unreadable).
+pub const FIELD_READ_TIMEOUT_MS: u64 = 300;
 
 pub struct Captured {
     pub clip: AudioClip,
@@ -128,7 +130,8 @@ async fn deliver(svc: &Arc<Services>, start: FocusSnapshot, text: String, restor
     tauri::async_runtime::spawn_blocking(move || {
         let end = focus::snapshot_with_timeout(svc.focus.clone(), FOCUS_TIMEOUT_MS);
         let plan = insert::decide(&start, &end);
-        insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), svc.field.as_ref(), restore_delay_ms, &|ms| {
+        let field = insert::TimedFieldReader::new(svc.field.clone(), FIELD_READ_TIMEOUT_MS);
+        insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), &field, restore_delay_ms, &|ms| {
             std::thread::sleep(Duration::from_millis(ms))
         })
     })

@@ -59,6 +59,37 @@ describe("Startup", () => {
     expect(box().checked).toBe(true);
   });
 
+  it("shows the state the OS kept when it did not apply the switch", async () => {
+    commands({ set_autostart: () => false });
+    render(Startup);
+    await waitFor(() => expect(box().disabled).toBe(false));
+    await fireEvent.click(box());
+    expect((await screen.findByRole("status")).textContent).toContain("Le système n'a pas appliqué ce changement");
+    expect(box().checked).toBe(false);
+    commands({ set_autostart: () => true });
+    await fireEvent.click(box());
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(box().checked).toBe(true);
+  });
+
+  it("keeps the keyboard focus while switching and ignores clicks meanwhile", async () => {
+    let answer!: (v: boolean) => void;
+    commands({ set_autostart: () => new Promise<boolean>((r) => (answer = r)) });
+    render(Startup);
+    await waitFor(() => expect(box().disabled).toBe(false));
+    box().focus();
+    await fireEvent.click(box());
+    expect(box().getAttribute("aria-disabled")).toBe("true");
+    expect(box().disabled).toBe(false);
+    expect(document.activeElement).toBe(box());
+    await fireEvent.click(box());
+    expect(calls("set_autostart")).toEqual([{ enabled: true }]);
+    answer(true);
+    await waitFor(() => expect(box().getAttribute("aria-disabled")).toBe("false"));
+    expect(box().checked).toBe(true);
+    expect(document.activeElement).toBe(box());
+  });
+
   it("reports a state that cannot be read and leaves the box disabled", async () => {
     commands({ get_autostart: () => Promise.reject("plugin indisponible") });
     render(Startup);

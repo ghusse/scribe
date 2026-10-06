@@ -35,6 +35,14 @@ struct HookGuard(#[allow(dead_code)] scribe_platform::HookHandle);
 fn main() {
     tracing_subscriber::fmt::init();
     tauri::Builder::default()
+        // First: a second launch (Start menu while the autostarted instance runs) must not run setup, which would
+        // install a second keyboard hook and fail to open the database the first instance holds. It hands its
+        // arguments to the running instance and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if bootstrap::shows_main_at_launch(false, argv) {
+                adapters::show_main(app);
+            }
+        }))
         // Launch at login starts in the tray (see bootstrap::shows_main_at_launch).
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,

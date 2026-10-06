@@ -4,7 +4,8 @@ name: Release
 # once checked. The tag must match the version in src-tauri/tauri.conf.json.
 on:
   push:
-    tags: ["v*"]
+    # X.Y.Z only: the MSI bundler rejects pre-release versions such as 0.2.0-beta.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 # Nothing by default; only the job that creates the release may write.
 permissions: {}
