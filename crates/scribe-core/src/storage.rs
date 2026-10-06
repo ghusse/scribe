@@ -1,7 +1,8 @@
+use std::future::Future;
 use std::path::Path;
 
-use rusqlite::functions::FunctionFlags;
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use turso::params::IntoParams;
+use turso::{Builder, Connection, Database, Row};
 
 use crate::model::{Dictation, Level, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
 
@@ -10,7 +11,7 @@ pub enum StorageError {
     #[error("terme déjà présent dans le glossaire : {0}")]
     DuplicateTerm(String),
     #[error("base de données : {0}")]
-    Sql(#[from] rusqlite::Error),
+    Sql(#[from] turso::Error),
     #[error("données invalides : {0}")]
     Invalid(String),
 }
@@ -68,14 +69,31 @@ CREATE TABLE bench_runs (
 );
 "#;
 
+/// v2: the history search matches `search_text`, filled in Rust (see [`search_text`]).
+const SCHEMA_V2: &str = "ALTER TABLE dictations ADD COLUMN search_text TEXT NOT NULL DEFAULT '';";
+
 const DICTATION_COLS: &str = "id, created_at, mode, app_name, audio_path, duration_ms, raw_text, final_text, \
      edited_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error";
 
-pub struct Db {
-    conn: Connection,
+/// Turso's API is async but its local I/O completes without a runtime: the storage stays synchronous
+/// for its callers (behind `Mutex<Db>`) by driving each call to completion here.
+fn block<F: Future>(f: F) -> F::Output {
+    pollster::block_on(f)
 }
 
-fn row_to_dictation(r: &rusqlite::Row) -> rusqlite::Result<Dictation> {
+/// What the history search matches: the three texts, lowercased in Rust because SQL `lower()` only
+/// folds ASCII (« Été » vs « été »). The separator keeps a query from matching across two texts.
+fn search_text(raw: Option<&str>, final_text: Option<&str>, edited: Option<&str>) -> String {
+    [raw, final_text, edited].into_iter().flatten().map(str::to_lowercase).collect::<Vec<_>>().join("\u{1f}")
+}
+
+pub struct Db {
+    conn: Connection,
+    /// Owns the database the connection belongs to.
+    _db: Database,
+}
+
+fn row_to_dictation(r: &Row) -> turso::Result<Dictation> {
     let level: String = r.get(9)?;
     let outcome: String = r.get(14)?;
     Ok(Dictation {
@@ -98,7 +116,7 @@ fn row_to_dictation(r: &rusqlite::Row) -> rusqlite::Result<Dictation> {
     })
 }
 
-fn row_to_term(r: &rusqlite::Row) -> rusqlite::Result<Term> {
+fn row_to_term(r: &Row) -> turso::Result<Term> {
     let variants_json: String = r.get(2)?;
     let source: String = r.get(4)?;
     Ok(Term {
@@ -136,90 +154,139 @@ fn validate_term(term: &str) -> Result<&str> {
     Ok(term)
 }
 
-fn map_unique(e: rusqlite::Error, term: &str) -> StorageError {
-    match &e {
-        rusqlite::Error::SqliteFailure(f, _) if f.code == ErrorCode::ConstraintViolation => {
-            StorageError::DuplicateTerm(term.to_string())
-        }
-        _ => StorageError::Sql(e),
+fn map_unique(e: StorageError, term: &str) -> StorageError {
+    match e {
+        StorageError::Sql(turso::Error::Constraint(_)) => StorageError::DuplicateTerm(term.to_string()),
+        e => e,
     }
+}
+
+/// Runs `steps` (statements on `conn`) in one transaction: committed if they all succeed, else rolled back.
+async fn transaction(conn: &Connection, steps: impl Future<Output = Result<()>>) -> Result<()> {
+    conn.execute_batch("BEGIN").await?;
+    match steps.await {
+        Ok(()) => Ok(conn.execute_batch("COMMIT").await?),
+        Err(e) => {
+            // The step's error says what went wrong; a failed rollback would only hide it.
+            let _ = conn.execute_batch("ROLLBACK").await;
+            Err(e)
+        }
+    }
+}
+
+/// Every row of a query, mapped.
+async fn all<T>(conn: &Connection, sql: &str, params: impl IntoParams, map: fn(&Row) -> turso::Result<T>) -> Result<Vec<T>> {
+    let mut rows = conn.query(sql, params).await?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await? {
+        out.push(map(&row)?);
+    }
+    Ok(out)
 }
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()))?;
-        Self::init(conn)
+        let path = path.to_str().ok_or_else(|| StorageError::Invalid(format!("chemin non UTF-8 : {}", path.display())))?;
+        let db = Self::init(path)?;
+        db.all("PRAGMA journal_mode=WAL", (), |_| Ok(()))?;
+        Ok(db)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(":memory:")
     }
 
-    fn init(conn: Connection) -> Result<Self> {
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-        // Unicode-aware lowercase: SQLite's LIKE/lower() only fold ASCII ("Été" vs "été").
-        conn.create_scalar_function(
-            "scribe_fold",
-            1,
-            FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
-            |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|t| t.to_lowercase())),
-        )?;
-        let db = Db { conn };
+    fn init(path: &str) -> Result<Self> {
+        let db = block(Builder::new_local(path).build())?;
+        let conn = db.connect()?;
+        let db = Db { conn, _db: db };
+        db.execute("PRAGMA foreign_keys = ON", ())?;
         db.migrate()?;
         Ok(db)
     }
 
+    fn all<T>(&self, sql: &str, params: impl IntoParams, map: fn(&Row) -> turso::Result<T>) -> Result<Vec<T>> {
+        block(all(&self.conn, sql, params, map))
+    }
+
+    fn first<T>(&self, sql: &str, params: impl IntoParams, map: fn(&Row) -> turso::Result<T>) -> Result<Option<T>> {
+        Ok(self.all(sql, params, map)?.into_iter().next())
+    }
+
+    fn execute(&self, sql: &str, params: impl IntoParams) -> Result<u64> {
+        Ok(block(self.conn.execute(sql, params))?)
+    }
+
     fn migrate(&self) -> Result<()> {
-        let version: i64 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        let version = self.first("PRAGMA user_version", (), |r| r.get::<i64>(0))?.unwrap_or(0);
+        // One transaction per step: a failure part-way must not leave tables behind with an old user_version.
+        let conn = &self.conn;
         if version < 1 {
-            // One transaction: a failure part-way must not leave tables behind with user_version 0.
-            let tx = self.conn.unchecked_transaction()?;
-            tx.execute_batch(SCHEMA_V1)?;
-            tx.execute_batch("PRAGMA user_version = 1;")?;
-            tx.commit()?;
+            block(transaction(conn, async {
+                conn.execute_batch(SCHEMA_V1).await?;
+                Ok(conn.execute_batch("PRAGMA user_version = 1;").await?)
+            }))?;
+        }
+        if version < 2 {
+            block(transaction(conn, async {
+                conn.execute_batch(SCHEMA_V2).await?;
+                let rows = all(conn, "SELECT id, raw_text, final_text, edited_text FROM dictations", (), |r| {
+                    Ok((r.get::<i64>(0)?, r.get::<Option<String>>(1)?, r.get::<Option<String>>(2)?, r.get::<Option<String>>(3)?))
+                })
+                .await?;
+                for (id, raw, final_text, edited) in rows {
+                    let text = search_text(raw.as_deref(), final_text.as_deref(), edited.as_deref());
+                    conn.execute("UPDATE dictations SET search_text = ?2 WHERE id = ?1", (id, text)).await?;
+                }
+                Ok(conn.execute_batch("PRAGMA user_version = 2;").await?)
+            }))?;
         }
         Ok(())
     }
 
     pub fn insert_dictation(&self, d: &NewDictation) -> Result<i64> {
-        self.conn.execute(
+        let search = search_text(d.raw_text.as_deref(), d.final_text.as_deref(), None);
+        self.execute(
             "INSERT INTO dictations (created_at, mode, app_name, app_bundle_id, audio_path, duration_ms, raw_text, \
-             final_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            params![
-                d.created_at, d.mode.as_str(), d.app_name, d.app_bundle_id, d.audio_path, d.duration_ms,
-                d.raw_text, d.final_text, d.level.as_str(), d.transcriber, d.corrector, d.stt_ms, d.llm_ms,
-                d.outcome.as_str(), d.error
-            ],
+             final_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error, search_text) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            (
+                d.created_at.as_str(), d.mode.as_str(), d.app_name.clone(), d.app_bundle_id.clone(), d.audio_path.clone(),
+                d.duration_ms, d.raw_text.clone(), d.final_text.clone(), d.level.as_str(), d.transcriber.clone(),
+                d.corrector.clone(), d.stt_ms, d.llm_ms, d.outcome.as_str(), d.error.clone(), search,
+            ),
         )?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn get_dictation(&self, id: i64) -> Result<Option<Dictation>> {
         let sql = format!("SELECT {DICTATION_COLS} FROM dictations WHERE id = ?1");
-        Ok(self.conn.query_row(&sql, params![id], row_to_dictation).optional()?)
+        self.first(&sql, (id,), row_to_dictation)
     }
 
     pub fn list_dictations(&self, query: Option<&str>, limit: u32, offset: u32) -> Result<Vec<Dictation>> {
-        // instr() on folded text: literal substring match (no LIKE wildcards), Unicode case-insensitive.
+        // instr(): literal substring match (no LIKE wildcards); both sides are lowercased in Rust.
         let needle = query.map(str::trim).filter(|q| !q.is_empty()).map(str::to_lowercase);
         let sql = format!(
-            "SELECT {DICTATION_COLS} FROM dictations \
-             WHERE (?1 IS NULL OR instr(scribe_fold(raw_text), ?1) > 0 OR instr(scribe_fold(final_text), ?1) > 0 \
-             OR instr(scribe_fold(edited_text), ?1) > 0) \
+            "SELECT {DICTATION_COLS} FROM dictations WHERE (?1 IS NULL OR instr(search_text, ?1) > 0) \
              ORDER BY id DESC LIMIT ?2 OFFSET ?3"
         );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![needle, limit, offset], row_to_dictation)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        self.all(&sql, (needle, limit, offset), row_to_dictation)
     }
 
+    /// Stores the user's correction; one equal to the final text (or None) clears it.
     pub fn set_edited_text(&self, id: i64, text: Option<&str>) -> Result<()> {
-        self.conn.execute(
-            "UPDATE dictations SET edited_text = CASE WHEN ?2 IS NULL OR ?2 = final_text THEN NULL ELSE ?2 END \
-             WHERE id = ?1",
-            params![id, text],
+        let texts = self.first("SELECT raw_text, final_text FROM dictations WHERE id = ?1", (id,), |r| {
+            Ok((r.get::<Option<String>>(0)?, r.get::<Option<String>>(1)?))
+        })?;
+        let Some((raw, final_text)) = texts else {
+            return Ok(());
+        };
+        let edited = text.filter(|t| final_text.as_deref() != Some(*t));
+        let search = search_text(raw.as_deref(), final_text.as_deref(), edited);
+        self.execute(
+            "UPDATE dictations SET edited_text = ?2, search_text = ?3 WHERE id = ?1",
+            (id, edited.map(str::to_string), search),
         )?;
         Ok(())
     }
@@ -227,87 +294,84 @@ impl Db {
     /// Retranscription replaces the result: a user edit of the previous transcript is stale, so
     /// it is cleared (the history then shows the new final text).
     pub fn update_transcription(&self, id: i64, u: &TranscriptionUpdate) -> Result<()> {
-        self.conn.execute(
+        let search = search_text(u.raw_text.as_deref(), u.final_text.as_deref(), None);
+        self.execute(
             "UPDATE dictations SET raw_text = ?2, final_text = ?3, edited_text = NULL, transcriber = ?4, corrector = ?5, \
-             stt_ms = ?6, llm_ms = ?7, outcome = ?8, error = ?9 WHERE id = ?1",
-            params![id, u.raw_text, u.final_text, u.transcriber, u.corrector, u.stt_ms, u.llm_ms,
-                    u.outcome.as_str(), u.error],
+             stt_ms = ?6, llm_ms = ?7, outcome = ?8, error = ?9, search_text = ?10 WHERE id = ?1",
+            (
+                id, u.raw_text.clone(), u.final_text.clone(), u.transcriber.clone(), u.corrector.clone(), u.stt_ms,
+                u.llm_ms, u.outcome.as_str(), u.error.clone(), search,
+            ),
         )?;
         Ok(())
     }
 
     pub fn delete_dictation(&self, id: i64) -> Result<Option<String>> {
-        let audio: Option<Option<String>> = self
-            .conn
-            .query_row("SELECT audio_path FROM dictations WHERE id = ?1", params![id], |r| r.get(0))
-            .optional()?;
-        self.conn.execute("DELETE FROM dictations WHERE id = ?1", params![id])?;
+        let audio = self.first("SELECT audio_path FROM dictations WHERE id = ?1", (id,), |r| r.get::<Option<String>>(0))?;
+        self.execute("DELETE FROM dictations WHERE id = ?1", (id,))?;
         Ok(audio.flatten())
     }
 
     pub fn audio_to_purge(&self, older_than: &str) -> Result<Vec<(i64, String)>> {
-        let mut stmt = self.conn.prepare(
+        self.all(
             "SELECT id, audio_path FROM dictations WHERE audio_path IS NOT NULL AND created_at < ?1 ORDER BY id",
-        )?;
-        let rows = stmt.query_map(params![older_than], |r| Ok((r.get(0)?, r.get(1)?)))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            (older_than,),
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
     }
 
     pub fn clear_audio_path(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE dictations SET audio_path = NULL WHERE id = ?1", params![id])?;
+        self.execute("UPDATE dictations SET audio_path = NULL WHERE id = ?1", (id,))?;
         Ok(())
     }
 
     pub fn list_terms(&self) -> Result<Vec<Term>> {
-        let mut stmt = self.conn.prepare(
+        self.all(
             "SELECT id, term, variants_json, note, source, use_count, last_used_at, created_at \
              FROM glossary_terms ORDER BY term COLLATE NOCASE",
-        )?;
-        let rows = stmt.query_map([], row_to_term)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+            (),
+            row_to_term,
+        )
     }
 
     pub fn add_term(&self, term: &str, variants: &[String], note: Option<&str>, source: TermSource, now: &str) -> Result<i64> {
         let term = validate_term(term)?;
         let variants = serde_json::to_string(&clean_variants(variants, term)).expect("serialize variants");
-        let note = note.map(str::trim).filter(|n| !n.is_empty());
-        self.conn
-            .execute(
-                "INSERT INTO glossary_terms (term, variants_json, note, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![term, variants, note, source.as_str(), now],
-            )
-            .map_err(|e| map_unique(e, term))?;
+        let note = note.map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+        self.execute(
+            "INSERT INTO glossary_terms (term, variants_json, note, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (term, variants, note, source.as_str(), now),
+        )
+        .map_err(|e| map_unique(e, term))?;
         Ok(self.conn.last_insert_rowid())
     }
 
     pub fn update_term(&self, id: i64, term: &str, variants: &[String], note: Option<&str>) -> Result<()> {
         let term = validate_term(term)?;
         let variants = serde_json::to_string(&clean_variants(variants, term)).expect("serialize variants");
-        let note = note.map(str::trim).filter(|n| !n.is_empty());
-        self.conn
-            .execute(
-                "UPDATE glossary_terms SET term = ?2, variants_json = ?3, note = ?4 WHERE id = ?1",
-                params![id, term, variants, note],
-            )
-            .map_err(|e| map_unique(e, term))?;
+        let note = note.map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+        self.execute(
+            "UPDATE glossary_terms SET term = ?2, variants_json = ?3, note = ?4 WHERE id = ?1",
+            (id, term, variants, note),
+        )
+        .map_err(|e| map_unique(e, term))?;
         Ok(())
     }
 
     pub fn delete_term(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM glossary_terms WHERE id = ?1", params![id])?;
+        self.execute("DELETE FROM glossary_terms WHERE id = ?1", (id,))?;
         Ok(())
     }
 
     pub fn bump_term_usage(&self, ids: &[i64], now: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
-        for id in ids {
-            tx.execute(
-                "UPDATE glossary_terms SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1",
-                params![id, now],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        let conn = &self.conn;
+        block(transaction(conn, async {
+            for &id in ids {
+                conn.execute("UPDATE glossary_terms SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1", (id, now))
+                    .await?;
+            }
+            Ok(())
+        }))
     }
 }
 
@@ -315,6 +379,22 @@ impl Db {
 mod tests {
     use super::*;
     use crate::gesture::Mode;
+
+    /// Runs SQL on the file through its own connection, as another program would.
+    fn raw_sql(path: &Path, sql: &str) {
+        block(async {
+            let db = Builder::new_local(path.to_str().unwrap()).build().await.unwrap();
+            db.connect().unwrap().execute_batch(sql).await.unwrap();
+        })
+    }
+
+    fn raw_count(path: &Path, sql: &str) -> i64 {
+        block(async {
+            let db = Builder::new_local(path.to_str().unwrap()).build().await.unwrap();
+            let conn = db.connect().unwrap();
+            all(&conn, sql, (), |r| r.get::<i64>(0)).await.unwrap()[0]
+        })
+    }
 
     fn new_dictation(created_at: &str, final_text: &str, audio: Option<&str>) -> NewDictation {
         NewDictation {
@@ -376,6 +456,78 @@ mod tests {
         assert_eq!(texts("ÉTÉ CHARGÉ"), vec!["Été chargé".to_string()]);
         assert_eq!(texts("50%"), vec!["Remise de 50% sur 500".to_string()]);
         assert_eq!(texts("snake_case"), vec!["snake_case".to_string()]);
+        // raw « Il a 50 ans brut », final « Il a 50 ans »: a query never spans two texts.
+        assert!(texts("brut il").is_empty());
+    }
+
+    #[test]
+    fn search_follows_edits_and_retranscription() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "Bonjour", None)).unwrap();
+        let found = |q: &str| db.list_dictations(Some(q), 10, 0).unwrap().len();
+        db.set_edited_text(id, Some("Salut KUBERNETES")).unwrap();
+        assert_eq!((found("kubernetes"), found("bonjour")), (1, 1), "the edit is searchable, the final text still is");
+        db.set_edited_text(id, Some("Bonjour")).unwrap();
+        assert_eq!(found("kubernetes"), 0, "an edit back to the final text is cleared");
+        db.set_edited_text(id, Some("Salut Kubernetes")).unwrap();
+        db.update_transcription(id, &TranscriptionUpdate {
+            raw_text: Some("Été brut".into()),
+            final_text: Some("Été".into()),
+            transcriber: None,
+            corrector: None,
+            stt_ms: None,
+            llm_ms: None,
+            outcome: Outcome::Clipboard,
+            error: None,
+        }).unwrap();
+        assert_eq!((found("kubernetes"), found("bonjour"), found("ÉTÉ")), (0, 0, 1), "retranscription replaces every text");
+        db.set_edited_text(9_999, Some("x")).unwrap();
+        assert_eq!(found("x"), 0, "an unknown id changes nothing");
+    }
+
+    #[test]
+    fn opens_a_v1_database_written_by_rusqlite() {
+        // Written by the rusqlite version (schema v1): one dictation with an edit, one term.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scribe.db");
+        std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1-rusqlite.db"), &path).unwrap();
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            assert_eq!(db.first("PRAGMA user_version", (), |r| r.get::<i64>(0)).unwrap(), Some(2));
+            let all = db.list_dictations(None, 10, 0).unwrap();
+            assert_eq!(all.len(), 1);
+            assert_eq!((all[0].final_text.as_deref(), all[0].edited_text.as_deref()), (Some("Été à Paris"), Some("Été à LYON")));
+            for q in ["lyon", "ÉTÉ À PARIS", "brut"] {
+                assert_eq!(db.list_dictations(Some(q), 10, 0).unwrap().len(), 1, "existing rows are searchable: {q}");
+            }
+            let terms = db.list_terms().unwrap();
+            assert_eq!((terms[0].term.as_str(), terms[0].variants.clone()), ("Kubernetes", vec!["cube ernetes".to_string()]));
+        }
+    }
+
+    #[test]
+    fn a_path_that_is_not_utf8_is_refused() {
+        #[cfg(windows)]
+        let path = {
+            use std::os::windows::ffi::OsStringExt;
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&[0xD800]))
+        };
+        #[cfg(unix)]
+        let path = {
+            use std::os::unix::ffi::OsStrExt;
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&[0xff]))
+        };
+        assert!(matches!(Db::open(&path), Err(StorageError::Invalid(_))));
+    }
+
+    #[test]
+    fn deleting_a_dictation_cascades_to_its_bench_runs() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "x", None)).unwrap();
+        db.execute("INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (?1, 'p', 'm', 'now')", (id,)).unwrap();
+        assert!(db.execute("INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (999, 'p', 'm', 'now')", ()).is_err(), "foreign keys are on");
+        db.delete_dictation(id).unwrap();
+        assert_eq!(db.first("SELECT count(*) FROM bench_runs", (), |r| r.get::<i64>(0)).unwrap(), Some(0));
     }
 
     #[test]
@@ -383,15 +535,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("scribe.db");
         // A pre-existing table makes the last CREATE TABLE of the schema fail.
-        Connection::open(&path).unwrap().execute_batch("CREATE TABLE bench_runs (x INTEGER);").unwrap();
+        raw_sql(&path, "CREATE TABLE bench_runs (x INTEGER);");
         assert!(Db::open(&path).is_err());
-        let conn = Connection::open(&path).unwrap();
-        let n: i64 = conn
-            .query_row("SELECT count(*) FROM sqlite_master WHERE name = 'dictations'", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(n, 0);
-        conn.execute_batch("DROP TABLE bench_runs;").unwrap();
-        drop(conn);
+        assert_eq!(raw_count(&path, "SELECT count(*) FROM sqlite_schema WHERE name = 'dictations'"), 0);
+        assert_eq!(raw_count(&path, "PRAGMA user_version"), 0);
+        raw_sql(&path, "DROP TABLE bench_runs;");
         let db = Db::open(&path).unwrap();
         db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "ok", None)).unwrap();
     }

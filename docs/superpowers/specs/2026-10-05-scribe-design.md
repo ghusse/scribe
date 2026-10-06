@@ -58,7 +58,7 @@ mélangés dans une même phrase, vocabulaire technique/métier.
 | Hook clavier | macOS : `CGEventTap` ; Windows : `SetWindowsHookEx(WH_KEYBOARD_LL)` |
 | Focus / accessibilité | macOS : `AXUIElement` (via `objc2`/bindings) ; Windows : UI Automation (crate `windows`) |
 | Simulation de touches | macOS : `CGEvent` ; Windows : `SendInput` |
-| Stockage | SQLite via `rusqlite`, migrations SQL manuelles |
+| Stockage | Turso Database (crate `turso`, réécriture de SQLite en Rust, format de fichier SQLite), migrations SQL manuelles |
 | Réglages | `tauri-plugin-store` (JSON) |
 | Secrets | crate `keyring` (Keychain / Credential Manager) |
 | HTTP | `reqwest` |
