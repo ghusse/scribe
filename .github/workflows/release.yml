@@ -1,0 +1,48 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the installers and attaches them to a draft GitHub release, published by hand
+# once checked. The tag must match the version in src-tauri/tauri.conf.json.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the app version
+        shell: bash
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} but tauri.conf.json says ${version}"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Unsigned for now: Windows SmartScreen asks for a confirmation on first launch.
+      - name: Build and attach the installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: bun tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: Scribe ${{ github.ref_name }}
+          releaseBody: Installeur Windows (NSIS, recommandé) et MSI. Non signés pour l'instant.
+          releaseDraft: true
