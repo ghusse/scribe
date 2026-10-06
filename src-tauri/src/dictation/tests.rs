@@ -81,6 +81,10 @@ fn feedback_for_each_insertion_result() {
         assert_eq!(feedback(r, None, "t", None), toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("t"), None));
     }
     assert_eq!(
+        feedback(InsertResult::NotPasted, Some("x"), "t", id),
+        toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V (non corrigé : x)", Some("t"), id)
+    );
+    assert_eq!(
         feedback(InsertResult::ClipboardFailed, Some("x"), "t", id),
         toast(ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique (non corrigé : x)", Some("t"), id)
     );
@@ -270,6 +274,33 @@ fn not_editable_focus_or_failed_paste_copies_the_text() {
             Some(toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("Bonjour Scribe."), Some(row.id)))
         );
     }
+}
+
+#[test]
+fn a_paste_seen_in_the_field_is_recorded_as_inserted_even_with_an_uncertain_focus() {
+    let f = Fixture::new();
+    set_end_focus(&f, FocusState::Unknown);
+    f.field.script(&[Some("Objet : "), Some("Objet : Bonjour Scribe.")]);
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!(row.outcome, Outcome::Pasted);
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1);
+    assert_eq!(f.window.last_event(), Some(OverlayEvent::Idle), "no « Texte inséré ? » toast");
+}
+
+#[test]
+fn a_paste_the_field_did_not_receive_leaves_the_text_to_paste_by_hand() {
+    let f = Fixture::new();
+    f.field.script(&[Some("Objet : ")]);
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!(row.outcome, Outcome::Clipboard);
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1, "Ctrl+V was sent");
+    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe."), "not restored: ready for Ctrl+V");
+    assert_eq!(
+        f.window.last_event(),
+        Some(toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V", Some("Bonjour Scribe."), Some(row.id)))
+    );
 }
 
 #[test]

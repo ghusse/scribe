@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use scribe_core::chord::{ChordRecorder, Recorded};
 use scribe_core::focus::FocusDetector;
-use scribe_core::insert::{Clipboard, KeySender};
+use scribe_core::insert::{Clipboard, FieldReader, KeySender};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
 use scribe_platform::{HookConfig, RawKey};
@@ -58,6 +58,8 @@ pub struct Services {
     pub focus: Arc<dyn FocusDetector>,
     pub clipboard: Arc<dyn Clipboard>,
     pub keys: Arc<dyn KeySender>,
+    /// Reads the focused field to check that a paste landed.
+    pub field: Arc<dyn FieldReader>,
     pub secrets: Arc<dyn SecretStore>,
     pub providers: ProviderFactory,
     pub overlay: Overlay,

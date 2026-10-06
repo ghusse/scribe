@@ -49,6 +49,11 @@ pub fn feedback(inserted: InsertResult, correction_error: Option<&str>, final_te
         InsertResult::ClipboardOnly | InsertResult::PasteFailed => {
             toast(ToastLevel::Copied, with_correction_note("Texte copié dans le presse-papier", correction_error), p)
         }
+        InsertResult::NotPasted => toast(
+            ToastLevel::Copied,
+            with_correction_note("Non inséré : texte copié, collez-le avec Ctrl+V", correction_error),
+            p,
+        ),
         InsertResult::ClipboardFailed => toast(
             ToastLevel::Error,
             with_correction_note("Presse-papier indisponible : texte dans l'historique", correction_error),
@@ -123,7 +128,7 @@ async fn deliver(svc: &Arc<Services>, start: FocusSnapshot, text: String, restor
     tauri::async_runtime::spawn_blocking(move || {
         let end = focus::snapshot_with_timeout(svc.focus.clone(), FOCUS_TIMEOUT_MS);
         let plan = insert::decide(&start, &end);
-        insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), restore_delay_ms, &|ms| {
+        insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), svc.field.as_ref(), restore_delay_ms, &|ms| {
             std::thread::sleep(Duration::from_millis(ms))
         })
     })

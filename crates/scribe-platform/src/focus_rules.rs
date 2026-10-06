@@ -11,15 +11,22 @@ pub const TAB: i32 = 50018;
 pub const TAB_ITEM: i32 = 50019;
 pub const TREE: i32 = 50023;
 pub const TREE_ITEM: i32 = 50024;
+pub const TEXT: i32 = 50020;
 pub const DOCUMENT: i32 = 50030;
 pub const PANE: i32 = 50033;
 
 const SHELL_CLASSES: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd"];
 const NAVIGATION: &[i32] = &[BUTTON, LIST_ITEM, LIST, MENU_ITEM, TAB, TAB_ITEM, TREE, TREE_ITEM];
+/// Terminals take typed and pasted text, but expose it as plain text with no writable value: Windows Terminal's
+/// text area (a `TermControl` element) and the classic console window (`ConsoleWindowClass`).
+const TERMINAL_ELEMENTS: &[&str] = &["TermControl"];
+const TERMINAL_WINDOWS: &[&str] = &["ConsoleWindowClass"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiaFacts {
     pub window_class: String,
+    /// Class name of the focused element itself (empty when unknown).
+    pub element_class: String,
     pub control_type: Option<i32>,
     pub value_read_only: Option<bool>,
 }
@@ -27,6 +34,9 @@ pub struct UiaFacts {
 pub fn classify(f: &UiaFacts) -> FocusState {
     if SHELL_CLASSES.contains(&f.window_class.as_str()) {
         return FocusState::NotEditable;
+    }
+    if TERMINAL_ELEMENTS.contains(&f.element_class.as_str()) || TERMINAL_WINDOWS.contains(&f.window_class.as_str()) {
+        return FocusState::Editable;
     }
     match f.control_type {
         Some(EDIT) => {
@@ -61,7 +71,21 @@ mod tests {
     use super::*;
 
     fn facts(class: &str, ct: Option<i32>, ro: Option<bool>) -> UiaFacts {
-        UiaFacts { window_class: class.into(), control_type: ct, value_read_only: ro }
+        UiaFacts { window_class: class.into(), element_class: String::new(), control_type: ct, value_read_only: ro }
+    }
+
+    #[test]
+    fn terminals_are_editable() {
+        // Windows Terminal's text area: a Text control with a text pattern but no value.
+        let wt = UiaFacts {
+            window_class: "CASCADIA_HOSTING_WINDOW_CLASS".into(),
+            element_class: "TermControl".into(),
+            control_type: Some(TEXT),
+            value_read_only: None,
+        };
+        assert_eq!(classify(&wt), FocusState::Editable);
+        assert_eq!(classify(&facts("ConsoleWindowClass", None, None)), FocusState::Editable);
+        assert_eq!(classify(&facts("X", Some(TEXT), None)), FocusState::Unknown, "other text controls stay unknown");
     }
 
     #[test]

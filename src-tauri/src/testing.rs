@@ -3,7 +3,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, RwLock};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot, FocusState};
-use scribe_core::insert::{Clipboard, ClipboardContent, KeySender};
+use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_core::storage::Db;
@@ -102,6 +102,23 @@ impl KeySender for FakeKeys {
     }
 }
 
+/// The focused field's text, read in order (the last reading repeats); unreadable when empty.
+#[derive(Default)]
+pub struct FakeField(pub Mutex<Vec<Option<String>>>);
+
+impl FakeField {
+    pub fn script(&self, readings: &[Option<&str>]) {
+        *self.0.lock().unwrap() = readings.iter().rev().map(|r| r.map(String::from)).collect();
+    }
+}
+
+impl FieldReader for FakeField {
+    fn focused_text(&self) -> Option<String> {
+        let mut v = self.0.lock().unwrap();
+        if v.len() > 1 { v.pop().flatten() } else { v.first().cloned().flatten() }
+    }
+}
+
 pub struct FakeFocus(pub Mutex<FocusSnapshot>);
 
 impl FocusDetector for FakeFocus {
@@ -158,6 +175,7 @@ pub struct Fixture {
     pub ui: Arc<FakeUi>,
     pub clipboard: Arc<FakeClipboard>,
     pub keys: Arc<FakeKeys>,
+    pub field: Arc<FakeField>,
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
     pub plan: Arc<Mutex<ProviderPlan>>,
@@ -178,6 +196,7 @@ impl Fixture {
         let ui = Arc::new(FakeUi::default());
         let clipboard = Arc::new(FakeClipboard::default());
         let keys = Arc::new(FakeKeys::default());
+        let field = Arc::new(FakeField::default());
         let focus = Arc::new(FakeFocus(Mutex::new(editable("Notepad"))));
         let secrets = Arc::new(MemorySecretStore::default());
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
@@ -192,6 +211,7 @@ impl Fixture {
             focus: focus.clone(),
             clipboard: clipboard.clone(),
             keys: keys.clone(),
+            field: field.clone(),
             secrets: secrets.clone(),
             providers: Box::new(move |_s, _store| {
                 let plan = factory_plan.lock().unwrap().clone();
@@ -203,7 +223,7 @@ impl Fixture {
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, focus, secrets, plan, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

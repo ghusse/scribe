@@ -71,8 +71,11 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   Remaining branches: `code == HC_ACTION`, hook not started (`SHARED` empty), inject the mask / forward /
   swallow per the filter's decision.
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
-  `focus_rules::process_stem`; classification is `focus_rules::classify`. Remaining branches: FFI error
-  propagation (`?`, `.ok()`) and the null foreground window → `FocusSnapshot::unknown()` guard.
+  `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`
+  only reads the focused field (text pattern, else value; never a password field); whether a paste landed is
+  `scribe_core::insert::verify`, the re-reading loop `insert::perform`. Remaining branches: FFI error
+  propagation (`?`, `.ok()`), the password / text-pattern / value-pattern `if`s and the null foreground window →
+  `FocusSnapshot::unknown()` guard.
 - `device/microphone.rs`: the recording-thread protocol is `audio_capture::spawn_recorder`, sample conversions
   `audio_capture::{i16_to_f32, u16_to_f32}`, level metering, partial audio and the final clip
   `audio_capture::CaptureBuffer` (`push`, `set_error`, `finish`). Remaining branches: the cpal error paths

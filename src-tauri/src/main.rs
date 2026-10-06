@@ -52,6 +52,7 @@ fn main() {
                 focus: scribe_platform::focus_detector(),
                 clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard::default()),
                 keys: scribe_platform::key_sender(),
+                field: scribe_platform::field_reader(),
                 secrets: secret_store,
                 providers: Box::new(providers::build),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),

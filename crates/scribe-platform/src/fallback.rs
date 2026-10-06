@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
-use scribe_core::insert::KeySender;
+use scribe_core::insert::{FieldReader, KeySender};
 
 use crate::{HookConfig, KeyCallback};
 
@@ -39,6 +39,19 @@ pub fn key_sender() -> Arc<dyn KeySender> {
     Arc::new(NoKeys)
 }
 
+struct NoField;
+
+impl FieldReader for NoField {
+    fn focused_text(&self) -> Option<String> {
+        None
+    }
+}
+
+/// No accessibility API here: a paste is never verified.
+pub fn field_reader() -> Arc<dyn FieldReader> {
+    Arc::new(NoField)
+}
+
 /// Physical key state: unknown here, reported as up (there is no hook, so no trigger is ever held).
 pub fn is_key_pressed(_vk: u32) -> bool {
     false
@@ -68,6 +81,11 @@ mod tests {
     #[test]
     fn focus_is_always_unknown() {
         assert_eq!(focus_detector().snapshot(), FocusSnapshot::unknown());
+    }
+
+    #[test]
+    fn a_paste_is_never_verified() {
+        assert_eq!(field_reader().focused_text(), None);
     }
 
     #[test]

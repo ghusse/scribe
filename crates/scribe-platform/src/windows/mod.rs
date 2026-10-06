@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use scribe_core::focus::FocusDetector;
-use scribe_core::insert::KeySender;
+use scribe_core::insert::{FieldReader, KeySender};
 
 pub mod focus;
 pub mod hook;
@@ -19,4 +19,8 @@ pub fn focus_detector() -> Arc<dyn FocusDetector> {
 
 pub fn key_sender() -> Arc<dyn KeySender> {
     Arc::new(keys::WinKeySender)
+}
+
+pub fn field_reader() -> Arc<dyn FieldReader> {
+    Arc::new(focus::UiaFieldReader)
 }
