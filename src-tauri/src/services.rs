@@ -45,6 +45,12 @@ pub trait UiSink: Send + Sync {
     fn show_main(&self);
 }
 
+/// Launching Scribe when the user logs in (Windows registry Run key, macOS LaunchAgent), with `--minimized`.
+pub trait LaunchAtLogin: Send + Sync {
+    fn is_enabled(&self) -> Result<bool, String>;
+    fn set_enabled(&self, enabled: bool) -> Result<(), String>;
+}
+
 pub type Providers = (Box<dyn Transcriber>, Box<dyn Corrector>);
 /// Builds the transcriber and corrector for the current settings (`providers::build` in the app).
 pub type ProviderFactory = Box<dyn Fn(&Settings, &dyn SecretStore) -> Result<Providers, ProviderError> + Send + Sync>;
@@ -64,6 +70,7 @@ pub struct Services {
     pub providers: ProviderFactory,
     pub overlay: Overlay,
     pub ui: Arc<dyn UiSink>,
+    pub autostart: Arc<dyn LaunchAtLogin>,
     /// Set while the settings UI waits for the user to press the new hotkey.
     pub key_capture: KeyCapture,
     pub ctrl_tx: Mutex<Sender<ControllerMsg>>,

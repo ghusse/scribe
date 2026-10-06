@@ -208,6 +208,21 @@ fn capture_key_returns_the_next_press_or_none_when_cancelled() {
 }
 
 #[test]
+fn autostart_is_read_and_switched() {
+    let f = Fixture::new();
+    with_state(&f, |s| {
+        assert_eq!(get_autostart(s.clone()), Ok(false));
+        assert_eq!(set_autostart(s.clone(), true), Ok(true));
+        assert_eq!(get_autostart(s.clone()), Ok(true));
+        assert_eq!(set_autostart(s.clone(), false), Ok(false));
+        *f.autostart.fail.lock().unwrap() = Some("accès au registre refusé".into());
+        assert_eq!(set_autostart(s.clone(), true), Err("accès au registre refusé".into()));
+        assert_eq!(get_autostart(s), Err("accès au registre refusé".into()));
+    });
+    assert!(!*f.autostart.enabled.lock().unwrap(), "a failed switch changes nothing");
+}
+
+#[test]
 fn providers_lists_the_catalog() {
     assert_eq!(providers(), catalog::PROVIDERS.to_vec());
 }

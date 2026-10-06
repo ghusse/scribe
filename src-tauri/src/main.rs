@@ -21,7 +21,7 @@ use tauri::{Manager, WindowEvent};
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
-use crate::adapters::{CpalRecorder, TauriOverlayWindow, TauriUi};
+use crate::adapters::{CpalRecorder, TauriAutostart, TauriOverlayWindow, TauriUi};
 use crate::controller::{ControllerDeps, ControllerMsg};
 use crate::overlay::{Overlay, ToastLevel};
 use crate::secrets::{KeyringStore, SecretStore};
@@ -35,6 +35,11 @@ struct HookGuard(#[allow(dead_code)] scribe_platform::HookHandle);
 fn main() {
     tracing_subscriber::fmt::init();
     tauri::Builder::default()
+        // Launch at login starts in the tray (see bootstrap::shows_main_at_launch).
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![bootstrap::MINIMIZED_FLAG]),
+        ))
         .setup(|app| {
             let paths = AppPaths::new(app.path().app_data_dir()?);
             std::fs::create_dir_all(&paths.audio_dir)?;
@@ -57,6 +62,7 @@ fn main() {
                 providers: Box::new(providers::build),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
+                autostart: Arc::new(TauriAutostart(app.handle().clone())),
                 key_capture: KeyCapture::new(hook_cfg.clone()),
                 ctrl_tx: Mutex::new(tx.clone()),
             });
@@ -122,6 +128,8 @@ fn main() {
             commands::test_providers,
             commands::capture_key,
             commands::cancel_capture,
+            commands::get_autostart,
+            commands::set_autostart,
             commands::providers,
             commands::overlay_dismiss,
             commands::open_history,

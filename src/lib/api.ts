@@ -113,6 +113,9 @@ export const api = {
   /** Makes a pending captureKey resolve to null at once. */
   cancelCapture: () => invoke<void>("cancel_capture"),
   providers: () => invoke<Provider[]>("providers"),
+  getAutostart: () => invoke<boolean>("get_autostart"),
+  /** Returns the state actually in place afterwards. */
+  setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
 };

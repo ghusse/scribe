@@ -26,6 +26,7 @@ beforeEach(() => {
     test_providers: () => ({ stt: { Ok: 412.4 }, llm: { Ok: 300 } }),
     capture_key: () => null,
     cancel_capture: () => undefined,
+    get_autostart: () => false,
   });
 });
 

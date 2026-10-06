@@ -59,7 +59,7 @@ thresholds, and the two CI coverage steps.
 | `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
-| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
+| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
 | `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
 

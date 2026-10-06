@@ -17,6 +17,7 @@ beforeEach(() => {
     list_dictations: () => [],
     list_terms: () => [],
     save_settings: () => undefined,
+    get_autostart: () => false,
   });
 });
 

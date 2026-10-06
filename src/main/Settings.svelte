@@ -9,6 +9,7 @@
   import { testLine, translateProviderError } from "../lib/providerTest";
   import { effortLabel, HOTKEY_HELP, KEYS_HELP, LEVEL_OPTIONS, RAW_LEVEL_NOTE } from "../lib/settingsCopy";
   import ModelPicker from "./ModelPicker.svelte";
+  import Startup from "./Startup.svelte";
 
   // App keeps this view mounted while another tab is shown (so nothing typed here is lost)
   // and reads `status` to flag unsaved settings on the tab.
@@ -515,6 +516,8 @@
       </details>
     {/if}
   </section>
+
+  <Startup />
 
   <section>
     <h2>Avancé</h2>

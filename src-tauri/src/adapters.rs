@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 use crate::bootstrap::MAIN_WINDOW;
 use crate::controller::{Recorder, Recording};
 use crate::overlay::{self, OverlayEvent, OverlayWindow};
-use crate::services::UiSink;
+use crate::services::{LaunchAtLogin, UiSink};
 
 const OVERLAY_WINDOW: &str = "overlay";
 /// Logical pixels between the overlay and the bottom of the screen.
@@ -18,6 +18,21 @@ pub fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+/// Launch at login through tauri-plugin-autostart (registered in `main.rs` with `--minimized`).
+pub struct TauriAutostart(pub AppHandle);
+
+impl LaunchAtLogin for TauriAutostart {
+    fn is_enabled(&self) -> Result<bool, String> {
+        use tauri_plugin_autostart::ManagerExt;
+        self.0.autolaunch().is_enabled().map_err(|e| e.to_string())
+    }
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        use tauri_plugin_autostart::ManagerExt;
+        let launcher = self.0.autolaunch();
+        if enabled { launcher.enable() } else { launcher.disable() }.map_err(|e| e.to_string())
     }
 }
 

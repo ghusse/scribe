@@ -148,6 +148,18 @@ pub fn cancel_capture(svc: Svc<'_>) {
 }
 
 #[tauri::command]
+pub fn get_autostart(svc: Svc<'_>) -> Result<bool, String> {
+    svc.autostart.is_enabled()
+}
+
+/// Turns launching at login on or off; returns the state actually in place afterwards.
+#[tauri::command]
+pub fn set_autostart(svc: Svc<'_>, enabled: bool) -> Result<bool, String> {
+    svc.autostart.set_enabled(enabled)?;
+    svc.autostart.is_enabled()
+}
+
+#[tauri::command]
 pub fn providers() -> Vec<Provider> {
     catalog::PROVIDERS.to_vec()
 }

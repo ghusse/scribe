@@ -16,7 +16,9 @@ et un modèle pour la transcription et pour la correction (par défaut OpenAI `g
 `claude-opus-5-5`), renseignez les clés API correspondantes, puis « Tester la configuration ».
 
 La fenêtre principale s'ouvre à chaque lancement ; fermée, Scribe reste dans la zone de notification. Lancé avec
-`--minimized` (démarrage avec Windows), il démarre directement dans la zone de notification, sauf s'il manque une clé.
+`--minimized`, il démarre directement dans la zone de notification, sauf s'il manque une clé. Réglages > Démarrage >
+« Lancer Scribe à l'ouverture de session » l'inscrit au démarrage de la session (Windows et macOS), avec ce mode
+discret.
 
 ## Utilisation
 

@@ -13,7 +13,7 @@ use crate::controller::ControllerMsg;
 use crate::overlay::fake::FakeWindow;
 use crate::overlay::Overlay;
 use crate::secrets::memory::MemorySecretStore;
-use crate::services::{AppPaths, KeyCapture, Services, UiSink};
+use crate::services::{AppPaths, KeyCapture, LaunchAtLogin, Services, UiSink};
 use crate::settings::Settings;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +119,29 @@ impl FieldReader for FakeField {
     }
 }
 
+/// Launch at login, with an optional error returned by every call.
+#[derive(Default)]
+pub struct FakeAutostart {
+    pub enabled: Mutex<bool>,
+    pub fail: Mutex<Option<String>>,
+}
+
+impl LaunchAtLogin for FakeAutostart {
+    fn is_enabled(&self) -> Result<bool, String> {
+        match self.fail.lock().unwrap().clone() {
+            Some(e) => Err(e),
+            None => Ok(*self.enabled.lock().unwrap()),
+        }
+    }
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        if let Some(e) = self.fail.lock().unwrap().clone() {
+            return Err(e);
+        }
+        *self.enabled.lock().unwrap() = enabled;
+        Ok(())
+    }
+}
+
 pub struct FakeFocus(pub Mutex<FocusSnapshot>);
 
 impl FocusDetector for FakeFocus {
@@ -176,6 +199,7 @@ pub struct Fixture {
     pub clipboard: Arc<FakeClipboard>,
     pub keys: Arc<FakeKeys>,
     pub field: Arc<FakeField>,
+    pub autostart: Arc<FakeAutostart>,
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
     pub plan: Arc<Mutex<ProviderPlan>>,
@@ -197,6 +221,7 @@ impl Fixture {
         let clipboard = Arc::new(FakeClipboard::default());
         let keys = Arc::new(FakeKeys::default());
         let field = Arc::new(FakeField::default());
+        let autostart = Arc::new(FakeAutostart::default());
         let focus = Arc::new(FakeFocus(Mutex::new(editable("Notepad"))));
         let secrets = Arc::new(MemorySecretStore::default());
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
@@ -220,10 +245,11 @@ impl Fixture {
             }),
             overlay: Overlay::new(window.clone()),
             ui: ui.clone(),
+            autostart: autostart.clone(),
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, autostart, focus, secrets, plan, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

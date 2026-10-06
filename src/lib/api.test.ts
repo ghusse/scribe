@@ -31,6 +31,8 @@ describe("api", () => {
     ["captureKey", () => api.captureKey(), "capture_key", undefined],
     ["cancelCapture", () => api.cancelCapture(), "cancel_capture", undefined],
     ["providers", () => api.providers(), "providers", undefined],
+    ["getAutostart", () => api.getAutostart(), "get_autostart", undefined],
+    ["setAutostart", () => api.setAutostart(true), "set_autostart", { enabled: true }],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
   ];
