@@ -7,8 +7,12 @@ on:
     # X.Y.Z only: the MSI bundler rejects pre-release versions such as 0.2.0-beta.
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
-# Nothing by default; only the job that creates the release may write.
+# Nothing by default; only the jobs that upload to the release may write.
 permissions: {}
+
+# Both jobs set it: tauri-action v1 rewrites the name and body of an existing release.
+env:
+  RELEASE_BODY: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
 
 jobs:
   windows:
@@ -43,7 +47,7 @@ jobs:
 
       # Unsigned for now: Windows SmartScreen asks for a confirmation on first launch.
       - name: Build and attach the installers
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Signs the update bundles (createUpdaterArtifacts); the public key is in tauri.conf.json.
@@ -53,10 +57,10 @@ jobs:
           tauriScript: bun tauri
           tagName: ${{ github.ref_name }}
           releaseName: Scribe ${{ github.ref_name }}
-          releaseBody: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           # latest.json, read by the installed apps once the release is published, points to the NSIS installer.
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
           updaterJsonPreferNsis: true
 
   # After the Windows job: it creates the draft release, this one adds the macOS bundles and its entries in latest.json.
@@ -84,7 +88,7 @@ jobs:
 
       # Ad-hoc signed (tauri.conf.json > bundle.macOS.signingIdentity "-"), not notarized: Gatekeeper asks once.
       - name: Build and attach the macOS bundles
-        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -94,5 +98,6 @@ jobs:
           args: --target universal-apple-darwin
           tagName: ${{ github.ref_name }}
           releaseName: Scribe ${{ github.ref_name }}
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
