@@ -56,7 +56,7 @@ fn render_glossary(terms: &[Term]) -> String {
         return "Glossaire de l'utilisateur : (vide)".to_string();
     }
     let mut sorted: Vec<&Term> = terms.iter().collect();
-    sorted.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+    sorted.sort_by_key(|a| a.term.to_lowercase());
     let mut out = String::from(
         "Glossaire de l'utilisateur (orthographe de référence ; « entendu » = formes erronées fréquentes) :",
     );

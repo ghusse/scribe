@@ -13,6 +13,15 @@ const OVERLAY_WINDOW: &str = "overlay";
 /// Logical pixels between the overlay and the bottom of the screen.
 const OVERLAY_MARGIN: f64 = 80.0;
 
+/// Builds the main window from its `tauri.conf.json` entry (`"create": false`). Called once the services are
+/// managed: its page invokes commands as soon as it loads, which in a release build (embedded assets) can happen
+/// while setup still runs (setup pumps the event loop), and a command would then find no `Services` state.
+pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
+    let Some(config) = app.config().app.windows.iter().find(|w| w.label == MAIN_WINDOW) else { return Ok(()) };
+    tauri::WebviewWindowBuilder::from_config(app, config)?.build()?;
+    Ok(())
+}
+
 pub fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window(MAIN_WINDOW) {
         let _ = w.show();

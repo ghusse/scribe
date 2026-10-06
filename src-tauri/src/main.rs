@@ -78,6 +78,7 @@ fn main() {
                 ctrl_tx: Mutex::new(tx.clone()),
             });
             app.manage(svc.clone());
+            adapters::create_main_window(app.handle())?;
             dictation::purge_audio(&svc);
             // Scribe lives in the tray for weeks: enforce the retention daily, not only at launch.
             let purge_svc = svc.clone();

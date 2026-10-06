@@ -50,6 +50,8 @@ impl KeyFilter {
     ///
     /// `scan` is the hardware scan code: the left Ctrl that AltGr adds (`ALTGR_FAKE_CTRL_SCAN`) is ignored like
     /// an injected event, so AltGr reads as Alt droit alone (as a trigger, and in a capture).
+    // The fields of one hook event, passed flat as the hook reads them (clippy >= 1.99 also counts `self`).
+    #[allow(clippy::too_many_arguments)]
     pub fn on_event(
         &mut self,
         cfg: &HookConfig,
