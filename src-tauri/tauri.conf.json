@@ -11,16 +11,57 @@
   },
   "app": {
     "windows": [
-      { "label": "main", "title": "Scribe", "url": "index.html", "width": 980, "height": 700, "minWidth": 560, "minHeight": 480, "visible": false },
-      { "label": "overlay", "title": "Scribe overlay", "url": "overlay.html", "width": 440, "height": 120,
-        "visible": false, "decorations": false, "transparent": true, "alwaysOnTop": true,
-        "skipTaskbar": true, "resizable": false, "focus": false, "shadow": false }
+      {
+        "label": "main",
+        "title": "Scribe",
+        "url": "index.html",
+        "width": 980,
+        "height": 700,
+        "minWidth": 560,
+        "minHeight": 480,
+        "visible": false
+      },
+      {
+        "label": "overlay",
+        "title": "Scribe overlay",
+        "url": "overlay.html",
+        "width": 440,
+        "height": 120,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false
+      }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEQTUwQzYzNzI3NDI4ODIKUldTQ0tIUnlZd3lsblFLM1phRGRwWnlBMHI2S0JTWTJkSEZZYk5RaG1wSGRjSGdTb29GRmtJbU8K",
+      "endpoints": [
+        "https://github.com/ghusse/scribe/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

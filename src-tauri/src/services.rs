@@ -45,6 +45,23 @@ pub trait UiSink: Send + Sync {
     fn show_main(&self);
 }
 
+/// A newer version published as a GitHub release.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AvailableUpdate {
+    pub version: String,
+    /// The release notes.
+    pub notes: Option<String>,
+}
+
+/// Checks and installs updates (tauri-plugin-updater in the app).
+#[async_trait::async_trait]
+pub trait AppUpdater: Send + Sync {
+    fn current_version(&self) -> String;
+    async fn check(&self) -> Result<Option<AvailableUpdate>, String>;
+    /// Downloads, verifies the signature and installs the latest version, then restarts Scribe.
+    async fn install(&self) -> Result<(), String>;
+}
+
 /// Launching Scribe when the user logs in (Windows registry Run key, macOS LaunchAgent), with `--minimized`.
 pub trait LaunchAtLogin: Send + Sync {
     fn is_enabled(&self) -> Result<bool, String>;
@@ -71,6 +88,7 @@ pub struct Services {
     pub overlay: Overlay,
     pub ui: Arc<dyn UiSink>,
     pub autostart: Arc<dyn LaunchAtLogin>,
+    pub updater: Arc<dyn AppUpdater>,
     /// Set while the settings UI waits for the user to press the new hotkey.
     pub key_capture: KeyCapture,
     pub ctrl_tx: Mutex<Sender<ControllerMsg>>,

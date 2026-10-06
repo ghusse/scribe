@@ -22,6 +22,7 @@ scribe-providers = { path = "../crates/scribe-providers" }
 scribe-platform = { path = "../crates/scribe-platform" }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 
 [dev-dependencies]
 tempfile = "3"

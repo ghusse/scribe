@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 use crate::bootstrap::MAIN_WINDOW;
 use crate::controller::{Recorder, Recording};
 use crate::overlay::{self, OverlayEvent, OverlayWindow};
-use crate::services::{LaunchAtLogin, UiSink};
+use crate::services::{AppUpdater, AvailableUpdate, LaunchAtLogin, UiSink};
 
 const OVERLAY_WINDOW: &str = "overlay";
 /// Logical pixels between the overlay and the bottom of the screen.
@@ -18,6 +18,31 @@ pub fn show_main(app: &AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+    }
+}
+
+/// Updates through tauri-plugin-updater (endpoint and public key in tauri.conf.json).
+pub struct TauriUpdater(pub AppHandle);
+
+#[async_trait::async_trait]
+impl AppUpdater for TauriUpdater {
+    fn current_version(&self) -> String {
+        self.0.package_info().version.to_string()
+    }
+    async fn check(&self) -> Result<Option<AvailableUpdate>, String> {
+        use tauri_plugin_updater::UpdaterExt;
+        let update = self.0.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        Ok(update.map(|u| AvailableUpdate { version: u.version, notes: u.body }))
+    }
+    async fn install(&self) -> Result<(), String> {
+        use tauri_plugin_updater::UpdaterExt;
+        let update = self.0.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        let Some(update) = update else {
+            return Err("aucune mise à jour disponible".into());
+        };
+        // Windows: the installer closes Scribe and relaunches it. macOS: restart into the new bundle.
+        update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+        self.0.restart()
     }
 }
 

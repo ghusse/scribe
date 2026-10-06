@@ -59,7 +59,7 @@ thresholds, and the two CI coverage steps.
 | `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
-| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
+| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
 | `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
@@ -97,7 +97,7 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
-  the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
+  the delayed `update::check_at_startup` spawn, the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
   `CloseRequested` match before `prevent_close` + `hide`.
 
 Test-only Rust code is **not** excluded and counts toward the Rust total: `src-tauri/src/testing.rs` (shared

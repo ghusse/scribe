@@ -13,7 +13,7 @@ use crate::controller::ControllerMsg;
 use crate::overlay::fake::FakeWindow;
 use crate::overlay::Overlay;
 use crate::secrets::memory::MemorySecretStore;
-use crate::services::{AppPaths, KeyCapture, LaunchAtLogin, Services, UiSink};
+use crate::services::{AppPaths, AppUpdater, AvailableUpdate, KeyCapture, LaunchAtLogin, Services, UiSink};
 use crate::settings::Settings;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +119,34 @@ impl FieldReader for FakeField {
     }
 }
 
+/// Version 0.1.0; `available` is what a check finds, `fail` the error every call returns.
+#[derive(Default)]
+pub struct FakeUpdater {
+    pub available: Mutex<Option<AvailableUpdate>>,
+    pub fail: Mutex<Option<String>>,
+    pub installs: Mutex<u32>,
+}
+
+#[async_trait::async_trait]
+impl AppUpdater for FakeUpdater {
+    fn current_version(&self) -> String {
+        "0.1.0".into()
+    }
+    async fn check(&self) -> Result<Option<AvailableUpdate>, String> {
+        match self.fail.lock().unwrap().clone() {
+            Some(e) => Err(e),
+            None => Ok(self.available.lock().unwrap().clone()),
+        }
+    }
+    async fn install(&self) -> Result<(), String> {
+        if let Some(e) = self.fail.lock().unwrap().clone() {
+            return Err(e);
+        }
+        *self.installs.lock().unwrap() += 1;
+        Ok(())
+    }
+}
+
 /// Launch at login, with an optional error returned by every call.
 #[derive(Default)]
 pub struct FakeAutostart {
@@ -200,6 +228,7 @@ pub struct Fixture {
     pub keys: Arc<FakeKeys>,
     pub field: Arc<FakeField>,
     pub autostart: Arc<FakeAutostart>,
+    pub updater: Arc<FakeUpdater>,
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
     pub plan: Arc<Mutex<ProviderPlan>>,
@@ -222,6 +251,7 @@ impl Fixture {
         let keys = Arc::new(FakeKeys::default());
         let field = Arc::new(FakeField::default());
         let autostart = Arc::new(FakeAutostart::default());
+        let updater = Arc::new(FakeUpdater::default());
         let focus = Arc::new(FakeFocus(Mutex::new(editable("Notepad"))));
         let secrets = Arc::new(MemorySecretStore::default());
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
@@ -246,10 +276,11 @@ impl Fixture {
             overlay: Overlay::new(window.clone()),
             ui: ui.clone(),
             autostart: autostart.clone(),
+            updater: updater.clone(),
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, autostart, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, autostart, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

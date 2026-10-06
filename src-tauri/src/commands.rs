@@ -15,6 +15,7 @@ use crate::dictation;
 use crate::secrets;
 use crate::services::{now_rfc3339, Services};
 use crate::settings::Settings;
+use crate::update::{self, UpdateStatus};
 
 type Svc<'a> = State<'a, Arc<Services>>;
 
@@ -157,6 +158,17 @@ pub fn get_autostart(svc: Svc<'_>) -> Result<bool, String> {
 pub fn set_autostart(svc: Svc<'_>, enabled: bool) -> Result<bool, String> {
     svc.autostart.set_enabled(enabled)?;
     svc.autostart.is_enabled()
+}
+
+#[tauri::command]
+pub async fn check_update(svc: Svc<'_>) -> Result<UpdateStatus, String> {
+    update::status(&svc).await
+}
+
+/// Installs the latest version and restarts Scribe (on Windows the installer closes and relaunches it).
+#[tauri::command]
+pub async fn install_update(svc: Svc<'_>) -> Result<(), String> {
+    svc.updater.install().await
 }
 
 #[tauri::command]

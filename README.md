@@ -72,7 +72,8 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 ## Publier une version
 
 ```bash
-bun tauri build   # local : target/release/bundle/nsis/Scribe_<version>_x64-setup.exe (et un .msi)
+# Les bundles de mise à jour sont signés : la clé privée et son mot de passe sont lus dans ~/.tauri.
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/scribe.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/scribe.key.password)"   bun tauri build   # target/release/bundle/nsis/Scribe_<version>_x64-setup.exe (+ .sig), et un .msi
 ```
 
 Pour une release GitHub : monter la version dans `src-tauri/tauri.conf.json`, `package.json` et les `Cargo.toml`,
@@ -80,6 +81,12 @@ puis pousser un tag `v<version>` (`git tag v0.2.0 && git push origin v0.2.0`). L
 `.github/workflows/release.yml` vérifie que le tag correspond à la version, construit les installeurs et les joint à
 une release en brouillon, à publier à la main. Les installeurs ne sont pas signés : au premier lancement, Windows
 SmartScreen demande « Informations complémentaires » puis « Exécuter quand même ».
+
+Mises à jour : la release publiée contient `latest.json`. Les versions installées le consultent 30 s après leur
+lancement (un toast annonce une nouvelle version) et depuis Réglages > Mises à jour, qui l'installe et redémarre
+Scribe. Chaque mise à jour est vérifiée avec la clé publique de `tauri.conf.json` ; la clé privée et son mot de
+passe sont les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. Les perdre
+empêche toute mise à jour des versions installées : gardez-en une copie.
 
 ## Licence
 

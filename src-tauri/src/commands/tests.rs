@@ -223,6 +223,21 @@ fn autostart_is_read_and_switched() {
 }
 
 #[test]
+fn update_commands_check_and_install() {
+    let f = Fixture::new();
+    *f.updater.available.lock().unwrap() =
+        Some(crate::services::AvailableUpdate { version: "0.2.0".into(), notes: None });
+    with_state(&f, |s| {
+        let st = tauri::async_runtime::block_on(check_update(s.clone())).unwrap();
+        assert_eq!((st.current.as_str(), st.available.map(|u| u.version)), ("0.1.0", Some("0.2.0".into())));
+        tauri::async_runtime::block_on(install_update(s.clone())).unwrap();
+        *f.updater.fail.lock().unwrap() = Some("signature invalide".into());
+        assert_eq!(tauri::async_runtime::block_on(install_update(s)), Err("signature invalide".into()));
+    });
+    assert_eq!(*f.updater.installs.lock().unwrap(), 1);
+}
+
+#[test]
 fn providers_lists_the_catalog() {
     assert_eq!(providers(), catalog::PROVIDERS.to_vec());
 }

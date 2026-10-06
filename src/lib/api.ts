@@ -92,6 +92,11 @@ type Result<T> = { Ok: T } | { Err: string };
 /** Each call's duration in ms or its error; `llm` is null at the raw level (no correction tested). */
 export interface ProviderTest { stt: Result<number>; llm: Result<number> | null }
 
+export interface UpdateStatus {
+  current: string;
+  available: { version: string; notes: string | null } | null;
+}
+
 export const api = {
   listDictations: (query: string | null, limit = 50, offset = 0) =>
     invoke<Dictation[]>("list_dictations", { query, limit, offset }),
@@ -114,6 +119,9 @@ export const api = {
   cancelCapture: () => invoke<void>("cancel_capture"),
   providers: () => invoke<Provider[]>("providers"),
   getAutostart: () => invoke<boolean>("get_autostart"),
+  checkUpdate: () => invoke<UpdateStatus>("check_update"),
+  /** Installs the latest version and restarts Scribe. */
+  installUpdate: () => invoke<void>("install_update"),
   /** Returns the state actually in place afterwards. */
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),

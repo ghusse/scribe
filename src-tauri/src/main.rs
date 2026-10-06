@@ -13,6 +13,7 @@ mod settings;
 #[cfg(test)]
 mod testing;
 mod tray;
+mod update;
 
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
@@ -21,7 +22,7 @@ use tauri::{Manager, WindowEvent};
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
-use crate::adapters::{CpalRecorder, TauriAutostart, TauriOverlayWindow, TauriUi};
+use crate::adapters::{CpalRecorder, TauriAutostart, TauriOverlayWindow, TauriUi, TauriUpdater};
 use crate::controller::{ControllerDeps, ControllerMsg};
 use crate::overlay::{Overlay, ToastLevel};
 use crate::secrets::{KeyringStore, SecretStore};
@@ -43,6 +44,7 @@ fn main() {
                 adapters::show_main(app);
             }
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Launch at login starts in the tray (see bootstrap::shows_main_at_launch).
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -71,6 +73,7 @@ fn main() {
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
                 autostart: Arc::new(TauriAutostart(app.handle().clone())),
+                updater: Arc::new(TauriUpdater(app.handle().clone())),
                 key_capture: KeyCapture::new(hook_cfg.clone()),
                 ctrl_tx: Mutex::new(tx.clone()),
             });
@@ -105,6 +108,11 @@ fn main() {
                 spawn_processing: Box::new(controller::spawn_processing),
                 is_pressed: Arc::new(scribe_platform::is_key_pressed),
             };
+            let update_svc = svc.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(update::STARTUP_CHECK_DELAY).await;
+                update::check_at_startup(update_svc).await;
+            });
             controller::spawn(svc, rx, tx, deps);
             if bootstrap::shows_main_at_launch(needs_setup, std::env::args()) {
                 adapters::show_main(app.handle());
@@ -138,6 +146,8 @@ fn main() {
             commands::cancel_capture,
             commands::get_autostart,
             commands::set_autostart,
+            commands::check_update,
+            commands::install_update,
             commands::providers,
             commands::overlay_dismiss,
             commands::open_history,
