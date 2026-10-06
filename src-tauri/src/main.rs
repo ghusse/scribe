@@ -59,6 +59,8 @@ fn main() {
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
             let secret_store: Arc<dyn SecretStore> = Arc::new(KeyringStore::system());
             let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
+            let permissions = scribe_platform::permissions();
+            let missing_permissions = scribe_core::permissions::any_missing(&permissions.status());
             let svc = Arc::new(Services {
                 db: Mutex::new(db),
                 settings: RwLock::new(settings),
@@ -73,6 +75,7 @@ fn main() {
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
                 autostart: Arc::new(TauriAutostart(app.handle().clone())),
+                permissions,
                 updater: Arc::new(TauriUpdater(app.handle().clone())),
                 key_capture: KeyCapture::new(hook_cfg.clone()),
                 ctrl_tx: Mutex::new(tx.clone()),
@@ -115,7 +118,7 @@ fn main() {
                 update::check_at_startup(update_svc).await;
             });
             controller::spawn(svc, rx, tx, deps);
-            if bootstrap::shows_main_at_launch(needs_setup, std::env::args()) {
+            if bootstrap::shows_main_at_launch(needs_setup || missing_permissions, std::env::args()) {
                 adapters::show_main(app.handle());
             }
             Ok(())
@@ -146,6 +149,9 @@ fn main() {
             commands::capture_key,
             commands::cancel_capture,
             commands::get_autostart,
+            commands::permissions,
+            commands::request_permission,
+            commands::open_permission_settings,
             commands::set_autostart,
             commands::check_update,
             commands::install_update,

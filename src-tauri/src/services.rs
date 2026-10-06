@@ -9,6 +9,7 @@ use scribe_core::focus::FocusDetector;
 use scribe_core::insert::{Clipboard, FieldReader, KeySender};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
+use scribe_core::permissions::SystemPermissions;
 use scribe_platform::{HookConfig, RawKey};
 
 use crate::controller::ControllerMsg;
@@ -88,6 +89,8 @@ pub struct Services {
     pub overlay: Overlay,
     pub ui: Arc<dyn UiSink>,
     pub autostart: Arc<dyn LaunchAtLogin>,
+    /// OS permissions (macOS privacy settings), shown with how to grant them.
+    pub permissions: Arc<dyn SystemPermissions>,
     pub updater: Arc<dyn AppUpdater>,
     /// Set while the settings UI waits for the user to press the new hotkey.
     pub key_capture: KeyCapture,

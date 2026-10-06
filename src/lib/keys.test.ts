@@ -14,6 +14,15 @@ describe("keyName", () => {
     expect(keyName(0x87)).toBe("F24");
   });
 
+  it("names Command and Option on macOS", () => {
+    expect(keyName(0x5c, "mac")).toBe("Cmd droit");
+    expect(keyName(0x5b, "mac")).toBe("Cmd gauche");
+    expect(keyName(0xa5, "mac")).toBe("Option droite");
+    expect(keyName(0xa3, "mac")).toBe("Ctrl droit");
+    expect(keyName(0x41, "mac")).toBe("A");
+    expect(keyName(0x5c, "windows")).toBe("Windows droite");
+  });
+
   it("falls back to the hex code just outside each range", () => {
     expect(keyName(0x2f)).toBe("Touche 0x2F");
     expect(keyName(0x3a)).toBe("Touche 0x3A");
@@ -37,6 +46,13 @@ describe("combinations", () => {
     expect(chordName([0x41, 0x70])).toBe("A + F1");
   });
 
+  it("names macOS modifiers in a combination", () => {
+    expect(chordName([0xa2, 0xa0, 0xa4, 0x5b], "mac")).toBe("Ctrl + Maj + Option + Cmd");
+    expect(chordName([0x5b, 0x41], "mac")).toBe("Cmd + A");
+    expect(chordName([0x5c], "mac")).toBe("Cmd droit");
+    expect(chordName([0xa4, 0x5b], "windows")).toBe("Alt + Win");
+  });
+
   it("matches modifiers on either side only inside a combination", () => {
     expect(chordContains([0xa3], 0xa3)).toBe(true);
     expect(chordContains([0xa3], 0xa2)).toBe(false);
@@ -58,5 +74,10 @@ describe("combinations", () => {
     expect(reservedWarning([0x4c])).toBeNull();
     expect(reservedWarning([0xa4, 0x41])).toBeNull();
     expect(reservedWarning([0xa3])).toBeNull();
+  });
+
+  it("flags nothing on macOS", () => {
+    expect(reservedWarning([0x5b, 0x4c], "mac")).toBeNull();
+    expect(reservedWarning([0xa2, 0xa1], "mac")).toBeNull();
   });
 });

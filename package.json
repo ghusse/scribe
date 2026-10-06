@@ -12,7 +12,7 @@
     "tauri": "bun --bun node_modules/@tauri-apps/cli/tauri.js",
     "test": "bun --bun vitest run",
     "coverage:ui": "bun --bun vitest run --coverage",
-    "coverage:rust": "cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex \"crates.scribe-platform.src.windows.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs\"",
+    "coverage:rust": "cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex \"crates.scribe-platform.src.windows.|crates.scribe-platform.src.macos.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs\"",
     "coverage": "bun run coverage:ui && bun run coverage:rust"
   },
   "devDependencies": {

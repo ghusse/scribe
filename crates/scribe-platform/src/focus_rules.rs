@@ -1,4 +1,5 @@
-//! Pure classification of UI Automation facts, kept OS-independent so it is unit-testable everywhere.
+//! Pure classification of accessibility facts (UI Automation on Windows, AX on macOS), kept OS-independent so
+//! it is unit-testable everywhere.
 use scribe_core::focus::FocusState;
 
 pub const BUTTON: i32 = 50000;
@@ -48,6 +49,37 @@ pub fn classify(f: &UiaFacts) -> FocusState {
         Some(ct) if NAVIGATION.contains(&ct) => FocusState::NotEditable,
         _ => FocusState::Unknown,
     }
+}
+
+/// What the macOS accessibility API says about the focused element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AxFacts {
+    pub role: String,
+    pub subrole: String,
+    /// Whether its `AXValue` can be set (`None`: unknown).
+    pub value_settable: Option<bool>,
+}
+
+const AX_TEXT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox"];
+const AX_NAVIGATION: &[&str] = &[
+    "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXMenuItem", "AXList", "AXRow",
+    "AXCell", "AXTable", "AXOutline", "AXTabGroup", "AXLink", "AXImage", "AXSlider",
+];
+pub const AX_SECURE_TEXT_FIELD: &str = "AXSecureTextField";
+
+/// Terminals expose their text area as a read-only `AXTextArea` yet take pasted text: a text role whose value
+/// is not settable stays unknown (pasted, then checked), never « not editable ».
+pub fn classify_ax(f: &AxFacts) -> FocusState {
+    if f.subrole == AX_SECURE_TEXT_FIELD {
+        return FocusState::Editable;
+    }
+    if AX_TEXT_ROLES.contains(&f.role.as_str()) || f.value_settable == Some(true) {
+        return if f.value_settable == Some(false) { FocusState::Unknown } else { FocusState::Editable };
+    }
+    if AX_NAVIGATION.contains(&f.role.as_str()) {
+        return FocusState::NotEditable;
+    }
+    FocusState::Unknown
 }
 
 /// Text of a UTF-16 buffer filled by a Win32 call that returned `len` (negative or too large = clamped).
@@ -116,6 +148,35 @@ mod tests {
         assert_eq!(classify(&facts("CASCADIA_HOSTING_WINDOW_CLASS", Some(PANE), None)), FocusState::Unknown);
         assert_eq!(classify(&facts("X", None, None)), FocusState::Unknown);
         assert_eq!(classify(&facts("X", Some(COMBO_BOX), Some(false))), FocusState::Editable);
+    }
+
+    fn ax(role: &str, subrole: &str, settable: Option<bool>) -> AxFacts {
+        AxFacts { role: role.into(), subrole: subrole.into(), value_settable: settable }
+    }
+
+    #[test]
+    fn ax_text_fields_are_editable() {
+        assert_eq!(classify_ax(&ax("AXTextField", "", Some(true))), FocusState::Editable);
+        assert_eq!(classify_ax(&ax("AXTextArea", "", None)), FocusState::Editable);
+        assert_eq!(classify_ax(&ax("AXComboBox", "", Some(true))), FocusState::Editable);
+        assert_eq!(classify_ax(&ax("AXTextField", "AXSecureTextField", Some(false))), FocusState::Editable, "password");
+        assert_eq!(classify_ax(&ax("AXWebArea", "", Some(true))), FocusState::Editable, "any settable value");
+    }
+
+    #[test]
+    fn ax_read_only_text_stays_unknown() {
+        // Terminal.app and iTerm2: an AXTextArea whose value cannot be set.
+        assert_eq!(classify_ax(&ax("AXTextArea", "", Some(false))), FocusState::Unknown);
+    }
+
+    #[test]
+    fn ax_navigation_is_not_editable_and_the_rest_is_unknown() {
+        assert_eq!(classify_ax(&ax("AXButton", "", Some(false))), FocusState::NotEditable);
+        assert_eq!(classify_ax(&ax("AXList", "", None)), FocusState::NotEditable);
+        assert_eq!(classify_ax(&ax("AXRow", "AXOutlineRow", None)), FocusState::NotEditable);
+        assert_eq!(classify_ax(&ax("AXWebArea", "", None)), FocusState::Unknown);
+        assert_eq!(classify_ax(&ax("AXGroup", "", Some(false))), FocusState::Unknown);
+        assert_eq!(classify_ax(&ax("", "", None)), FocusState::Unknown);
     }
 
     #[test]

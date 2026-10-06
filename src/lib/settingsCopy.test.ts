@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { effortLabel, LEVEL_OPTIONS } from "./settingsCopy";
+import { effortLabel, keysHelp, LEVEL_OPTIONS } from "./settingsCopy";
 
 describe("effortLabel", () => {
   it("translates the known levels and keeps unknown ones", () => {
@@ -11,5 +11,12 @@ describe("effortLabel", () => {
 describe("LEVEL_OPTIONS", () => {
   it("covers every level once", () => {
     expect(LEVEL_OPTIONS.map((o) => o.value)).toEqual(["raw", "clean", "formatted"]);
+  });
+});
+
+describe("keysHelp", () => {
+  it("names the OS secret store", () => {
+    expect(keysHelp("mac")).toMatch(/^Stockées dans le trousseau macOS\./);
+    expect(keysHelp("windows")).toMatch(/^Stockées dans le coffre Windows\./);
   });
 });

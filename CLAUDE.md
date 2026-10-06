@@ -32,7 +32,7 @@ there as plain functions.
 
 ## Exclusion policy
 
-Excluding a file is allowed **only** for thin OS/framework adapters with no decision logic (raw Windows FFI,
+Excluding a file is allowed **only** for thin OS/framework adapters with no decision logic (raw Windows/macOS FFI,
 device/clipboard glue, Tauri bootstrap, UI entry files). Any logic in such a file must first be extracted into a
 tested module. Every exclusion is listed below and must match the tooling **exactly**.
 `tests/coverage-policy.test.ts` (run by `bun run test`) fails when the lines below and the tooling disagree: the
@@ -41,9 +41,12 @@ thresholds, and the two CI coverage steps.
 
 - Threshold (lines, every language): `95`
 - Rust ignore regex (`package.json` > `coverage:rust`):
-  `crates.scribe-platform.src.windows.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
+  `crates.scribe-platform.src.windows.|crates.scribe-platform.src.macos.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
 - Rust files excluded by that regex: `crates/scribe-platform/src/device/clipboard.rs`,
+  `crates/scribe-platform/src/macos/focus.rs`, `crates/scribe-platform/src/macos/hook.rs`,
+  `crates/scribe-platform/src/macos/keys.rs`, `crates/scribe-platform/src/macos/mod.rs`,
+  `crates/scribe-platform/src/macos/permissions.rs`, `crates/scribe-platform/src/macos/window.rs`,
   `crates/scribe-platform/src/device/microphone.rs`, `crates/scribe-platform/src/device/mod.rs`,
   `crates/scribe-platform/src/windows/focus.rs`,
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
@@ -56,10 +59,11 @@ thresholds, and the two CI coverage steps.
 | Excluded | Why |
 |---|---|
 | `crates/scribe-platform/src/windows/` (`focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation); needs a live desktop session. `mod.rs` re-exports the Windows entry points (`lib.rs` re-exports them, or `fallback.rs` off Windows). |
+| `crates/scribe-platform/src/macos/` (`focus.rs`, `hook.rs`, `keys.rs`, `permissions.rs`, `window.rs`, `mod.rs`) | Raw macOS FFI (`CGEventTap`, `CGEventPost`, AX API, AVFoundation authorization, `NSPanel`); needs a live desktop session and the Accessibility permission. Compiled on macOS only, so the Windows CI never sees it. |
 | `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
-| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
+| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/AppKit/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
 | `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
@@ -70,6 +74,18 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   rules in `scribe_core::chord`).
   Remaining branches: `code == HC_ACTION`, hook not started (`SHARED` empty), inject the mask / forward /
   swallow per the filter's decision.
+- `macos/hook.rs::tap_proc` turns the `CGEvent` into (virtual-key code, down) with `mac_keys::KeyMap` (Command
+  = Win group, Option = Alt group, letters per layout, key-up given its key-down's code, Fn/Caps Lock ignored)
+  and calls `KeyFilter` like Windows (the menu mask is not applied). Remaining branches: the event-type `match`
+  (tap re-enabled when macOS disables it), our own events (`INJECTED_MARK`) passed through, swallow / forward,
+  and the wait for the Accessibility permission before the tap is created (stopped early when the handle drops).
+- `macos/permissions.rs`: `SystemPermissions` on AX/AVFoundation; what the UI offers per state is
+  `src/lib/permissions.ts::permissionActions`, the « open the window at launch » rule `permissions::any_missing`.
+  Remaining branches: the AVFoundation status `match` and the `open` command result.
+- `macos/focus.rs`: classification is `focus_rules::classify_ax`, the app name `focus_rules::process_stem`.
+  Remaining branches: AX error / downcast `?`s and the secure-field guard of `AxFieldReader`.
+- `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit calls and re-exports only. Overlay
+  `show`/`hide` post to the main queue (`DispatchQueue::main().exec_async`), never wait (same rule as Windows).
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`
   only reads the focused field (text pattern, else value; never a password field); whether a paste landed is
@@ -87,12 +103,12 @@ What is left in excluded files is wiring only; every decision lives in a tested 
 - `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
   `match` and the left-click filter.
 - `adapters.rs`: overlay state/dismiss rules are `overlay::Overlay`, placement is `overlay::overlay_position`, the
-  level throttle is `controller::level_emitter`. Remaining branches: cached HWND `Some` (Win32 show/hide) / `None`
-  (webview show/hide) and the `if let Some(window)` guards. `TauriOverlayWindow` methods run with the `Overlay`
+  level throttle is `controller::level_emitter`. Remaining branches: cached native window `Some` (Win32/AppKit
+  show/hide) / `None` (webview show/hide), the per-OS `raw_window` `cfg`s and the `if let Some(window)` guards. `TauriOverlayWindow` methods run with the `Overlay`
   lock held, from any thread, while the overlay window belongs to the main thread: they must never wait on
-  another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. The HWND
-  is therefore resolved once in `TauriOverlayWindow::new` on the main thread (`WebviewWindow::hwnd()` is a
-  blocking event-loop round-trip in tauri-runtime-wry), never in `show`/`hide`. Commands
+  another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. The native
+  window is therefore resolved once in `TauriOverlayWindow::new` on the main thread (`WebviewWindow::hwnd()` and
+  `ns_window()` are blocking event-loop round-trips in tauri-runtime-wry), never in `show`/`hide`. Commands
   that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),

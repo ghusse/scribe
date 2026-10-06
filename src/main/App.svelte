@@ -5,6 +5,7 @@
   import { needsSetup } from "../lib/apiKeys";
   import { needsAttention, type SaveState } from "../lib/autosave";
   import History from "./History.svelte";
+  import Permissions from "./Permissions.svelte";
   import Glossary from "./Glossary.svelte";
   import Settings from "./Settings.svelte";
 
@@ -47,6 +48,7 @@
   {/each}
 </nav>
 <main>
+  <Permissions />
   {#if tab === "history"}<History focus={focusRequest} onfocused={() => (focusRequest = null)} />{:else if tab === "glossary"}<Glossary />{/if}
   <div hidden={tab !== "settings"}><Settings active={tab === "settings"} bind:status={settingsStatus} /></div>
 </main>

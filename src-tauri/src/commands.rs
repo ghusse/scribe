@@ -7,6 +7,7 @@ use tauri::State;
 
 use scribe_core::audio::{self, AudioClip, TARGET_RATE};
 use scribe_core::model::{Dictation, Level, Term, TermSource};
+use scribe_core::permissions::{Permission, PermissionStatus};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_providers::catalog::{self, Provider};
 
@@ -158,6 +159,23 @@ pub fn get_autostart(svc: Svc<'_>) -> Result<bool, String> {
 pub fn set_autostart(svc: Svc<'_>, enabled: bool) -> Result<bool, String> {
     svc.autostart.set_enabled(enabled)?;
     svc.autostart.is_enabled()
+}
+
+#[tauri::command]
+pub fn permissions(svc: Svc<'_>) -> Vec<PermissionStatus> {
+    svc.permissions.status()
+}
+
+/// Shows the OS prompt when it still can; returns the states afterwards (the prompt answers later: read again).
+#[tauri::command]
+pub fn request_permission(svc: Svc<'_>, permission: Permission) -> Vec<PermissionStatus> {
+    svc.permissions.request(permission);
+    svc.permissions.status()
+}
+
+#[tauri::command]
+pub fn open_permission_settings(svc: Svc<'_>, permission: Permission) -> Result<(), String> {
+    svc.permissions.open_settings(permission)
 }
 
 #[tauri::command]

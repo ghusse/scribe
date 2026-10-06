@@ -1,6 +1,6 @@
 # Scribe
 
-Dictée vocale pour Windows (macOS à venir) : maintenez une touche, parlez, le texte corrigé
+Dictée vocale pour Windows et macOS : maintenez une touche, parlez, le texte corrigé
 s'insère dans le champ actif.
 
 ## Lancer en développement
@@ -69,6 +69,22 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 - [ ] Ajouter « Kubernetes » au glossaire, dicter « cube ernetes » : orthographe corrigée, compteur d'usages incrémenté.
 - [ ] Tray : Pause désactive le raccourci ; Quitter ferme l'app ; fermer la fenêtre la masque seulement.
 
+## Checklist manuelle (macOS)
+
+- [ ] Premier lancement : la fenêtre s'ouvre sur le panneau des autorisations ; après « Autoriser » et activation
+  dans Réglages Système, le panneau disparaît et « Cmd droit » dicte sans relancer.
+- [ ] Nouvelle build avec Scribe déjà coché : le panneau reste affiché ; « Autoriser » puis réactiver suffit.
+- [ ] Micro : « Autoriser » affiche la demande de macOS ; refusé, « Ouvrir les Réglages Système » mène au bon panneau.
+- [ ] TextEdit, Notes, Safari, Chrome, VS Code, Slack : texte inséré.
+- [ ] Terminal, iTerm2 : texte collé.
+- [ ] Finder sans champ : toast « Texte copié », Cmd+V colle le texte.
+- [ ] La pastille s'affiche par-dessus une app en plein écran et ne prend jamais le focus (clic dessus compris).
+- [ ] Double-tap : pastille « Verrouillé », Espace ne parvient pas à l'application.
+- [ ] AZERTY : raccourci `Cmd + A` affiché « Cmd + A » et déclenché par la touche A ; Cmd+A seul sélectionne toujours tout.
+- [ ] Pendant « Changer », Cmd/Option/lettres n'ont aucun effet ; Échap annule.
+- [ ] Pas d'icône dans le Dock ; l'icône de la barre de menus ouvre Scribe.
+- [ ] Clés API dans le trousseau : relancer Scribe ne les redemande pas.
+
 ## Publier une version
 
 ```bash
@@ -79,8 +95,9 @@ TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/scribe.key)" TAURI_SIGNING_PRIVATE_KEY
 Pour une release GitHub : monter la version dans `src-tauri/tauri.conf.json`, `package.json` et les `Cargo.toml`,
 puis pousser un tag `v<version>` (`git tag v0.2.0 && git push origin v0.2.0`). Le workflow
 `.github/workflows/release.yml` vérifie que le tag correspond à la version, construit les installeurs et les joint à
-une release en brouillon, à publier à la main. Les installeurs ne sont pas signés : au premier lancement, Windows
-SmartScreen demande « Informations complémentaires » puis « Exécuter quand même ».
+une release en brouillon, à publier à la main (installeurs Windows, puis `.dmg` macOS universel). Les installeurs ne
+sont pas signés : au premier lancement, Windows SmartScreen demande « Informations complémentaires » puis « Exécuter
+quand même » ; macOS demande un clic droit sur Scribe > Ouvrir.
 
 Mises à jour : la release publiée contient `latest.json`. Les versions installées le consultent 30 s après leur
 lancement (un toast annonce une nouvelle version) et depuis Réglages > Mises à jour, qui l'installe et redémarre
@@ -97,6 +114,11 @@ presse-papier, champ actif) sont détaillés dans [PRIVACY.md](PRIVACY.md).
 Les installeurs ne sont pas signés (Authenticode) : à la première installation, SmartScreen affiche « Windows a
 protégé votre ordinateur », cliquez sur « Informations complémentaires » puis « Exécuter quand même ». Les mises à
 jour, téléchargées par Scribe lui-même, ne déclenchent pas cet avertissement.
+
+Sur macOS, l'app est signée ad hoc mais pas notarisée : au premier lancement, clic droit sur Scribe > Ouvrir. Scribe
+demande ensuite l'accès Accessibilité (raccourci global, collage, lecture du champ actif) puis le micro. La signature
+ad hoc change à chaque version : après une mise à jour, l'autorisation Accessibilité ne vaut plus même si Scribe
+reste coché. La fenêtre de Scribe le signale ; « Autoriser » remet l'autorisation à zéro, il suffit de réactiver Scribe.
 
 ## Licence
 
