@@ -8,7 +8,7 @@
     "dev": "bun --bun vite",
     "build": "bun --bun vite build",
     "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "bun --bun tauri",
+    "tauri": "bun --bun node_modules/@tauri-apps/cli/tauri.js",
     "test": "bun --bun vitest run",
     "coverage:ui": "bun --bun vitest run --coverage",
     "coverage:rust": "cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex \"crates.scribe-platform.src.windows.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs\"",
