@@ -3,7 +3,8 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindowAsync, GWL_EXSTYLE, HWND_TOPMOST,
-    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOWNOACTIVATE,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 
@@ -18,6 +19,18 @@ pub fn prepare_overlay(raw: isize) {
         let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
         let flags = (WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0) as isize;
         SetWindowLongPtrW(h, GWL_EXSTYLE, ex | flags);
+        // A style change only takes effect on the frame after SWP_FRAMECHANGED. Without it the overlay keeps the
+        // frame computed at creation: a tool-window title bar and borders around the transparent pill. Called once
+        // at setup on the main thread, which owns the window, so the synchronous call cannot deadlock.
+        let _ = SetWindowPos(
+            h,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
     }
 }
 
