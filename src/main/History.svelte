@@ -2,7 +2,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { onMount, tick, untrack } from "svelte";
   import { api, type Dictation } from "../lib/api";
-  import { canCopy, canRetranscribe, displayText, editDraft, editPayload, latestOnly, OUTCOME_BADGES, STALE, timingLine } from "../lib/history";
+  import { canCopy, canRetranscribe, COPY_FEEDBACK_MS, displayText, editDraft, editPayload, latestOnly, OUTCOME_BADGES, STALE, timingLine } from "../lib/history";
 
   let { focus = null, onfocused }: { focus?: { id: number } | null; onfocused?: () => void } = $props();
 
@@ -17,7 +17,10 @@
   let confirmDelete = $state<number | null>(null);
   let busy = $state<number | null>(null);
   let highlighted = $state<number | null>(null);
+  /** The card whose text was just copied: its button reads « ✓ Copié » and the card flashes. */
+  let copied = $state<number | null>(null);
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Search results can come back out of order: only the latest request's page is shown.
   const latest = latestOnly();
@@ -53,6 +56,16 @@
     }
   }
 
+  async function copy(id: number) {
+    if (!(await run(id, () => api.copyDictation(id)))) return;
+    clearTimeout(copiedTimer);
+    // Off then on again, so copying the same card twice replays the flash.
+    copied = null;
+    await tick();
+    copied = id;
+    copiedTimer = setTimeout(() => (copied = null), COPY_FEEDBACK_MS);
+  }
+
   function startEdit(d: Dictation) {
     editing = d.id;
     draft = editDraft(d);
@@ -86,6 +99,7 @@
     const unChanged = listen("history-changed", () => load(true));
     return () => {
       clearTimeout(searchTimer);
+      clearTimeout(copiedTimer);
       unChanged.then((f) => f());
     };
   });
@@ -93,12 +107,13 @@
 
 <input class="search" placeholder="Rechercher dans l'historique…" bind:value={query} oninput={onSearch} />
 {#if error}<p class="error">{error}</p>{/if}
+<p class="sr-only" aria-live="polite">{copied !== null ? "Texte copié" : ""}</p>
 {#if items.length === 0}
   <p class="muted">Aucune dictée. Maintenez la touche de déclenchement et parlez.</p>
 {/if}
 
 {#each items as d (d.id)}
-  <article id="d-{d.id}" class:highlighted={highlighted === d.id}>
+  <article id="d-{d.id}" class:highlighted={highlighted === d.id} class:just-copied={copied === d.id}>
     <header>
       <span class="badge {d.outcome}">{OUTCOME_BADGES[d.outcome]}</span>
       <span class="muted">{new Date(d.created_at).toLocaleString("fr-FR")}</span>
@@ -129,7 +144,9 @@
     {/if}
 
     <div class="row">
-      <button onclick={() => run(d.id, () => api.copyDictation(d.id))} disabled={!canCopy(d)}>Copier</button>
+      <button class="copy" class:copied={copied === d.id} onclick={() => copy(d.id)} disabled={!canCopy(d)}>
+        {copied === d.id ? "✓ Copié" : "Copier"}
+      </button>
       <button onclick={() => startEdit(d)} disabled={!canCopy(d)}>Corriger</button>
       <button onclick={() => run(d.id, () => api.retranscribe(d.id))} disabled={!canRetranscribe(d, busy)}>
         {busy === d.id ? "…" : "Retranscrire"}
@@ -147,9 +164,25 @@
 {#if hasMore}<button onclick={() => load(false)}>Plus</button>{/if}
 
 <style>
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .search { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
   article { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
   article.highlighted { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  article.just-copied { animation: copied-flash 0.9s ease-out; }
+  @keyframes copied-flash {
+    0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.55); border-color: #16a34a; }
+    100% { box-shadow: 0 0 0 10px rgba(22, 163, 74, 0); }
+  }
+  button.copy { min-width: 6.5em; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
+  button.copy.copied { background: #dcfce7; color: #166534; border-color: #16a34a; animation: copied-pop 0.25s ease-out; }
+  @keyframes copied-pop {
+    0% { transform: scale(0.92); }
+    60% { transform: scale(1.06); }
+    100% { transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    article.just-copied, button.copy.copied { animation: none; }
+  }
   header { display: flex; gap: 8px; align-items: center; font-size: 13px; flex-wrap: wrap; }
   .right { margin-left: auto; }
   .muted { color: var(--muted); }

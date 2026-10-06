@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import type { Dictation } from "../lib/api";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
+import { COPY_FEEDBACK_MS } from "../lib/history";
 import History from "./History.svelte";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
@@ -137,16 +138,42 @@ describe("History", () => {
     expect(within(card(1)).queryByRole("textbox")).toBeNull();
   });
 
-  it("copies a dictation and reports a failure", async () => {
+  it("copies a dictation, confirms it on the button and the card, then goes back to « Copier »", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await mount();
+      await fireEvent.click(button(1, "Copier"));
+      expect(calls("copy_dictation")).toEqual([{ id: 1 }]);
+      await waitFor(() => expect(button(1, "✓ Copié").classList.contains("copied")).toBe(true));
+      expect(card(1).classList.contains("just-copied")).toBe(true);
+      expect(card(2).classList.contains("just-copied")).toBe(false);
+      expect(screen.getByText("Texte copié").getAttribute("aria-live")).toBe("polite");
+      // Copying again restarts the confirmation instead of ending it with the first timer.
+      vi.advanceTimersByTime(COPY_FEEDBACK_MS - 100);
+      await fireEvent.click(button(1, "✓ Copié"));
+      await waitFor(() => expect(calls("copy_dictation")).toHaveLength(2));
+      vi.advanceTimersByTime(200);
+      await waitFor(() => expect(button(1, "✓ Copié")).toBeTruthy());
+      vi.advanceTimersByTime(COPY_FEEDBACK_MS);
+      await waitFor(() => expect(button(1, "Copier").classList.contains("copied")).toBe(false));
+      expect(card(1).classList.contains("just-copied")).toBe(false);
+      expect(screen.queryByText("Texte copié")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a failed copy without confirming it", async () => {
     await mount();
-    await fireEvent.click(button(1, "Copier"));
-    expect(calls("copy_dictation")).toEqual([{ id: 1 }]);
     commands({ copy_dictation: () => Promise.reject("presse-papier occupé") });
     await fireEvent.click(button(1, "Copier"));
     expect(await screen.findByText("presse-papier occupé")).toBeTruthy();
+    expect(button(1, "Copier")).toBeTruthy();
+    expect(card(1).classList.contains("just-copied")).toBe(false);
     commands({ copy_dictation: () => undefined });
     await fireEvent.click(button(1, "Copier"));
     await waitFor(() => expect(screen.queryByText("presse-papier occupé")).toBeNull());
+    await waitFor(() => expect(button(1, "✓ Copié")).toBeTruthy());
   });
 
   it("retranscribes, showing the card busy meanwhile", async () => {

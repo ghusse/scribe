@@ -24,6 +24,9 @@ export function canCopy(d: Pick<Dictation, "raw_text" | "final_text">): boolean 
   return !!d.raw_text || !!d.final_text;
 }
 
+/** How long « ✓ Copié » stays on a card's copy button. */
+export const COPY_FEEDBACK_MS = 1600;
+
 /** Retranscrire needs the kept audio, and no action already running on that card. */
 export function canRetranscribe(d: Pick<Dictation, "id" | "audio_path">, busy: number | null): boolean {
   return !!d.audio_path && busy !== d.id;
