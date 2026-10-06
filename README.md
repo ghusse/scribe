@@ -69,6 +69,18 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 - [ ] Ajouter « Kubernetes » au glossaire, dicter « cube ernetes » : orthographe corrigée, compteur d'usages incrémenté.
 - [ ] Tray : Pause désactive le raccourci ; Quitter ferme l'app ; fermer la fenêtre la masque seulement.
 
+## Publier une version
+
+```bash
+bun tauri build   # local : target/release/bundle/nsis/Scribe_<version>_x64-setup.exe (et un .msi)
+```
+
+Pour une release GitHub : monter la version dans `src-tauri/tauri.conf.json`, `package.json` et les `Cargo.toml`,
+puis pousser un tag `v<version>` (`git tag v0.2.0 && git push origin v0.2.0`). Le workflow
+`.github/workflows/release.yml` vérifie que le tag correspond à la version, construit les installeurs et les joint à
+une release en brouillon, à publier à la main. Les installeurs ne sont pas signés : au premier lancement, Windows
+SmartScreen demande « Informations complémentaires » puis « Exécuter quand même ».
+
 ## Licence
 
 Copyright (C) 2026 Guillaume Gautreau.
