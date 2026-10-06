@@ -52,7 +52,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "publisher": "Guillaume Gautreau",
+    "copyright": "Copyright (C) 2026 Guillaume Gautreau. AGPL-3.0-only.",
+    "shortDescription": "Dictée vocale : maintenez une touche, parlez, le texte s'insère."
   },
   "plugins": {
     "updater": {

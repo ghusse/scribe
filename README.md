@@ -88,6 +88,12 @@ Scribe. Chaque mise à jour est vérifiée avec la clé publique de `tauri.conf.
 passe sont les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. Les perdre
 empêche toute mise à jour des versions installées : gardez-en une copie.
 
+## Signature de code
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
+[SignPath Foundation](https://signpath.org/) (demande en cours). Ce qui est signé, par qui, et ce que Scribe envoie
+sur le réseau : [politique de signature et de confidentialité](CODE_SIGNING.md).
+
 ## Licence
 
 Copyright (C) 2026 Guillaume Gautreau.

@@ -53,7 +53,7 @@ jobs:
           tauriScript: bun tauri
           tagName: ${{ github.ref_name }}
           releaseName: Scribe ${{ github.ref_name }}
-          releaseBody: Installeur Windows (NSIS, recommandé) et MSI. Non signés pour l'instant.
+          releaseBody: "Installeur Windows (NSIS, recommandé) et MSI. Signature de code : voir https://github.com/ghusse/scribe/blob/main/CODE_SIGNING.md"
           releaseDraft: true
           # latest.json, read by the installed apps once the release is published, points to the NSIS installer.
           includeUpdaterJson: true
