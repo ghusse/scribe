@@ -1,38 +1,21 @@
-# Code signing policy
+# Privacy and release integrity
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
-[SignPath Foundation](https://signpath.org/).
+## Releases
 
-> Status: application in progress. Releases up to and including v0.1.1 are not Authenticode-signed; this page
-> will name the first signed release.
+Windows installers (`Scribe_<version>_x64-setup.exe`, recommended, and `Scribe_<version>_x64_en-US.msi`) are built
+from this repository's source code by the release workflow
+[`.github/workflows/release.yml`](.github/workflows/release.yml) on GitHub-hosted runners, from a `vX.Y.Z` tag.
+Third-party libraries are compiled from their published sources (Cargo and bun lock files are committed).
 
-## What is signed
+The installers are **not Authenticode-signed**. On first install, Windows SmartScreen shows "Windows protected your
+PC": click "More info", then "Run anyway". Updates are not affected: Scribe downloads them itself, so they do not
+carry the browser's download mark that triggers SmartScreen.
 
-Only binaries built from this repository's source code, by the release workflow
-[`.github/workflows/release.yml`](.github/workflows/release.yml) on GitHub-hosted runners, from a `vX.Y.Z` tag:
-
-- `scribe-app.exe`, the application;
-- `Scribe_<version>_x64-setup.exe` (NSIS installer) and `Scribe_<version>_x64_en-US.msi`.
-
-Third-party open source libraries are compiled into the application from their published sources (Cargo and npm
-lock files are committed). No binary built outside this workflow is ever submitted for signing.
-
-Independently of Authenticode, every update package is signed with the project's Tauri updater key (minisign).
-Installed copies of Scribe refuse an update whose signature does not match the public key embedded in
+Every update package is signed with the project's Tauri updater key (minisign). Installed copies of Scribe refuse
+an update whose signature does not match the public key embedded in
 [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json).
 
-## Team roles
-
-| Role | Members |
-|---|---|
-| Committers and reviewers | [Guillaume Gautreau (@ghusse)](https://github.com/ghusse) |
-| Approvers | [Guillaume Gautreau (@ghusse)](https://github.com/ghusse) |
-
-Committers may change the source code without further review. Every change from anyone else goes through a pull
-request reviewed by a committer. Approvers authorize each signing request in SignPath, release by release.
-All members use multi-factor authentication on GitHub and on SignPath.
-
-## Privacy policy
+## Privacy
 
 Scribe has no telemetry, no analytics and no account. It sends data over the network only in the cases below.
 
@@ -73,15 +56,7 @@ operating system's credential store (Windows Credential Manager), never in a fil
 
 The installers include an uninstaller (Windows Settings > Apps).
 
-## Verifying a signature
-
-Right-click the installer > Properties > Digital Signatures, or in PowerShell:
-
-```powershell
-Get-AuthenticodeSignature .\Scribe_<version>_x64-setup.exe | Format-List
-```
-
 ## Reporting a problem
 
-Report a suspicious binary or a signing issue in a [GitHub issue](https://github.com/ghusse/scribe/issues) (or
+Report a suspicious binary or a privacy issue in a [GitHub issue](https://github.com/ghusse/scribe/issues) (or
 privately through [GitHub security advisories](https://github.com/ghusse/scribe/security/advisories/new)).

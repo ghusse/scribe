@@ -88,11 +88,15 @@ Scribe. Chaque mise à jour est vérifiée avec la clé publique de `tauri.conf.
 passe sont les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. Les perdre
 empêche toute mise à jour des versions installées : gardez-en une copie.
 
-## Signature de code
+## Confidentialité et installation
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by
-[SignPath Foundation](https://signpath.org/) (demande en cours). Ce qui est signé, par qui, et ce que Scribe envoie
-sur le réseau : [politique de signature et de confidentialité](CODE_SIGNING.md).
+Pas de télémétrie ni de compte. Ce que Scribe envoie sur le réseau (l'audio et le texte des dictées aux fournisseurs
+choisis, la vérification des mises à jour sur GitHub) et les accès système qu'il utilise (hook clavier,
+presse-papier, champ actif) sont détaillés dans [PRIVACY.md](PRIVACY.md).
+
+Les installeurs ne sont pas signés (Authenticode) : à la première installation, SmartScreen affiche « Windows a
+protégé votre ordinateur », cliquez sur « Informations complémentaires » puis « Exécuter quand même ». Les mises à
+jour, téléchargées par Scribe lui-même, ne déclenchent pas cet avertissement.
 
 ## Licence
 
