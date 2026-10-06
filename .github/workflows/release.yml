@@ -53,8 +53,46 @@ jobs:
           tauriScript: bun tauri
           tagName: ${{ github.ref_name }}
           releaseName: Scribe ${{ github.ref_name }}
-          releaseBody: "Installeur Windows (NSIS, recommandé) et MSI. Non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
+          releaseBody: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
           releaseDraft: true
           # latest.json, read by the installed apps once the release is published, points to the NSIS installer.
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
+
+  # After the Windows job: it creates the draft release, this one adds the macOS bundles and its entries in latest.json.
+  macos:
+    needs: windows
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Ad-hoc signed (tauri.conf.json > bundle.macOS.signingIdentity "-"), not notarized: Gatekeeper asks once.
+      - name: Build and attach the macOS bundles
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: bun tauri
+          args: --target universal-apple-darwin
+          tagName: ${{ github.ref_name }}
+          releaseName: Scribe ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true

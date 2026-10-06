@@ -97,6 +97,11 @@ export interface UpdateStatus {
   available: { version: string; notes: string | null } | null;
 }
 
+export type Permission = "accessibility" | "microphone";
+export type PermissionState = "granted" | "not_determined" | "denied";
+/** An OS permission (macOS privacy settings); Windows reports none. */
+export interface PermissionStatus { permission: Permission; state: PermissionState }
+
 export const api = {
   listDictations: (query: string | null, limit = 50, offset = 0) =>
     invoke<Dictation[]>("list_dictations", { query, limit, offset }),
@@ -124,6 +129,10 @@ export const api = {
   installUpdate: () => invoke<void>("install_update"),
   /** Returns the state actually in place afterwards. */
   setAutostart: (enabled: boolean) => invoke<boolean>("set_autostart", { enabled }),
+  permissions: () => invoke<PermissionStatus[]>("permissions"),
+  /** Shows the OS prompt when it still can; returns the states right after (read again once answered). */
+  requestPermission: (permission: Permission) => invoke<PermissionStatus[]>("request_permission", { permission }),
+  openPermissionSettings: (permission: Permission) => invoke<void>("open_permission_settings", { permission }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
 };

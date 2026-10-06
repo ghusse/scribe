@@ -223,6 +223,25 @@ fn autostart_is_read_and_switched() {
 }
 
 #[test]
+fn permissions_are_read_requested_and_opened_in_the_settings() {
+    use scribe_core::permissions::PermissionState::{Granted, NotDetermined};
+    let f = Fixture::new();
+    let states = |v: Vec<PermissionStatus>| v.into_iter().map(|s| (s.permission, s.state)).collect::<Vec<_>>();
+    with_state(&f, |s| {
+        assert_eq!(states(permissions(s.clone())), [(Permission::Accessibility, NotDetermined), (Permission::Microphone, NotDetermined)]);
+        assert_eq!(
+            states(request_permission(s.clone(), Permission::Microphone)),
+            [(Permission::Accessibility, NotDetermined), (Permission::Microphone, Granted)],
+            "the states after the request"
+        );
+        assert_eq!(open_permission_settings(s.clone(), Permission::Accessibility), Ok(()));
+        *f.permissions.fail.lock().unwrap() = Some("open introuvable".into());
+        assert_eq!(open_permission_settings(s, Permission::Microphone), Err("open introuvable".into()));
+    });
+    assert_eq!(*f.permissions.opened.lock().unwrap(), [Permission::Accessibility]);
+}
+
+#[test]
 fn update_commands_check_and_install() {
     let f = Fixture::new();
     *f.updater.available.lock().unwrap() =

@@ -8,6 +8,9 @@ use scribe_core::model::Level;
 use scribe_core::pipeline::PipelineConfig;
 use scribe_providers::catalog;
 
+/// Ctrl droit on Windows; Cmd droit on macOS, where most keyboards have no right Control.
+pub const DEFAULT_TRIGGER: u32 = if cfg!(target_os = "macos") { 0x5C } else { 0xA3 };
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -40,7 +43,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            trigger_keys: vec![0xA3],
+            trigger_keys: vec![DEFAULT_TRIGGER],
             lock_vk: 0x20,
             gesture: GestureConfig::default(),
             level: Level::Formatted,
@@ -175,7 +178,7 @@ mod tests {
     #[test]
     fn defaults_match_global_constraints() {
         let s = Settings::default();
-        assert_eq!((s.trigger_keys.clone(), s.lock_vk), (vec![0xA3], 0x20));
+        assert_eq!((s.trigger_keys.clone(), s.lock_vk), (vec![DEFAULT_TRIGGER], 0x20));
         assert_eq!((s.stt_provider.as_str(), s.stt_model.as_str()), ("openai", "gpt-transcribe"));
         assert_eq!(s.llm_provider, "anthropic");
         assert_eq!((s.llm_model.as_str(), s.llm_effort.as_str()), ("claude-opus-5-5", "low"));
@@ -199,7 +202,7 @@ mod tests {
         std::fs::write(&path, r#"{"llm_model":"claude-haiku-4-5"}"#).unwrap();
         let s = Settings::load(&path);
         assert_eq!(s.llm_model, "claude-haiku-4-5");
-        assert_eq!(s.trigger_keys, vec![0xA3]);
+        assert_eq!(s.trigger_keys, vec![DEFAULT_TRIGGER]);
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());
         assert_eq!(Settings::load(&dir.path().join("absent.json")), Settings::default());
@@ -260,7 +263,7 @@ mod tests {
     fn validation_rejects_inconsistent_keys() {
         assert!(Settings::default().validate().is_ok());
         assert!(Settings { trigger_keys: vec![], ..Default::default() }.validate().is_err());
-        assert!(Settings { lock_vk: 0xA3, ..Default::default() }.validate().is_err());
+        assert!(Settings { lock_vk: DEFAULT_TRIGGER, ..Default::default() }.validate().is_err());
         assert_eq!(
             Settings { trigger_keys: vec![0xA2, 0x20], ..Default::default() }.validate(),
             Err("la touche de verrouillage ne peut pas faire partie du raccourci".into())

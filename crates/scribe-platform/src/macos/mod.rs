@@ -1,4 +1,4 @@
-//! Windows entry points, re-exported by `lib.rs`. Wiring only: each function hands over to one Win32 module.
+//! macOS entry points, re-exported by `lib.rs`. Wiring only: each function hands over to one module.
 use std::sync::Arc;
 
 use scribe_core::focus::FocusDetector;
@@ -8,6 +8,7 @@ use scribe_core::permissions::SystemPermissions;
 pub mod focus;
 pub mod hook;
 pub mod keys;
+pub mod permissions;
 pub mod window;
 
 pub use hook::{start as start_keyboard_hook, HookHandle};
@@ -15,18 +16,17 @@ pub use keys::is_key_pressed;
 pub use window::{hide_overlay, prepare_overlay, show_overlay};
 
 pub fn focus_detector() -> Arc<dyn FocusDetector> {
-    Arc::new(focus::UiaFocusDetector)
+    Arc::new(focus::AxFocusDetector)
 }
 
 pub fn key_sender() -> Arc<dyn KeySender> {
-    Arc::new(keys::WinKeySender)
+    Arc::new(keys::MacKeySender)
 }
 
 pub fn field_reader() -> Arc<dyn FieldReader> {
-    Arc::new(focus::UiaFieldReader)
+    Arc::new(focus::AxFieldReader)
 }
 
-/// Windows asks for no permission.
 pub fn permissions() -> Arc<dyn SystemPermissions> {
-    crate::fallback::permissions()
+    Arc::new(permissions::MacPermissions)
 }

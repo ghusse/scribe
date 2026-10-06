@@ -35,6 +35,9 @@ describe("api", () => {
     ["checkUpdate", () => api.checkUpdate(), "check_update", undefined],
     ["installUpdate", () => api.installUpdate(), "install_update", undefined],
     ["setAutostart", () => api.setAutostart(true), "set_autostart", { enabled: true }],
+    ["permissions", () => api.permissions(), "permissions", undefined],
+    ["requestPermission", () => api.requestPermission("microphone"), "request_permission", { permission: "microphone" }],
+    ["openPermissionSettings", () => api.openPermissionSettings("accessibility"), "open_permission_settings", { permission: "accessibility" }],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
   ];

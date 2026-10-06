@@ -8,7 +8,7 @@ license = "AGPL-3.0-only"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
@@ -27,4 +27,4 @@ tauri-plugin-updater = "2"
 [dev-dependencies]
 tempfile = "3"
 # Mock runtime: commands are tested with a real `State` (tauri::test::mock_app).
-tauri = { version = "2", features = ["tray-icon", "test"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "test"] }

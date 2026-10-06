@@ -13,7 +13,9 @@ use crate::overlay::OverlayEvent;
 use crate::settings::Settings;
 use crate::testing::{editable, Fixture, UiCall};
 
-const TRIGGER: u32 = 0xA3;
+const TRIGGER: u32 = crate::settings::DEFAULT_TRIGGER;
+/// The left key of TRIGGER's modifier group: Ctrl, or Command on macOS.
+const TRIGGER_SIDELESS: u32 = if cfg!(target_os = "macos") { 0x5B } else { 0xA2 };
 const LOCK: u32 = 0x20;
 
 #[derive(Default)]
@@ -389,7 +391,7 @@ fn a_pending_hotkey_capture_takes_every_key_until_the_combination_is_released() 
     assert_eq!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
     h.key(TRIGGER, false, 30);
     h.key(0x41, false, 40);
-    assert_eq!(rx.try_recv(), Ok(vec![0xA2, 0x41]), "Ctrl droit + A is stored as side-less Ctrl + A");
+    assert_eq!(rx.try_recv(), Ok(vec![TRIGGER_SIDELESS, 0x41]), "the right-hand trigger + A is stored side-less");
     assert!(!h.f.svc.key_capture.is_pending());
     assert_eq!(h.started(), 0, "the current trigger pressed during a capture records nothing");
     h.key(TRIGGER, true, 1_000);

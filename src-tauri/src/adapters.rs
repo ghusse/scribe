@@ -1,4 +1,4 @@
-//! Thin adapters from the app's seams to Tauri, Win32 and cpal. No decisions here: every rule lives
+//! Thin adapters from the app's seams to Tauri, Win32/AppKit and cpal. No decisions here: every rule lives
 //! in a tested module (`overlay::Overlay`, `overlay::overlay_position`, `controller`, ...).
 use scribe_core::audio::AudioClip;
 use scribe_platform::audio_capture::{self, LevelCallback, RecordingHandle};
@@ -87,33 +87,39 @@ impl UiSink for TauriUi {
     }
 }
 
-fn raw_hwnd(app: &AppHandle) -> Option<isize> {
+/// The overlay's native window: HWND on Windows, NSWindow on macOS.
+fn raw_window(app: &AppHandle) -> Option<isize> {
+    let window = app.get_webview_window(OVERLAY_WINDOW)?;
     #[cfg(windows)]
     {
-        app.get_webview_window(OVERLAY_WINDOW).and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize)
+        window.hwnd().ok().map(|h| h.0 as isize)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     {
-        let _ = app;
+        window.ns_window().ok().map(|w| w as isize)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = window;
         None
     }
 }
 
-/// The overlay webview, shown and hidden without activation through Win32 when available.
+/// The overlay webview, shown and hidden without activation through Win32/AppKit when available.
 ///
-/// The HWND is resolved once, at construction on the main thread: `WebviewWindow::hwnd()` is a
-/// synchronous round-trip to the event loop, and `show`/`hide` run with the `Overlay` lock held,
-/// so they must only post (Win32 calls or Tauri's fire-and-forget `show`/`hide`), never wait.
+/// The native window is resolved once, at construction on the main thread: `WebviewWindow::hwnd()` and
+/// `ns_window()` are synchronous round-trips to the event loop, and `show`/`hide` run with the `Overlay` lock
+/// held, so they must only post (platform calls or Tauri's fire-and-forget `show`/`hide`), never wait.
 pub struct TauriOverlayWindow {
     app: AppHandle,
-    hwnd: Option<isize>,
+    native: Option<isize>,
 }
 
 impl TauriOverlayWindow {
     /// Call on the main thread (the setup hook), after the overlay window exists.
     pub fn new(app: AppHandle) -> Self {
-        let hwnd = raw_hwnd(&app);
-        Self { app, hwnd }
+        let native = raw_window(&app);
+        Self { app, native }
     }
 }
 
@@ -122,7 +128,7 @@ impl OverlayWindow for TauriOverlayWindow {
         let _ = self.app.emit_to(OVERLAY_WINDOW, "overlay", ev);
     }
     fn show(&self) {
-        match self.hwnd {
+        match self.native {
             Some(h) => scribe_platform::show_overlay(h),
             None => {
                 if let Some(w) = self.app.get_webview_window(OVERLAY_WINDOW) {
@@ -132,7 +138,7 @@ impl OverlayWindow for TauriOverlayWindow {
         }
     }
     fn hide(&self) {
-        match self.hwnd {
+        match self.native {
             Some(h) => scribe_platform::hide_overlay(h),
             None => {
                 if let Some(w) = self.app.get_webview_window(OVERLAY_WINDOW) {
@@ -157,7 +163,7 @@ pub fn setup_overlay(app: &AppHandle) -> tauri::Result<()> {
         );
         win.set_position(PhysicalPosition::new(x, y))?;
     }
-    if let Some(h) = raw_hwnd(app) {
+    if let Some(h) = raw_window(app) {
         scribe_platform::prepare_overlay(h);
     }
     Ok(())

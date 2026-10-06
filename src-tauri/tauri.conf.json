@@ -35,12 +35,14 @@
         "skipTaskbar": true,
         "resizable": false,
         "focus": false,
-        "shadow": false
+        "shadow": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -55,7 +57,13 @@
     "createUpdaterArtifacts": true,
     "publisher": "Guillaume Gautreau",
     "copyright": "Copyright (C) 2026 Guillaume Gautreau. AGPL-3.0-only.",
-    "shortDescription": "Dictée vocale : maintenez une touche, parlez, le texte s'insère."
+    "shortDescription": "Dictée vocale : maintenez une touche, parlez, le texte s'insère.",
+    "macOS": {
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
+      "minimumSystemVersion": "11.0"
+    },
+    "category": "Productivity"
   },
   "plugins": {
     "updater": {

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot, FocusState};
 use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender};
+use scribe_core::permissions::{Permission, PermissionState, PermissionStatus, SystemPermissions};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_core::storage::Db;
@@ -220,6 +221,42 @@ impl Corrector for FakeLlm {
     }
 }
 
+/// macOS-like permissions: `request` grants, `open_settings` is recorded (or fails with `fail`).
+pub struct FakePermissions {
+    pub statuses: Mutex<Vec<PermissionStatus>>,
+    pub opened: Mutex<Vec<Permission>>,
+    pub fail: Mutex<Option<String>>,
+}
+
+impl Default for FakePermissions {
+    fn default() -> Self {
+        let status = |permission| PermissionStatus { permission, state: PermissionState::NotDetermined };
+        Self {
+            statuses: Mutex::new(vec![status(Permission::Accessibility), status(Permission::Microphone)]),
+            opened: Mutex::default(),
+            fail: Mutex::default(),
+        }
+    }
+}
+
+impl SystemPermissions for FakePermissions {
+    fn status(&self) -> Vec<PermissionStatus> {
+        self.statuses.lock().unwrap().clone()
+    }
+    fn request(&self, permission: Permission) {
+        for s in self.statuses.lock().unwrap().iter_mut().filter(|s| s.permission == permission) {
+            s.state = PermissionState::Granted;
+        }
+    }
+    fn open_settings(&self, permission: Permission) -> Result<(), String> {
+        if let Some(e) = self.fail.lock().unwrap().clone() {
+            return Err(e);
+        }
+        self.opened.lock().unwrap().push(permission);
+        Ok(())
+    }
+}
+
 pub struct Fixture {
     pub svc: Arc<Services>,
     pub window: Arc<FakeWindow>,
@@ -228,6 +265,7 @@ pub struct Fixture {
     pub keys: Arc<FakeKeys>,
     pub field: Arc<FakeField>,
     pub autostart: Arc<FakeAutostart>,
+    pub permissions: Arc<FakePermissions>,
     pub updater: Arc<FakeUpdater>,
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
@@ -251,6 +289,7 @@ impl Fixture {
         let keys = Arc::new(FakeKeys::default());
         let field = Arc::new(FakeField::default());
         let autostart = Arc::new(FakeAutostart::default());
+        let permissions = Arc::new(FakePermissions::default());
         let updater = Arc::new(FakeUpdater::default());
         let focus = Arc::new(FakeFocus(Mutex::new(editable("Notepad"))));
         let secrets = Arc::new(MemorySecretStore::default());
@@ -276,11 +315,12 @@ impl Fixture {
             overlay: Overlay::new(window.clone()),
             ui: ui.clone(),
             autostart: autostart.clone(),
+            permissions: permissions.clone(),
             updater: updater.clone(),
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, autostart, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, autostart, permissions, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

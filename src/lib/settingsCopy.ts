@@ -1,4 +1,5 @@
 import type { Level } from "./api";
+import { OS, type Os } from "./platform";
 
 /** « Réflexion du modèle » choices; the values sent to the backend stay low / medium / high. */
 export const EFFORT_LABELS: Record<string, string> = {
@@ -23,5 +24,7 @@ export const RAW_LEVEL_NOTE = "Correction désactivée en mode brut";
 export const HOTKEY_HELP =
   "Maintenez pour dicter, relâchez pour envoyer. Double-tap (ou maintien + touche de verrouillage) pour dicter mains libres\u00a0; appuyez à nouveau pour arrêter.";
 
-export const KEYS_HELP =
-  "Stockées dans le coffre Windows. Chaque clé s'enregistre avec son bouton\u00a0; les autres réglages s'enregistrent automatiquement.";
+export function keysHelp(os: Os = OS): string {
+  const vault = os === "mac" ? "le trousseau macOS" : "le coffre Windows";
+  return `Stockées dans ${vault}. Chaque clé s'enregistre avec son bouton\u00a0; les autres réglages s'enregistrent automatiquement.`;
+}

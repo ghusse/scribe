@@ -1,13 +1,16 @@
 //! OS integration: keyboard hook, focus detection, key injection, clipboard, microphone.
 //!
 //! The OS entry points (`start_keyboard_hook`, `focus_detector`, `key_sender`, `*_overlay`) are re-exported
-//! from `windows` on Windows and from `fallback` elsewhere: this file holds no dispatch logic of its own.
+//! from `windows` on Windows, `macos` on macOS and `fallback` elsewhere: this file holds no dispatch logic of its own.
 pub mod audio_capture;
 pub mod clipboard;
 mod device;
 pub mod fallback;
 pub mod focus_rules;
 pub mod key_filter;
+pub mod mac_keys;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -59,7 +62,18 @@ impl HookConfig {
 
 pub type KeyCallback = Box<dyn Fn(HookEvent) + Send + Sync>;
 
-#[cfg(not(windows))]
-pub use fallback::{field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};
+#[cfg(not(any(windows, target_os = "macos")))]
+pub use fallback::{
+    field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions, prepare_overlay, show_overlay,
+    start_keyboard_hook, HookHandle,
+};
 #[cfg(windows)]
-pub use windows::{field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, prepare_overlay, show_overlay, start_keyboard_hook, HookHandle};
+pub use windows::{
+    field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions, prepare_overlay, show_overlay,
+    start_keyboard_hook, HookHandle,
+};
+#[cfg(target_os = "macos")]
+pub use macos::{
+    field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions, prepare_overlay, show_overlay,
+    start_keyboard_hook, HookHandle,
+};

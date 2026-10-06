@@ -7,7 +7,7 @@
   import { assignHotkey, captureOutcome, CAPTURE_TIMEOUT_MESSAGE, normalizeLock, pendingSummary, swallowsKey, TYPING_KEY_WARNING, type Assignment, type HotkeyRole } from "../lib/hotkeys";
   import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts, type KeyRole } from "../lib/apiKeys";
   import { testLine, translateProviderError } from "../lib/providerTest";
-  import { effortLabel, HOTKEY_HELP, KEYS_HELP, LEVEL_OPTIONS, RAW_LEVEL_NOTE } from "../lib/settingsCopy";
+  import { effortLabel, HOTKEY_HELP, keysHelp, LEVEL_OPTIONS, RAW_LEVEL_NOTE } from "../lib/settingsCopy";
   import ModelPicker from "./ModelPicker.svelte";
   import Startup from "./Startup.svelte";
   import Updates from "./Updates.svelte";
@@ -508,7 +508,7 @@
 
   <section>
     <h2>Clés API</h2>
-    <p class="help">{KEYS_HELP}</p>
+    <p class="help">{keysHelp()}</p>
     {#each keyRows.used as p (p.id)}{@render keyRow(p)}{/each}
     {#if keyRows.others.length > 0}
       <details class="others" bind:open={othersOpen}>

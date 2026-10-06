@@ -1,11 +1,12 @@
-//! OS entry points on platforms without an integration yet (everything but Windows): the hook and key
+//! OS entry points on platforms without an integration yet (neither Windows nor macOS): the hook and key
 //! injection report an error, focus is always unknown, the overlay calls do nothing. Compiled everywhere so
-//! that it is tested on Windows too; `lib.rs` re-exports it only off Windows.
-#![cfg_attr(windows, allow(dead_code))]
+//! that it is tested everywhere; `lib.rs` re-exports it only off Windows and macOS.
+#![cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 use std::sync::Arc;
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
 use scribe_core::insert::{FieldReader, KeySender};
+use scribe_core::permissions::{Permission, PermissionStatus, SystemPermissions};
 
 use crate::{HookConfig, KeyCallback};
 
@@ -59,6 +60,23 @@ pub fn is_key_pressed(_vk: u32) -> bool {
 
 pub fn prepare_overlay(_raw_hwnd: isize) {}
 
+struct NoPermissions;
+
+impl SystemPermissions for NoPermissions {
+    fn status(&self) -> Vec<PermissionStatus> {
+        Vec::new()
+    }
+    fn request(&self, _permission: Permission) {}
+    fn open_settings(&self, _permission: Permission) -> Result<(), String> {
+        Err("aucun réglage d'autorisation sur cette plateforme".into())
+    }
+}
+
+/// No OS permission to ask for (Windows grants the hook, the microphone and UI Automation to desktop apps).
+pub fn permissions() -> Arc<dyn SystemPermissions> {
+    Arc::new(NoPermissions)
+}
+
 pub fn show_overlay(_raw_hwnd: isize) {}
 
 pub fn hide_overlay(_raw_hwnd: isize) {}
@@ -91,6 +109,14 @@ mod tests {
     #[test]
     fn paste_simulation_fails_so_the_text_stays_in_the_clipboard() {
         assert_eq!(key_sender().send_paste(), Err("simulation clavier non disponible sur cette plateforme".into()));
+    }
+
+    #[test]
+    fn no_permission_is_asked() {
+        let p = permissions();
+        assert!(p.status().is_empty());
+        p.request(Permission::Microphone);
+        assert!(p.open_settings(Permission::Accessibility).is_err());
     }
 
     #[test]

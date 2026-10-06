@@ -10,3 +10,4 @@ pub mod prompt;
 pub mod focus;
 pub mod insert;
 pub mod pipeline;
+pub mod permissions;
