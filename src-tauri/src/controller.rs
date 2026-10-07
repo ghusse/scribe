@@ -11,6 +11,7 @@ use scribe_core::session::{self, Session, SessionAction};
 use scribe_platform::audio_capture::LevelCallback;
 use scribe_platform::HookEvent;
 
+use crate::audio_mute::MuteGuard;
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
 use crate::overlay::{OverlayEvent, ToastLevel};
 use crate::services::{Services, UiSink};
@@ -91,6 +92,17 @@ pub fn level_emitter(ui: Arc<dyn UiSink>, clock: Clock, min_interval_ms: u64) ->
 
 const LEVEL_INTERVAL_MS: u64 = 50;
 
+/// A recording in progress, with what it holds until it ends.
+struct Active {
+    handle: Box<dyn Recording>,
+    /// The start focus snapshot is resolved off the controller thread (it can take up to
+    /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
+    focus_start: Receiver<FocusSnapshot>,
+    /// Restores the sound when dropped, so every path that ends the recording restores it. Dropped after the
+    /// microphone is stopped.
+    mute: Option<MuteGuard>,
+}
+
 pub struct Controller {
     svc: Arc<Services>,
     tx: Sender<ControllerMsg>,
@@ -98,9 +110,7 @@ pub struct Controller {
     gesture: GestureDetector,
     session: Session,
     mode: Mode,
-    /// The start focus snapshot is resolved off the controller thread (it can take up to
-    /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
-    recording: Option<(Box<dyn Recording>, Receiver<FocusSnapshot>)>,
+    recording: Option<Active>,
     /// Since when the trigger looks physically up while the detector sees it held.
     released_since: Option<u64>,
 }
@@ -248,7 +258,9 @@ impl Controller {
                     Ok(handle) => {
                         self.mode = Mode::Hold;
                         overlay.emit(OverlayEvent::Recording { locked: false });
-                        self.recording = Some((handle, spawn_focus_snapshot(&self.svc)));
+                        let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
+                        let mute = mute_on.then(|| self.svc.audio_mute.guard());
+                        self.recording = Some(Active { handle, focus_start: spawn_focus_snapshot(&self.svc), mute });
                     }
                     Err(e) => {
                         self.session.abort();
@@ -262,18 +274,22 @@ impl Controller {
                 overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked });
             }
             SessionAction::DiscardRecording => {
-                if let Some((handle, _)) = self.recording.take() {
+                if let Some(Active { handle, mute, .. }) = self.recording.take() {
                     let _ = handle.stop();
+                    drop(mute);
                 }
                 overlay.emit(OverlayEvent::Idle);
             }
             SessionAction::FinishRecording => {
-                let Some((handle, focus_start)) = self.recording.take() else {
+                let Some(Active { handle, focus_start, mute }) = self.recording.take() else {
                     self.session.on_processing_done();
                     return;
                 };
                 overlay.emit(OverlayEvent::Processing);
-                match handle.stop() {
+                let stopped = handle.stop();
+                // Not before: the speakers would be heard at the end of the recording.
+                drop(mute);
+                match stopped {
                     Ok(clip) => {
                         let job = Job { clip, mode: self.mode, focus_start };
                         (self.deps.spawn_processing)(self.svc.clone(), job, self.tx.clone());

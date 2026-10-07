@@ -3,13 +3,14 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, RwLock};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot, FocusState};
-use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender};
+use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::{Permission, PermissionState, PermissionStatus, SystemPermissions};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
+use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
 use crate::overlay::fake::FakeWindow;
 use crate::overlay::Overlay;
@@ -117,6 +118,40 @@ impl FieldReader for FakeField {
     fn focused_text(&self) -> Option<String> {
         let mut v = self.0.lock().unwrap();
         if v.len() > 1 { v.pop().flatten() } else { v.first().cloned().flatten() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MuteCall {
+    MuteAll,
+    Restore(Vec<String>),
+}
+
+/// Audio outputs: `mute_all` mutes every one of `outputs` (two by default), every call is recorded.
+pub struct FakeMute {
+    pub outputs: Mutex<Vec<String>>,
+    pub calls: Mutex<Vec<MuteCall>>,
+}
+
+impl Default for FakeMute {
+    fn default() -> Self {
+        Self { outputs: Mutex::new(vec!["haut-parleurs".into(), "casque".into()]), calls: Mutex::default() }
+    }
+}
+
+impl FakeMute {
+    pub fn calls(&self) -> Vec<MuteCall> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl SystemMute for FakeMute {
+    fn mute_all(&self) -> Vec<String> {
+        self.calls.lock().unwrap().push(MuteCall::MuteAll);
+        self.outputs.lock().unwrap().clone()
+    }
+    fn restore(&self, ids: &[String]) {
+        self.calls.lock().unwrap().push(MuteCall::Restore(ids.to_vec()));
     }
 }
 
@@ -264,6 +299,7 @@ pub struct Fixture {
     pub clipboard: Arc<FakeClipboard>,
     pub keys: Arc<FakeKeys>,
     pub field: Arc<FakeField>,
+    pub mute: Arc<FakeMute>,
     pub autostart: Arc<FakeAutostart>,
     pub permissions: Arc<FakePermissions>,
     pub updater: Arc<FakeUpdater>,
@@ -282,12 +318,14 @@ impl Fixture {
     pub fn with_settings(settings: Settings) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::new(dir.path().to_path_buf());
+        let muted_outputs_path = paths.muted_outputs_path.clone();
         std::fs::create_dir_all(&paths.audio_dir).unwrap();
         let window = Arc::new(FakeWindow::default());
         let ui = Arc::new(FakeUi::default());
         let clipboard = Arc::new(FakeClipboard::default());
         let keys = Arc::new(FakeKeys::default());
         let field = Arc::new(FakeField::default());
+        let mute = Arc::new(FakeMute::default());
         let autostart = Arc::new(FakeAutostart::default());
         let permissions = Arc::new(FakePermissions::default());
         let updater = Arc::new(FakeUpdater::default());
@@ -306,6 +344,7 @@ impl Fixture {
             clipboard: clipboard.clone(),
             keys: keys.clone(),
             field: field.clone(),
+            audio_mute: AudioMute::spawn(mute.clone(), muted_outputs_path, None),
             secrets: secrets.clone(),
             providers: Box::new(move |_s, _store| {
                 let plan = factory_plan.lock().unwrap().clone();
@@ -320,7 +359,7 @@ impl Fixture {
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, autostart, permissions, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, mute, autostart, permissions, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

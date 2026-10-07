@@ -12,6 +12,7 @@ use scribe_core::storage::Db;
 use scribe_core::permissions::SystemPermissions;
 use scribe_platform::{HookConfig, RawKey};
 
+use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
 use crate::overlay::Overlay;
 use crate::secrets::SecretStore;
@@ -22,6 +23,8 @@ pub struct AppPaths {
     pub audio_dir: PathBuf,
     pub db_path: PathBuf,
     pub settings_path: PathBuf,
+    /// Outputs muted by the recording in progress, so a crash does not leave them muted (`audio_mute::recover`).
+    pub muted_outputs_path: PathBuf,
 }
 
 impl AppPaths {
@@ -30,6 +33,7 @@ impl AppPaths {
             audio_dir: data_dir.join("audio"),
             db_path: data_dir.join("scribe.db"),
             settings_path: data_dir.join("settings.json"),
+            muted_outputs_path: data_dir.join("muted_outputs.json"),
         }
     }
 }
@@ -84,6 +88,8 @@ pub struct Services {
     pub keys: Arc<dyn KeySender>,
     /// Reads the focused field to check that a paste landed.
     pub field: Arc<dyn FieldReader>,
+    /// Mutes the audio outputs while recording, on its own worker (never on the controller thread).
+    pub audio_mute: AudioMute,
     pub secrets: Arc<dyn SecretStore>,
     pub providers: ProviderFactory,
     pub overlay: Overlay,
@@ -206,6 +212,7 @@ mod tests {
         assert_eq!(p.audio_dir, Path::new("data").join("audio"));
         assert_eq!(p.db_path, Path::new("data").join("scribe.db"));
         assert_eq!(p.settings_path, Path::new("data").join("settings.json"));
+        assert_eq!(p.muted_outputs_path, Path::new("data").join("muted_outputs.json"));
     }
 
     #[test]

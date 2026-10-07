@@ -20,6 +20,7 @@ export function settings(over: Partial<Settings> = {}): Settings {
     llm_timeout_per_char_ms: 10,
     hint_budget_chars: 2000,
     audio_retention_days: 30,
+    mute_audio_during_dictation: true,
     ...over,
   };
 }
