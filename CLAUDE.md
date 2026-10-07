@@ -116,7 +116,7 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
-  `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`. Remaining branches: `?` on setup steps,
+  `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`, `audio_mute::recover` (sound left muted by a crash). Remaining branches: `?` on setup steps,
   the delayed `update::check_at_startup` spawn, the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
   `CloseRequested` match before `prevent_close` + `hide`.
 

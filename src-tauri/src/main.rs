@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod adapters;
+mod audio_mute;
 mod bootstrap;
 mod commands;
 mod controller;
@@ -70,6 +71,7 @@ fn main() {
                 clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard::default()),
                 keys: scribe_platform::key_sender(),
                 field: scribe_platform::field_reader(),
+                mute: scribe_platform::system_mute(),
                 secrets: secret_store,
                 providers: Box::new(providers::build),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
@@ -117,6 +119,8 @@ fn main() {
                 tokio::time::sleep(update::STARTUP_CHECK_DELAY).await;
                 update::check_at_startup(update_svc).await;
             });
+            // Before the controller starts: it may mute the same outputs again.
+            audio_mute::recover(svc.mute.as_ref(), &svc.paths.muted_outputs_path);
             controller::spawn(svc, rx, tx, deps);
             if bootstrap::shows_main_at_launch(needs_setup || missing_permissions, std::env::args()) {
                 adapters::show_main(app.handle());
