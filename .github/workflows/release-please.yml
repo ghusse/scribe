@@ -1,0 +1,157 @@
+name: Release Please
+
+# Continuous delivery from Conventional Commits (release-please-config.json, .release-please-manifest.json).
+# Each push to main updates the release PR (versions in package.json, src-tauri/Cargo.toml and Cargo.lock, plus
+# CHANGELOG.md). Merging that PR creates the tag vX.Y.Z and a DRAFT release; the jobs below then build Windows and
+# macOS into that draft and publish it only once both builds succeeded.
+# Everything runs in this workflow: a tag created with GITHUB_TOKEN triggers no other workflow (release.yml, the
+# manual fallback, does not run for it).
+on:
+  push:
+    branches: [main]
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+# Never two runs at once (two release PR updates or two releases racing on latest.json), and never cancel a run:
+# a cancelled build would leave a half-filled draft.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+# Same text as release.yml: appended to the changelog of the published release, and the notes of latest.json.
+env:
+  RELEASE_BODY: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # release commits, tags, releases
+      issues: write # labels of the release PR
+      pull-requests: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      id: ${{ steps.release.outputs.id }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      # Draft + force-tag-creation (release-please-config.json): the tag exists at once, the release stays private.
+      - id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+
+  windows:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.created == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # upload to the draft release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+
+      # The bundles and latest.json take the version from src-tauri/Cargo.toml: it must be the released one.
+      - name: Cargo.toml has the released version
+        shell: bash
+        env:
+          EXPECTED: ${{ needs.release-please.outputs.version }}
+        run: |
+          version=$(awk -F'"' '{ sub(/\r$/, "") } /^\[/ { p = ($0 == "[package]") } p && /^version *=/ { print $2; exit }' src-tauri/Cargo.toml)
+          if [ "${version}" != "${EXPECTED}" ]; then
+            echo "::error::release ${EXPECTED} but src-tauri/Cargo.toml says ${version}"
+            exit 1
+          fi
+
+      # Pinned by SHA, the action no longer reads the toolchain from the ref: name it.
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # releaseId: upload into exactly release-please's draft without rewriting its name or body (the changelog),
+      # as tagName would. With releaseId, releaseBody only becomes the notes of latest.json.
+      - name: Build and attach the installers
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update bundles (createUpdaterArtifacts); the public key is in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: bun tauri
+          releaseId: ${{ needs.release-please.outputs.id }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          # latest.json, read by the installed apps once the release is published, points to the NSIS installer.
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+
+  # After Windows: both jobs rewrite latest.json, this one adds the macOS entries.
+  macos:
+    needs: [release-please, windows]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # upload to the draft release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+
+      - run: bun install --frozen-lockfile
+
+      # Ad-hoc signed (tauri.conf.json > bundle.macOS.signingIdentity "-"), not notarized: Gatekeeper asks once.
+      - name: Build and attach the macOS bundles
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: bun tauri
+          args: --target universal-apple-darwin
+          releaseId: ${{ needs.release-please.outputs.id }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          uploadUpdaterJson: true
+
+  # Only when both builds succeeded (default `needs` condition): the draft becomes the latest release, which the
+  # installed apps find through releases/latest/download/latest.json.
+  publish:
+    needs: [release-please, windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # edit the release
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          gh release view "$TAG" --json body --jq .body > notes.md
+          # A re-run must not append the installation notes twice.
+          if ! grep -qxF "$RELEASE_BODY" notes.md; then
+            printf '\n%s\n' "$RELEASE_BODY" >> notes.md
+          fi
+          gh release edit "$TAG" --title "Scribe $TAG" --notes-file notes.md --draft=false --latest
