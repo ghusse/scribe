@@ -74,6 +74,12 @@ pub fn vk_for_key(keycode: u16, typed: Option<char>) -> Option<u32> {
     }
 }
 
+/// Device-dependent flag set while the modifier `vk` is down (`None`: not a modifier). macOS no longer reports
+/// modifiers through the per-key state (`CGEventSourceKeyState`), only through the flags.
+pub fn modifier_mask(vk: u32) -> Option<u64> {
+    MODIFIERS.iter().find(|&&(_, v, _)| v == vk).map(|&(_, _, mask)| mask)
+}
+
 /// Keycode of a virtual-key code by physical position (the reverse of [`vk_for_key`] without a layout).
 fn keycode_by_position(vk: u32) -> Option<u16> {
     MODIFIERS
@@ -199,6 +205,15 @@ mod tests {
         assert_eq!(m.keycode(0x26), Some(0x7E), "up arrow");
         assert_eq!(m.keycode(0x70), Some(0x7A), "F1");
         assert_eq!(m.keycode(0x11), None, "generic Ctrl has no key");
+    }
+
+    #[test]
+    fn modifier_masks_are_their_device_flags() {
+        assert_eq!(modifier_mask(0x5C), Some(0x10), "right Command");
+        assert_eq!(modifier_mask(0x5B), Some(0x08), "Command");
+        assert_eq!(modifier_mask(0xA5), Some(0x40), "right Option");
+        assert_eq!(modifier_mask(0x41), None, "A");
+        assert_eq!(modifier_mask(0x11), None, "generic Ctrl has no key");
     }
 
     #[test]
