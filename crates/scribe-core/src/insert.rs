@@ -37,6 +37,17 @@ pub trait Clipboard: Send + Sync {
     fn restore(&self, content: &ClipboardContent) -> Result<(), String>;
 }
 
+/// Mutes the computer's audio outputs while dictating, so speakers do not disturb the transcription. Never fails:
+/// an output that cannot be read or changed is skipped and logged.
+pub trait SystemMute: Send + Sync {
+    /// Mutes every active output that is not muted yet; returns the stable ids of those it muted (an output
+    /// already muted by the user is left alone and not returned).
+    fn mute_all(&self) -> Vec<String>;
+    /// Unmutes the given outputs (ids from `mute_all`) that are still muted. An output that is gone or was
+    /// unmuted meanwhile is left alone.
+    fn restore(&self, ids: &[String]);
+}
+
 pub trait KeySender: Send + Sync {
     /// Simulates Ctrl+V (Cmd+V on macOS).
     fn send_paste(&self) -> Result<(), String>;

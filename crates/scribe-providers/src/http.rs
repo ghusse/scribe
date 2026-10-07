@@ -1,4 +1,25 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use scribe_core::pipeline::ProviderError;
+
+/// A warm-up that gets no answer in this time is left alone: the real request will open its own connection.
+const WARM_UP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One HTTP client for the whole app. Its pool keeps the connections to the providers open between calls, so a
+/// dictation does not pay a DNS + TCP + TLS handshake for each request. Timeouts are set per request.
+pub fn shared_client() -> Result<reqwest::Client, ProviderError> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT.get_or_init(|| reqwest::Client::builder().build().map_err(|e| e.to_string())).clone().map_err(ProviderError::Config)
+}
+
+/// Opens a pooled connection to `base_url` while the user is still speaking, so the transcription and correction
+/// requests find it ready. Any answer will do (even a 404) and errors are ignored.
+pub async fn warm_up(base_url: &str) {
+    if let Ok(client) = shared_client() {
+        let _ = client.head(base_url).timeout(WARM_UP_TIMEOUT).send().await;
+    }
+}
 
 pub fn map_send_error(e: reqwest::Error) -> ProviderError {
     if e.is_timeout() { ProviderError::Timeout } else { ProviderError::Network(e.to_string()) }
@@ -53,6 +74,26 @@ mod tests {
         let err = send(&reqwest::Client::new(), &format!("http://127.0.0.1:{port}/")).await.unwrap_err();
         assert!(matches!(err, ProviderError::Network(_)), "{err:?}");
         assert!(err.is_retryable());
+    }
+
+    #[tokio::test]
+    async fn warm_up_reaches_the_provider_and_ignores_its_answer() {
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD")).respond_with(ResponseTemplate::new(404)).expect(1).mount(&server).await;
+        warm_up(&server.uri()).await;
+        server.verify().await;
+
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        warm_up(&format!("http://127.0.0.1:{port}/")).await;
+    }
+
+    #[tokio::test]
+    async fn the_shared_client_reaches_the_provider() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).expect(2).mount(&server).await;
+        for _ in 0..2 {
+            assert_eq!(send(&shared_client().unwrap(), &server.uri()).await.unwrap().status(), 200);
+        }
     }
 
     #[tokio::test]

@@ -7,12 +7,14 @@ use serde::Deserialize;
 use scribe_core::pipeline::{ProviderError, Transcriber};
 use scribe_core::prompt::transcriber_prompt;
 
-use crate::http::{map_send_error, map_status};
+use crate::http::{map_send_error, map_status, shared_client};
 
 /// Any provider exposing OpenAI's `POST /audio/transcriptions` (OpenAI, Groq, Mistral…).
 /// The language is never sent: detection stays automatic for mixed French/English dictation.
 pub struct OpenAiCompatTranscriber {
     client: reqwest::Client,
+    /// Per request: the client is shared by every provider.
+    timeout: Duration,
     base_url: String,
     api_key: String,
     model: String,
@@ -25,9 +27,9 @@ impl OpenAiCompatTranscriber {
         model: impl Into<String>,
         timeout: Duration,
     ) -> Result<Self, ProviderError> {
-        let client = reqwest::Client::builder().timeout(timeout).build().map_err(|e| ProviderError::Config(e.to_string()))?;
         Ok(Self {
-            client,
+            client: shared_client()?,
+            timeout,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -58,6 +60,7 @@ impl Transcriber for OpenAiCompatTranscriber {
         let resp = self
             .client
             .post(format!("{}/audio/transcriptions", self.base_url))
+            .timeout(self.timeout)
             .bearer_auth(&self.api_key)
             .multipart(form)
             .send()

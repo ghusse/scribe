@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod adapters;
+mod audio_mute;
 mod bootstrap;
 mod commands;
 mod controller;
@@ -17,12 +18,13 @@ mod update;
 
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
 use crate::adapters::{CpalRecorder, TauriAutostart, TauriOverlayWindow, TauriUi, TauriUpdater};
+use crate::audio_mute::AudioMute;
 use crate::controller::{ControllerDeps, ControllerMsg};
 use crate::overlay::{Overlay, ToastLevel};
 use crate::secrets::{KeyringStore, SecretStore};
@@ -61,6 +63,11 @@ fn main() {
             let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
             let permissions = scribe_platform::permissions();
             let missing_permissions = scribe_core::permissions::any_missing(&permissions.status());
+            let audio_mute = AudioMute::spawn(
+                scribe_platform::system_mute(),
+                paths.muted_outputs_path.clone(),
+                scribe_platform::boot_time_ms(),
+            );
             let svc = Arc::new(Services {
                 db: Mutex::new(db),
                 settings: RwLock::new(settings),
@@ -70,8 +77,10 @@ fn main() {
                 clipboard: Arc::new(scribe_platform::clipboard::SystemClipboard::default()),
                 keys: scribe_platform::key_sender(),
                 field: scribe_platform::field_reader(),
+                audio_mute,
                 secrets: secret_store,
                 providers: Box::new(providers::build),
+                warm_up: Box::new(providers::warm_up),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
                 autostart: Arc::new(TauriAutostart(app.handle().clone())),
@@ -117,6 +126,8 @@ fn main() {
                 tokio::time::sleep(update::STARTUP_CHECK_DELAY).await;
                 update::check_at_startup(update_svc).await;
             });
+            // Before the controller starts: queued before any mute it asks for.
+            svc.audio_mute.recover();
             controller::spawn(svc, rx, tx, deps);
             if bootstrap::shows_main_at_launch(needs_setup || missing_permissions, std::env::args()) {
                 adapters::show_main(app.handle());
@@ -159,6 +170,15 @@ fn main() {
             commands::overlay_dismiss,
             commands::open_history,
         ])
-        .run(tauri::generate_context!())
-        .expect("erreur au lancement de Scribe");
+        .build(tauri::generate_context!())
+        .expect("erreur au lancement de Scribe")
+        .run(|app, event| {
+            // Quitting (tray) while recording: the recording never ends, restore the sound it muted. Off the
+            // controller, on the mute worker, with a bounded wait.
+            if let RunEvent::Exit = event {
+                if let Some(svc) = app.try_state::<Arc<Services>>() {
+                    svc.audio_mute.restore_before_exit(audio_mute::EXIT_RESTORE_TIMEOUT);
+                }
+            }
+        });
 }

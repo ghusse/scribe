@@ -11,7 +11,7 @@ use scribe_platform::RawKey;
 use super::*;
 use crate::overlay::OverlayEvent;
 use crate::settings::Settings;
-use crate::testing::{editable, Fixture, UiCall};
+use crate::testing::{editable, Fixture, MuteCall, UiCall};
 
 const TRIGGER: u32 = crate::settings::DEFAULT_TRIGGER;
 /// The left key of TRIGGER's modifier group: Ctrl, or Command on macOS.
@@ -25,16 +25,24 @@ struct FakeRecorder {
     started: AtomicU32,
     stopped: Arc<AtomicU32>,
     on_level: Mutex<Option<LevelCallback>>,
+    /// Runs when the microphone stops, before it returns.
+    on_stop: Mutex<Option<OnStop>>,
 }
+
+type OnStop = Arc<dyn Fn() + Send + Sync>;
 
 struct FakeRecording {
     error: Option<String>,
     stopped: Arc<AtomicU32>,
+    on_stop: Option<OnStop>,
 }
 
 impl Recording for FakeRecording {
     fn stop(self: Box<Self>) -> Result<AudioClip, String> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
+        if let Some(on_stop) = &self.on_stop {
+            on_stop();
+        }
         match self.error {
             Some(e) => Err(e),
             None => Ok(AudioClip { samples: vec![1; 16], sample_rate: TARGET_RATE }),
@@ -49,7 +57,11 @@ impl Recorder for FakeRecorder {
         }
         self.started.fetch_add(1, Ordering::SeqCst);
         *self.on_level.lock().unwrap() = Some(on_level);
-        Ok(Box::new(FakeRecording { error: self.stop_error.lock().unwrap().clone(), stopped: self.stopped.clone() }))
+        Ok(Box::new(FakeRecording {
+            error: self.stop_error.lock().unwrap().clone(),
+            stopped: self.stopped.clone(),
+            on_stop: self.on_stop.lock().unwrap().clone(),
+        }))
     }
 }
 
@@ -131,6 +143,25 @@ impl Harness {
     fn job_modes(&self) -> Vec<Mode> {
         self.jobs.lock().unwrap().iter().map(|j| j.mode).collect()
     }
+
+    /// The mute calls once the mute worker has caught up.
+    fn mute_calls(&self) -> Vec<MuteCall> {
+        self.f.svc.audio_mute.flush();
+        self.f.mute.calls()
+    }
+
+    fn muted_file(&self) -> bool {
+        self.f.svc.audio_mute.flush();
+        self.f.svc.paths.muted_outputs_path.exists()
+    }
+}
+
+fn outputs() -> Vec<String> {
+    vec!["haut-parleurs".into(), "casque".into()]
+}
+
+fn muted_then_restored() -> Vec<MuteCall> {
+    vec![MuteCall::MuteAll, MuteCall::Restore(outputs())]
 }
 
 #[test]
@@ -190,6 +221,18 @@ fn hold_records_then_processes_in_hold_mode() {
     h.c.handle(ControllerMsg::ProcessingDone);
     h.key(TRIGGER, true, 3_000);
     assert_eq!(h.started(), 2);
+}
+
+#[test]
+fn connections_are_warmed_up_when_a_recording_starts() {
+    let mut h = Harness::new();
+    *h.rec.start_error.lock().unwrap() = Some("aucun périphérique".into());
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert!(h.f.warm_ups.lock().unwrap().is_empty(), "no request will follow a failed recording");
+    *h.rec.start_error.lock().unwrap() = None;
+    h.key(TRIGGER, true, 2_000);
+    assert_eq!(*h.f.warm_ups.lock().unwrap(), vec!["openai".to_string()]);
 }
 
 #[test]
@@ -493,4 +536,111 @@ fn spawned_controller_handles_messages_on_its_thread() {
         tx.send(ControllerMsg::Key(HookEvent { key: RawKey { vk: 0x42, down, repeat: false, t_ms: 0 }, gestures: vec![] })).unwrap();
     }
     assert_eq!(capture.recv_timeout(Duration::from_secs(5)), Ok(vec![0x42]));
+}
+
+#[test]
+fn the_sound_is_muted_while_recording_and_restored_once_the_microphone_is_stopped() {
+    let mut h = Harness::new();
+    // What the mute worker has done when the microphone stops.
+    let at_stop = Arc::new(Mutex::new(None));
+    let (audio, mute, seen) = (h.f.svc.audio_mute.clone(), h.f.mute.clone(), at_stop.clone());
+    *h.rec.on_stop.lock().unwrap() = Some(Arc::new(move || {
+        audio.flush();
+        *seen.lock().unwrap() = Some(mute.calls());
+    }));
+    h.key(TRIGGER, true, 0);
+    assert_eq!(h.mute_calls(), vec![MuteCall::MuteAll]);
+    assert!(h.muted_file(), "recovery file written while muted");
+    h.key(TRIGGER, false, 800);
+    assert_eq!(h.job_modes(), vec![Mode::Hold]);
+    assert_eq!(*at_stop.lock().unwrap(), Some(vec![MuteCall::MuteAll]), "still muted while the microphone stops");
+    assert_eq!(h.mute_calls(), muted_then_restored(), "restored at the end of the recording, not after the paste");
+    assert!(!h.muted_file(), "recovery file removed");
+}
+
+#[test]
+fn the_sound_is_left_alone_when_the_setting_is_off() {
+    let mut h = Harness::with(Fixture::with_settings(Settings { mute_audio_during_dictation: false, ..Default::default() }));
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert_eq!(h.job_modes(), vec![Mode::Hold]);
+    assert!(h.mute_calls().is_empty());
+    assert!(!h.muted_file());
+}
+
+#[test]
+fn the_setting_is_read_at_the_start_of_each_recording() {
+    let mut h = Harness::new();
+    h.f.svc.settings.write().unwrap().mute_audio_during_dictation = false;
+    h.key(TRIGGER, true, 0);
+    h.f.svc.settings.write().unwrap().mute_audio_during_dictation = true;
+    h.key(TRIGGER, false, 800);
+    assert!(h.mute_calls().is_empty(), "off when the recording began");
+    h.c.handle(ControllerMsg::ProcessingDone);
+    h.key(TRIGGER, true, 2_000);
+    h.key(TRIGGER, false, 2_800);
+    assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+#[test]
+fn the_sound_is_not_muted_when_the_microphone_cannot_open() {
+    let mut h = Harness::new();
+    *h.rec.start_error.lock().unwrap() = Some("aucun périphérique".into());
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert!(h.mute_calls().is_empty());
+}
+
+#[test]
+fn the_sound_is_restored_when_the_recording_is_lost() {
+    let mut h = Harness::new();
+    *h.rec.stop_error.lock().unwrap() = Some("micro débranché".into());
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+#[test]
+fn the_sound_is_restored_when_a_short_tap_is_discarded() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 100);
+    h.tick(500);
+    assert_eq!(h.stopped(), 1);
+    assert_eq!(h.mute_calls(), muted_then_restored());
+    assert!(!h.muted_file());
+}
+
+#[test]
+fn the_sound_is_restored_when_pausing_discards_the_recording() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
+    h.c.handle(ControllerMsg::PauseChanged(true));
+    assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+#[test]
+fn the_sound_is_restored_when_the_key_up_is_lost() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.set_pressed(TRIGGER, false);
+    h.tick(100);
+    h.tick(600);
+    assert_eq!(h.stopped(), 1);
+    assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+#[test]
+fn a_locked_recording_stays_muted_until_it_stops() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 100);
+    h.key(TRIGGER, true, 200);
+    h.key(TRIGGER, false, 250); // locked
+    h.tick(3_000);
+    assert_eq!(h.mute_calls(), vec![MuteCall::MuteAll]);
+    h.key(TRIGGER, true, 5_000);
+    assert_eq!(h.job_modes(), vec![Mode::Locked]);
+    assert_eq!(h.mute_calls(), muted_then_restored());
 }

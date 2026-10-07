@@ -7,7 +7,7 @@ use scribe_platform::RawKey;
 
 use super::*;
 use crate::overlay::{OverlayEvent, ToastLevel};
-use crate::testing::{Fixture, UiCall};
+use crate::testing::{Fixture, MuteCall, UiCall};
 
 /// Runs `f` with the fixture's services as Tauri state, the way commands receive them.
 fn with_state<T>(f: &Fixture, run: impl FnOnce(Svc<'_>) -> T) -> T {
@@ -42,7 +42,7 @@ fn history_commands_read_edit_and_delete_rows() {
     let f = Fixture::new();
     let wav = f.svc.paths.audio_dir.join("a.wav");
     std::fs::write(&wav, b"x").unwrap();
-    let a = insert(&f, Some("Bonjour Scribe."), Some(wav.to_string_lossy().into_owned()));
+    let a = insert(&f, Some("Bonjour Scribe, comment ça va ?"), Some(wav.to_string_lossy().into_owned()));
     let b = insert(&f, Some("Autre chose."), None);
     with_state(&f, |s| {
         let all = list_dictations(s.clone(), None, 10, 0).unwrap();
@@ -253,6 +253,20 @@ fn update_commands_check_and_install() {
         *f.updater.fail.lock().unwrap() = Some("signature invalide".into());
         assert_eq!(tauri::async_runtime::block_on(install_update(s)), Err("signature invalide".into()));
     });
+    assert_eq!(*f.updater.installs.lock().unwrap(), 1);
+}
+
+#[test]
+fn installing_an_update_while_recording_restores_the_sound_first() {
+    let f = Fixture::new();
+    *f.updater.available.lock().unwrap() =
+        Some(crate::services::AvailableUpdate { version: "0.2.0".into(), notes: None });
+    // The recording's guard: the installer ends the process before the recording ends.
+    let _guard = f.svc.audio_mute.guard();
+    with_state(&f, |s| tauri::async_runtime::block_on(install_update(s)).unwrap());
+    let outputs = vec!["haut-parleurs".to_string(), "casque".to_string()];
+    assert_eq!(f.mute.calls(), [MuteCall::MuteAll, MuteCall::Restore(outputs)]);
+    assert!(!f.svc.paths.muted_outputs_path.exists());
     assert_eq!(*f.updater.installs.lock().unwrap(), 1);
 }
 

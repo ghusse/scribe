@@ -38,6 +38,8 @@ pub struct Settings {
     pub llm_timeout_per_char_ms: u64,
     pub hint_budget_chars: usize,
     pub audio_retention_days: u32,
+    /// Mute every audio output while recording (`audio_mute`). Files from before this setting turn it on.
+    pub mute_audio_during_dictation: bool,
 }
 
 impl Default for Settings {
@@ -60,6 +62,7 @@ impl Default for Settings {
             llm_timeout_per_char_ms: 5,
             hint_budget_chars: 800,
             audio_retention_days: 30,
+            mute_audio_during_dictation: true,
         }
     }
 }
@@ -184,6 +187,18 @@ mod tests {
         assert_eq!((s.llm_model.as_str(), s.llm_effort.as_str()), ("claude-opus-5-5", "low"));
         assert_eq!((s.min_recording_ms, s.max_recording_ms, s.restore_delay_ms), (300, 600_000, 150));
         assert_eq!(s.level, Level::Formatted);
+        assert!(s.mute_audio_during_dictation);
+    }
+
+    #[test]
+    fn muting_during_dictation_is_on_for_files_from_before_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"llm_model":"claude-haiku-4-5"}"#).unwrap();
+        assert!(Settings::load(&path).mute_audio_during_dictation);
+        let off = Settings { mute_audio_during_dictation: false, ..Default::default() };
+        off.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), off);
     }
 
     #[test]

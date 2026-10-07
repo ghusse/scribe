@@ -443,6 +443,11 @@
   </section>
 
   <section>
+    <h2>Son</h2>
+    <label class="check"><input type="checkbox" bind:checked={s.mute_audio_during_dictation} /> Couper le son de l'ordinateur pendant la dictée</label>
+  </section>
+
+  <section>
     <h2>Correction</h2>
     <label>Niveau de correction
       <select bind:value={s.level}>

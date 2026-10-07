@@ -19,6 +19,9 @@ windows = { version = "0.58", features = [
   "Win32_System_Threading",
   "Win32_System_Com",
   "Win32_UI_Accessibility",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_System_SystemInformation",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -32,3 +35,4 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSBundle"] }
 objc2-av-foundation = { version = "0.3", features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
 libc = "0.2"
+objc2-core-audio = { version = "0.3", features = ["AudioHardware"] }

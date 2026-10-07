@@ -107,6 +107,15 @@ describe("Settings: autosave", () => {
     await waitFor(() => expect(bar().classList.contains("hidden")).toBe(true), { timeout: 3000 });
   });
 
+  it("saves the « mute during dictation » checkbox", async () => {
+    await setup();
+    const box = screen.getByLabelText(/Couper le son de l'ordinateur pendant la dictée/) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    await fireEvent.click(box);
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+    expect(lastSave().mute_audio_during_dictation).toBe(false);
+  });
+
   it("an edit undone before the save is not saved", async () => {
     const { status } = await setup();
     const box = screen.getByLabelText(/Double-tap/);
