@@ -22,6 +22,7 @@ export const NUMBER_FIELDS = {
   restore_delay_ms: { label: "Restauration du presse-papier", unit: "ms", help: "Augmentez si le texte collé est parfois l'ancien contenu.", default: 150, min: 0, max: 2000, integer: true, get: (s) => s.restore_delay_ms },
   audio_retention_days: { label: "Conservation de l'audio", unit: "jours", default: 30, min: 0, max: 36500, integer: true, get: (s) => s.audio_retention_days },
   max_recording_min: { label: "Durée max. d'une dictée", unit: "min", default: 10, min: 1, max: 10, integer: false, get: (s) => s.max_recording_ms / 60000 },
+  llm_timeout_s: { label: "Délai max. de correction", unit: "s", help: "Au-delà, le texte est collé sans correction.", default: 5, min: 1, max: 60, integer: false, get: (s) => s.llm_timeout_base_ms / 1000 },
 } satisfies Record<string, NumberField>;
 
 export type NumberFieldId = keyof typeof NUMBER_FIELDS;

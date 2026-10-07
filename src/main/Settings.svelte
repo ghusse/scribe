@@ -120,6 +120,7 @@
       return Promise.resolve();
     }
     snap.max_recording_ms = Math.round(snap.max_recording_ms);
+    snap.llm_timeout_base_ms = Math.round(snap.llm_timeout_base_ms);
     const invalid = checkNumbers(snap);
     if (invalid) {
       saveState = "invalid";
@@ -534,6 +535,7 @@
       </select>
     </label>
     {@render numberField("max_recording_min", s.max_recording_ms / 60000, (n) => (s!.max_recording_ms = n * 60000))}
+    {@render numberField("llm_timeout_s", s.llm_timeout_base_ms / 1000, (n) => (s!.llm_timeout_base_ms = n * 1000))}
   </section>
 
   <div class="statusbar {bar.tone}" class:hidden={!bar.visible}>
