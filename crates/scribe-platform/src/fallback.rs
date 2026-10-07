@@ -78,6 +78,11 @@ pub fn system_mute() -> Arc<dyn SystemMute> {
     Arc::new(OutputMuter(NoOutputs))
 }
 
+/// No boot time here: the crash recovery restores the outputs whatever the boot session (there are none anyway).
+pub fn boot_time_ms() -> Option<u64> {
+    None
+}
+
 pub fn prepare_overlay(_raw_hwnd: isize) {}
 
 struct NoPermissions;
@@ -147,6 +152,7 @@ mod tests {
         let mute = system_mute();
         assert!(mute.mute_all().is_empty());
         mute.restore(&["speakers".to_string()]);
+        assert_eq!(boot_time_ms(), None);
     }
 
     #[test]

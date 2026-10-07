@@ -21,8 +21,15 @@ pour que les haut-parleurs ne perturbent pas la transcription. Windows et macOS.
 - Un échec (API audio indisponible, sortie qui refuse) n'empêche jamais la dictée : il est journalisé
   (`tracing::warn!`), sans toast.
 - Reprise après plantage : la liste des sorties coupées est écrite dans `<app_data_dir>/muted_outputs.json` au
-  moment de la coupure et supprimée au rétablissement. Au lancement, si le fichier existe, on rétablit ces sorties
-  (même règle « encore coupée ») puis on le supprime ; un fichier illisible est supprimé avec un avertissement.
+  moment de la coupure, avec l'heure de démarrage du système (`{ "boot_ms", "outputs" }`), et supprimée au
+  rétablissement. Au lancement, si le fichier existe et date de la même session (heures de démarrage à moins d'une
+  minute près ; inconnue d'un côté = même session), on rétablit ces sorties (même règle « encore coupée ») ; dans
+  tous les cas on le supprime ; un fichier illisible est supprimé avec un avertissement. Après un redémarrage, on ne
+  touche à rien : l'utilisateur a pu entre-temps les couper volontairement.
+  Limite connue : dans la même session, une sortie que l'utilisateur a réactivée puis recoupée volontairement avant
+  de relancer Scribe est réactivée quand même (on ne sait pas qui l'a coupée).
+- Quitter Scribe (menu « Quitter ») ou installer une mise à jour pendant un enregistrement : le son est rétabli
+  avant que le processus se termine (attente bornée à 2 s, pour qu'une API audio bloquée n'empêche pas de quitter).
 
 ## Couche plateforme (`crates/scribe-platform`)
 
@@ -44,10 +51,13 @@ pour que les haut-parleurs ne perturbent pas la transcription. Windows et macOS.
   (famille objc2 0.3). Pas de repli « volume à 0 » en V1.
 - `fallback.rs` : `NoOutputs` (aucune sortie). Point d'entrée `output_backend()` (ou `system_mute()`) réexporté par
   `lib.rs` depuis `windows`/`macos`/`fallback`, comme `focus_detector()`.
+- `boot_time_ms() -> Option<u64>` (heure de démarrage du système, ms Unix), réexporté de la même façon : Windows
+  horloge moins `GetTickCount64`, macOS `kern.boottime`, `None` ailleurs.
 
 ## Application (`src-tauri`)
 
-- `Services` reçoit `mute: Arc<dyn SystemMute>` ; `AppPaths` reçoit `muted_outputs_path`.
+- `Services` reçoit `audio_mute: AudioMute` (le thread de travail ci-dessous, créé dans `main.rs` avec
+  `system_mute()`, `muted_outputs_path` et `boot_time_ms()`) ; `AppPaths` reçoit `muted_outputs_path`.
 - Nouveau module testé (ex. `audio_mute.rs`) :
   - `MuteGuard` : créé au début d'un enregistrement (si le réglage est actif), rétablit au `Drop`. Il est rangé
     dans `Controller::recording` avec le handle du micro, si bien que chaque chemin qui fait `recording.take()`
@@ -55,10 +65,15 @@ pour que les haut-parleurs ne perturbent pas la transcription. Windows et macOS.
   - Le thread contrôleur ne doit jamais attendre l'API audio (il cadence les gestes : double-tap, ticks) : la
     coupure et le rétablissement s'exécutent sur un thread de travail dédié, **dans l'ordre** (une file de commandes
     mute / restore), qui tient aussi le fichier de reprise.
-  - `recover(...)` au lancement (appelé depuis `main.rs`, avant le démarrage du contrôleur).
+  - `recover(...)` au lancement : `main.rs` l'envoie au thread de travail avant le démarrage du contrôleur (donc
+    avant toute coupure).
+  - `restore_before_exit(timeout)` : rétablit et attend (borné). Appelé sur `RunEvent::Exit` dans `main.rs` et
+    avant l'installation d'une mise à jour (`commands::install_update`) ; le guard de l'enregistrement n'a ensuite
+    plus rien à rétablir.
 - Fakes dans `testing.rs` ; tests : coupure si réglage actif, pas de coupure si inactif ou micro en erreur,
   rétablissement sur finish / discard / pause / touche perdue, ordre stop micro → rétablissement, fichier écrit puis
-  supprimé, reprise au lancement (fichier présent, absent, illisible).
+  supprimé, reprise au lancement (fichier présent, absent, illisible, autre session), rétablissement avant de
+  quitter ou de mettre à jour (et API audio bloquée).
 
 ## UI
 
@@ -72,5 +87,4 @@ tableau et aux « remaining branches » ; `tests/coverage-policy.test.ts` doit p
 
 ## Hors périmètre
 
-Détection casque / haut-parleurs, pause des lecteurs, repli « volume à 0 » sur macOS, rétablissement à la sortie
-de l'app pendant une dictée (couvert par la reprise au lancement suivant).
+Détection casque / haut-parleurs, pause des lecteurs, repli « volume à 0 » sur macOS.

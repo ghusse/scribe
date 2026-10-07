@@ -6,12 +6,13 @@ use std::time::Duration;
 
 use scribe_core::chord::{ChordRecorder, Recorded};
 use scribe_core::focus::FocusDetector;
-use scribe_core::insert::{Clipboard, FieldReader, KeySender, SystemMute};
+use scribe_core::insert::{Clipboard, FieldReader, KeySender};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
 use scribe_core::permissions::SystemPermissions;
 use scribe_platform::{HookConfig, RawKey};
 
+use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
 use crate::overlay::Overlay;
 use crate::secrets::SecretStore;
@@ -87,8 +88,8 @@ pub struct Services {
     pub keys: Arc<dyn KeySender>,
     /// Reads the focused field to check that a paste landed.
     pub field: Arc<dyn FieldReader>,
-    /// Mutes the audio outputs while recording (through `audio_mute`, never on the controller thread).
-    pub mute: Arc<dyn SystemMute>,
+    /// Mutes the audio outputs while recording, on its own worker (never on the controller thread).
+    pub audio_mute: AudioMute,
     pub secrets: Arc<dyn SecretStore>,
     pub providers: ProviderFactory,
     pub overlay: Overlay,

@@ -15,6 +15,7 @@ pub mod permissions;
 pub mod window;
 
 pub use hook::{start as start_keyboard_hook, HookHandle};
+pub use audio_output::boot_time_ms;
 pub use keys::is_key_pressed;
 pub use window::{hide_overlay, prepare_overlay, show_overlay};
 

@@ -11,7 +11,7 @@ use scribe_core::session::{self, Session, SessionAction};
 use scribe_platform::audio_capture::LevelCallback;
 use scribe_platform::HookEvent;
 
-use crate::audio_mute::{AudioMute, MuteGuard};
+use crate::audio_mute::MuteGuard;
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
 use crate::overlay::{OverlayEvent, ToastLevel};
 use crate::services::{Services, UiSink};
@@ -111,8 +111,6 @@ pub struct Controller {
     session: Session,
     mode: Mode,
     recording: Option<Active>,
-    /// Mutes and restores the audio outputs off the controller thread.
-    audio_mute: AudioMute,
     /// Since when the trigger looks physically up while the detector sees it held.
     released_since: Option<u64>,
 }
@@ -167,7 +165,6 @@ impl Controller {
     pub fn new(svc: Arc<Services>, tx: Sender<ControllerMsg>, deps: ControllerDeps) -> Self {
         let s = svc.settings.read().unwrap().clone();
         Self {
-            audio_mute: AudioMute::spawn(svc.mute.clone(), svc.paths.muted_outputs_path.clone()),
             svc,
             tx,
             deps,
@@ -262,7 +259,7 @@ impl Controller {
                         self.mode = Mode::Hold;
                         overlay.emit(OverlayEvent::Recording { locked: false });
                         let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
-                        let mute = mute_on.then(|| self.audio_mute.guard());
+                        let mute = mute_on.then(|| self.svc.audio_mute.guard());
                         self.recording = Some(Active { handle, focus_start: spawn_focus_snapshot(&self.svc), mute });
                     }
                     Err(e) => {

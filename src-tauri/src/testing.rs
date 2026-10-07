@@ -10,6 +10,7 @@ use scribe_core::prompt::CorrectionPrompt;
 use scribe_core::storage::Db;
 use scribe_platform::HookConfig;
 
+use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
 use crate::overlay::fake::FakeWindow;
 use crate::overlay::Overlay;
@@ -317,6 +318,7 @@ impl Fixture {
     pub fn with_settings(settings: Settings) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::new(dir.path().to_path_buf());
+        let muted_outputs_path = paths.muted_outputs_path.clone();
         std::fs::create_dir_all(&paths.audio_dir).unwrap();
         let window = Arc::new(FakeWindow::default());
         let ui = Arc::new(FakeUi::default());
@@ -342,7 +344,7 @@ impl Fixture {
             clipboard: clipboard.clone(),
             keys: keys.clone(),
             field: field.clone(),
-            mute: mute.clone(),
+            audio_mute: AudioMute::spawn(mute.clone(), muted_outputs_path, None),
             secrets: secrets.clone(),
             providers: Box::new(move |_s, _store| {
                 let plan = factory_plan.lock().unwrap().clone();

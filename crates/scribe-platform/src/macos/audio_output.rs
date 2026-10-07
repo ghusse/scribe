@@ -145,3 +145,14 @@ fn mute_address(device: AudioObjectID) -> Result<AudioObjectPropertyAddress, Str
         Err(format!("la sortie audio {device} n'a pas de réglage muet"))
     }
 }
+
+/// When the system booted (Unix ms, `kern.boottime`). Dates the boot session the outputs were muted in, for the
+/// crash recovery.
+pub fn boot_time_ms() -> Option<u64> {
+    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    let mut size = size_of::<libc::timeval>();
+    let r = unsafe {
+        libc::sysctlbyname(c"kern.boottime".as_ptr(), (&raw mut tv).cast::<c_void>(), &mut size, ptr::null_mut(), 0)
+    };
+    (r == 0).then(|| tv.tv_sec as u64 * 1000 + tv.tv_usec as u64 / 1000)
+}

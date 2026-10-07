@@ -8,6 +8,7 @@ use windows::Win32::Media::Audio::{eRender, IMMDevice, IMMDeviceEnumerator, MMDe
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::SystemInformation::GetTickCount64;
 
 use crate::output_mute::OutputBackend;
 
@@ -54,4 +55,11 @@ unsafe fn device_id(device: &IMMDevice) -> windows::core::Result<String> {
 unsafe fn endpoint_volume(id: &str) -> windows::core::Result<IAudioEndpointVolume> {
     let device = enumerator()?.GetDevice(&HSTRING::from(id))?;
     device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None)
+}
+
+/// When the system booted (Unix ms): the wall clock minus the uptime (sleep included). Dates the boot session the
+/// outputs were muted in, for the crash recovery.
+pub fn boot_time_ms() -> Option<u64> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
+    now.checked_sub(unsafe { GetTickCount64() })
 }

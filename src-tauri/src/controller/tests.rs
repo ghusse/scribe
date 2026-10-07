@@ -146,12 +146,12 @@ impl Harness {
 
     /// The mute calls once the mute worker has caught up.
     fn mute_calls(&self) -> Vec<MuteCall> {
-        self.c.audio_mute.flush();
+        self.f.svc.audio_mute.flush();
         self.f.mute.calls()
     }
 
     fn muted_file(&self) -> bool {
-        self.c.audio_mute.flush();
+        self.f.svc.audio_mute.flush();
         self.f.svc.paths.muted_outputs_path.exists()
     }
 }
@@ -531,7 +531,7 @@ fn the_sound_is_muted_while_recording_and_restored_once_the_microphone_is_stoppe
     let mut h = Harness::new();
     // What the mute worker has done when the microphone stops.
     let at_stop = Arc::new(Mutex::new(None));
-    let (audio, mute, seen) = (h.c.audio_mute.clone(), h.f.mute.clone(), at_stop.clone());
+    let (audio, mute, seen) = (h.f.svc.audio_mute.clone(), h.f.mute.clone(), at_stop.clone());
     *h.rec.on_stop.lock().unwrap() = Some(Arc::new(move || {
         audio.flush();
         *seen.lock().unwrap() = Some(mute.calls());

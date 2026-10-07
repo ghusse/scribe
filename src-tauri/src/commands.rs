@@ -11,6 +11,7 @@ use scribe_core::permissions::{Permission, PermissionStatus};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_providers::catalog::{self, Provider};
 
+use crate::audio_mute;
 use crate::controller::ControllerMsg;
 use crate::dictation;
 use crate::secrets;
@@ -183,9 +184,12 @@ pub async fn check_update(svc: Svc<'_>) -> Result<UpdateStatus, String> {
     update::status(&svc).await
 }
 
-/// Installs the latest version and restarts Scribe (on Windows the installer closes and relaunches it).
+/// Installs the latest version and restarts Scribe (on Windows the installer closes and relaunches it). The process
+/// ends without a recording in progress ever ending: the sound it muted is restored first.
 #[tauri::command]
 pub async fn install_update(svc: Svc<'_>) -> Result<(), String> {
+    let audio = svc.audio_mute.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || audio.restore_before_exit(audio_mute::EXIT_RESTORE_TIMEOUT)).await;
     svc.updater.install().await
 }
 
