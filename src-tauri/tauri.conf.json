@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Scribe",
-  "version": "0.3.0",
   "identifier": "dev.scribe.app",
   "build": {
     "frontendDist": "../dist",

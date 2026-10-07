@@ -87,17 +87,49 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 
 ## Publier une version
 
+Les versions sont publiées automatiquement à partir des [Conventional Commits](https://www.conventionalcommits.org/)
+(workflow `.github/workflows/release-please.yml`, configuration `release-please-config.json` et
+`.release-please-manifest.json`).
+
+1. Fusionner les PR en **squash** avec un titre conventionnel : il devient le message du commit sur `main`. Avant
+   1.0, `feat:` monte la version mineure (0.3.0 → 0.4.0), `fix:` et `perf:` la version de correctif (0.3.0 →
+   0.3.1), un changement cassant (`feat!:` ou `BREAKING CHANGE:`) la version mineure. `chore:`, `docs:`, `ci:`,
+   `test:`, `refactor:` ne déclenchent pas de version.
+2. À chaque push sur `main`, release-please tient à jour une PR « chore: release X.Y.Z » : version dans
+   `package.json`, `src-tauri/Cargo.toml` et `Cargo.lock` (entrée `scribe-app` seulement), et `CHANGELOG.md`
+   (Fonctionnalités, Corrections, Performances). La CI ne tourne pas sur cette PR (elle est ouverte par
+   `GITHUB_TOKEN`) ; elle ne change que des numéros de version et le changelog.
+3. Fusionner cette PR publie la version : le workflow crée le tag `vX.Y.Z` et une release en brouillon, construit
+   les installeurs Windows puis le `.dmg` macOS universel dans ce brouillon (avec `latest.json` pour les deux
+   plateformes), et ne publie la release que si les deux builds ont réussi. Si un build ou la publication échoue,
+   le brouillon reste privé : relancer les jobs en échec (« Re-run failed jobs ») le complète puis le publie. Si
+   c'est le job `release` qui a échoué après avoir créé le brouillon, ou pour toute autre reprise : Actions >
+   Release Please > « Run workflow » avec le tag (`v0.4.0`) reconstruit les deux plateformes dans ce brouillon et
+   le publie. Un échec du job `release-pr` (mise à jour de la PR de version) ne bloque jamais la release.
+
+La version de l'app est celle de `src-tauri/Cargo.toml` (`tauri.conf.json` n'en a pas : Tauri reprend celle du
+crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main.
+
+Réglage du dépôt nécessaire : Settings > Actions > General > « Allow GitHub Actions to create and approve pull
+requests », sans quoi release-please ne peut pas ouvrir sa PR.
+
+Repli manuel (`.github/workflows/release.yml`) : dans un même commit, monter la version dans
+`src-tauri/Cargo.toml`, `package.json`, `Cargo.lock` **et** `.release-please-manifest.json`, puis pousser ce commit
+et le tag ensemble (`git tag v0.4.0 && git push --atomic origin main v0.4.0`). Sans le manifeste dans ce commit,
+release-please proposerait de nouveau cette version dans une PR. Fermer ensuite la PR de version éventuellement
+ouverte (« chore: release … ») : la suivante repartira de la version publiée à la main. Le workflow vérifie que le
+tag correspond à `src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à
+publier à la main.
+
+Build local :
+
 ```bash
 # Les bundles de mise à jour sont signés : la clé privée et son mot de passe sont lus dans ~/.tauri.
 TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/scribe.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/scribe.key.password)"   bun tauri build   # target/release/bundle/nsis/Scribe_<version>_x64-setup.exe (+ .sig), et un .msi
 ```
 
-Pour une release GitHub : monter la version dans `src-tauri/tauri.conf.json`, `package.json` et les `Cargo.toml`,
-puis pousser un tag `v<version>` (`git tag v0.2.0 && git push origin v0.2.0`). Le workflow
-`.github/workflows/release.yml` vérifie que le tag correspond à la version, construit les installeurs et les joint à
-une release en brouillon, à publier à la main (installeurs Windows, puis `.dmg` macOS universel). Les installeurs ne
-sont pas signés : au premier lancement, Windows SmartScreen demande « Informations complémentaires » puis « Exécuter
-quand même » ; macOS demande un clic droit sur Scribe > Ouvrir.
+Les installeurs ne sont pas signés : au premier lancement, Windows SmartScreen demande « Informations
+complémentaires » puis « Exécuter quand même » ; macOS demande un clic droit sur Scribe > Ouvrir.
 
 Mises à jour : la release publiée contient `latest.json`. Les versions installées le consultent 30 s après leur
 lancement (un toast annonce une nouvelle version) et depuis Réglages > Mises à jour, qui l'installe et redémarre
