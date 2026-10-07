@@ -101,8 +101,11 @@ Les versions sont publiées automatiquement à partir des [Conventional Commits]
    `GITHUB_TOKEN`) ; elle ne change que des numéros de version et le changelog.
 3. Fusionner cette PR publie la version : le workflow crée le tag `vX.Y.Z` et une release en brouillon, construit
    les installeurs Windows puis le `.dmg` macOS universel dans ce brouillon (avec `latest.json` pour les deux
-   plateformes), et ne publie la release que si les deux builds ont réussi. Si un build échoue, le brouillon reste
-   privé : relancer les jobs en échec (« Re-run failed jobs ») le complète puis le publie.
+   plateformes), et ne publie la release que si les deux builds ont réussi. Si un build ou la publication échoue,
+   le brouillon reste privé : relancer les jobs en échec (« Re-run failed jobs ») le complète puis le publie. Si
+   c'est le job `release` qui a échoué après avoir créé le brouillon, ou pour toute autre reprise : Actions >
+   Release Please > « Run workflow » avec le tag (`v0.4.0`) reconstruit les deux plateformes dans ce brouillon et
+   le publie. Un échec du job `release-pr` (mise à jour de la PR de version) ne bloque jamais la release.
 
 La version de l'app est celle de `src-tauri/Cargo.toml` (`tauri.conf.json` n'en a pas : Tauri reprend celle du
 crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main.
@@ -110,11 +113,13 @@ crate pour les installeurs, `latest.json` et la version affichée). Ne pas la mo
 Réglage du dépôt nécessaire : Settings > Actions > General > « Allow GitHub Actions to create and approve pull
 requests », sans quoi release-please ne peut pas ouvrir sa PR.
 
-Repli manuel (`.github/workflows/release.yml`) : monter la version dans `src-tauri/Cargo.toml`, `package.json` et
-`Cargo.lock`, puis pousser un tag `v<version>` (`git tag v0.4.0 && git push origin v0.4.0`). Le workflow vérifie que
-le tag correspond à `src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à
-publier à la main. Mettre ensuite `.release-please-manifest.json` à cette version pour que release-please reparte de
-là.
+Repli manuel (`.github/workflows/release.yml`) : dans un même commit, monter la version dans
+`src-tauri/Cargo.toml`, `package.json`, `Cargo.lock` **et** `.release-please-manifest.json`, puis pousser ce commit
+et le tag ensemble (`git tag v0.4.0 && git push --atomic origin main v0.4.0`). Sans le manifeste dans ce commit,
+release-please proposerait de nouveau cette version dans une PR. Fermer ensuite la PR de version éventuellement
+ouverte (« chore: release … ») : la suivante repartira de la version publiée à la main. Le workflow vérifie que le
+tag correspond à `src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à
+publier à la main.
 
 Build local :
 

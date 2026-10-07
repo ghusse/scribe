@@ -6,58 +6,123 @@ name: Release Please
 # macOS into that draft and publish it only once both builds succeeded.
 # Everything runs in this workflow: a tag created with GITHUB_TOKEN triggers no other workflow (release.yml, the
 # manual fallback, does not run for it).
+# Recovery: run this workflow by hand (workflow_dispatch) with the tag of a draft left unpublished. It rebuilds both
+# platforms into that draft (existing assets are replaced) and publishes it. "Re-run failed jobs" only helps when a
+# build or the publish failed: a re-run of the release job finds the release PR already tagged and creates nothing.
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft release to build and publish (vX.Y.Z)"
+        required: true
+        type: string
 
 # Nothing by default; each job asks for what it needs.
 permissions: {}
-
-# Never two runs at once (two release PR updates or two releases racing on latest.json), and never cancel a run:
-# a cancelled build would leave a half-filled draft.
-concurrency:
-  group: release-please
-  cancel-in-progress: false
 
 # Same text as release.yml: appended to the changelog of the published release, and the notes of latest.json.
 env:
   RELEASE_BODY: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
 
 jobs:
-  release-please:
+  # Creates the tag and the draft release and nothing else (skip-github-pull-request): its outputs drive the builds.
+  # The release PR is updated by release-pr, so a failure there can never strand a release that already exists.
+  # Two runs never create releases at once. A pending run replaced by a newer push loses nothing: release-please
+  # releases every merged release PR still labelled "autorelease: pending", whichever push it runs for.
+  release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
     permissions:
-      contents: write # release commits, tags, releases
-      issues: write # labels of the release PR
+      contents: write # tags, releases (and listing drafts for a manual run)
+      issues: write # relabel the merged release PR "autorelease: tagged"
       pull-requests: write
     outputs:
-      created: ${{ steps.release.outputs.release_created }}
-      id: ${{ steps.release.outputs.id }}
-      tag: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
+      created: ${{ steps.release.outputs.release_created || steps.existing.outputs.created }}
+      id: ${{ steps.release.outputs.id || steps.existing.outputs.id }}
+      tag: ${{ steps.release.outputs.tag_name || steps.existing.outputs.tag }}
+      version: ${{ steps.release.outputs.version || steps.existing.outputs.version }}
     steps:
       # Draft + force-tag-creation (release-please-config.json): the tag exists at once, the release stays private.
       - id: release
+        if: ${{ github.event_name == 'push' }}
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          skip-github-pull-request: true
 
+      # Manual run: the existing draft for that tag. A published release is never rebuilt.
+      - id: existing
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the tag must look like vX.Y.Z"
+            exit 1
+          fi
+          # A draft is not reachable through releases/tags/{tag}: look for it in the list.
+          id=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG) | .id' | head -n 1)
+          if [ -z "$id" ]; then
+            echo "::error::no draft release for $TAG"
+            exit 1
+          fi
+          {
+            echo "created=true"
+            echo "id=$id"
+            echo "tag=$TAG"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
+
+  # Keeps the release PR up to date (skip-github-release). Runs after release, so a release PR merged by this push
+  # is tagged before a new one is proposed, but no build depends on it: if it fails, the run turns red and the
+  # release is still built and published. Same concurrency group as release: release-please never writes from two
+  # jobs at once, and a pending job replaced by a newer push loses nothing (that push's run updates the PR).
+  release-pr:
+    needs: release
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-please
+      cancel-in-progress: false
+    permissions:
+      contents: write # commits on the release branch
+      issues: write # labels of the release PR
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          skip-github-release: true
+
+  # The build chain uses one concurrency group per release, never cancelled. A re-run or manual run waiting for its
+  # turn is therefore never replaced by later pushes to main (they queue in the release job's group), and two runs
+  # of the same release never rewrite its latest.json at once.
   windows:
-    needs: release-please
-    if: ${{ needs.release-please.outputs.created == 'true' }}
+    needs: release
+    if: ${{ needs.release.outputs.created == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 60
+    concurrency:
+      group: release-build-${{ needs.release.outputs.tag }}
+      cancel-in-progress: false
     permissions:
       contents: write # upload to the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.tag }}
+          ref: ${{ needs.release.outputs.tag }}
 
       # The bundles and latest.json take the version from src-tauri/Cargo.toml: it must be the released one.
       - name: Cargo.toml has the released version
         shell: bash
         env:
-          EXPECTED: ${{ needs.release-please.outputs.version }}
+          EXPECTED: ${{ needs.release.outputs.version }}
         run: |
           version=$(awk -F'"' '{ sub(/\r$/, "") } /^\[/ { p = ($0 == "[package]") } p && /^version *=/ { print $2; exit }' src-tauri/Cargo.toml)
           if [ "${version}" != "${EXPECTED}" ]; then
@@ -89,7 +154,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tauriScript: bun tauri
-          releaseId: ${{ needs.release-please.outputs.id }}
+          releaseId: ${{ needs.release.outputs.id }}
           releaseBody: ${{ env.RELEASE_BODY }}
           # latest.json, read by the installed apps once the release is published, points to the NSIS installer.
           uploadUpdaterJson: true
@@ -97,15 +162,18 @@ jobs:
 
   # After Windows: both jobs rewrite latest.json, this one adds the macOS entries.
   macos:
-    needs: [release-please, windows]
+    needs: [release, windows]
     runs-on: macos-latest
     timeout-minutes: 60
+    concurrency:
+      group: release-build-${{ needs.release.outputs.tag }}
+      cancel-in-progress: false
     permissions:
       contents: write # upload to the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.tag }}
+          ref: ${{ needs.release.outputs.tag }}
 
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
@@ -130,16 +198,19 @@ jobs:
         with:
           tauriScript: bun tauri
           args: --target universal-apple-darwin
-          releaseId: ${{ needs.release-please.outputs.id }}
+          releaseId: ${{ needs.release.outputs.id }}
           releaseBody: ${{ env.RELEASE_BODY }}
           uploadUpdaterJson: true
 
-  # Only when both builds succeeded (default `needs` condition): the draft becomes the latest release, which the
+  # Only when both builds succeeded (default `needs` condition): the draft becomes a published release, which the
   # installed apps find through releases/latest/download/latest.json.
   publish:
-    needs: [release-please, windows, macos]
+    needs: [release, windows, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: release-build-${{ needs.release.outputs.tag }}
+      cancel-in-progress: false
     permissions:
       contents: write # edit the release
     steps:
@@ -147,11 +218,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.release-please.outputs.tag }}
+          RELEASE_ID: ${{ needs.release.outputs.id }}
+          TAG: ${{ needs.release.outputs.tag }}
         run: |
-          gh release view "$TAG" --json body --jq .body > notes.md
+          gh api "repos/$GH_REPO/releases/$RELEASE_ID" --jq .body > notes.md
           # A re-run must not append the installation notes twice.
           if ! grep -qxF "$RELEASE_BODY" notes.md; then
             printf '\n%s\n' "$RELEASE_BODY" >> notes.md
           fi
-          gh release edit "$TAG" --title "Scribe $TAG" --notes-file notes.md --draft=false --latest
+          # Builds of two releases no longer wait for each other, so they may be published out of order.
+          # make_latest=legacy marks as latest the newest release by creation date and version, whatever that order.
+          gh api --method PATCH "repos/$GH_REPO/releases/$RELEASE_ID" \
+            -f name="Scribe $TAG" -F body=@notes.md -F draft=false -f make_latest=legacy > /dev/null
