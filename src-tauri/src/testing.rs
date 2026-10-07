@@ -193,7 +193,7 @@ pub struct ProviderPlan {
 
 impl Default for ProviderPlan {
     fn default() -> Self {
-        Self { build: Ok(()), stt: Ok("bonjour scribe".into()), llm: Ok("<output>Bonjour Scribe.</output>".into()) }
+        Self { build: Ok(()), stt: Ok("bonjour scribe comment ça va".into()), llm: Ok("<output>Bonjour Scribe, comment ça va ?</output>".into()) }
     }
 }
 

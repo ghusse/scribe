@@ -137,6 +137,14 @@ pub fn strip_trailing_hallucinations(text: &str) -> String {
     }
 }
 
+/// A transcript of at most this many words is delivered without correction: the transcription model already
+/// capitalizes and punctuates it, and the corrector would add seconds of latency to « OK, merci ».
+pub const SHORT_TRANSCRIPT_MAX_WORDS: usize = 3;
+
+fn is_short(raw: &str) -> bool {
+    raw.split_whitespace().count() <= SHORT_TRANSCRIPT_MAX_WORDS
+}
+
 pub async fn run(
     cfg: &PipelineConfig,
     wav: &[u8],
@@ -160,7 +168,7 @@ pub async fn run(
     if is_blank_or_hallucination(&raw) {
         return Err(PipelineError::Empty);
     }
-    if cfg.level == Level::Raw {
+    if cfg.level == Level::Raw || is_short(&raw) {
         return Ok(PipelineOutput { final_text: raw.clone(), raw, stt_ms, llm_ms: None, correction_error: None });
     }
 
@@ -259,29 +267,45 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn short_transcript_skips_corrector() {
+        for (raw, level) in [("OK, merci beaucoup.", Level::Clean), ("à demain", Level::Formatted), ("Oui.", Level::Formatted)] {
+            let stt = FakeStt::new(vec![Ok(raw.into())]);
+            let llm = FakeLlm::new(Ok("<output>X</output>".into()), 0);
+            let out = run(&cfg(level), b"wav", &[], None, &stt, &llm).await.unwrap();
+            assert_eq!((out.final_text.as_str(), out.llm_ms, out.correction_error), (raw, None, None), "{raw}");
+            assert_eq!(llm.calls.load(Ordering::SeqCst), 0, "{raw}");
+        }
+        let stt = FakeStt::new(vec![Ok("OK, merci beaucoup Paul.".into())]);
+        let llm = FakeLlm::new(Ok("<output>OK, merci beaucoup Paul !</output>".into()), 0);
+        let out = run(&cfg(Level::Formatted), b"wav", &[], None, &stt, &llm).await.unwrap();
+        assert_eq!(out.final_text, "OK, merci beaucoup Paul !");
+        assert_eq!(llm.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn corrector_error_falls_back_to_raw() {
-        let stt = FakeStt::new(vec![Ok("bonjour".into())]);
+        let stt = FakeStt::new(vec![Ok("bonjour à tous et merci".into())]);
         let llm = FakeLlm::new(Err(ProviderError::Http { status: 529, body: "overloaded".into() }), 0);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
-        assert_eq!(out.final_text, "bonjour");
+        assert_eq!(out.final_text, "bonjour à tous et merci");
         assert!(out.correction_error.unwrap().contains("529"));
     }
 
     #[tokio::test(start_paused = true)]
     async fn corrector_timeout_falls_back_to_raw() {
-        let stt = FakeStt::new(vec![Ok("bonjour".into())]);
+        let stt = FakeStt::new(vec![Ok("bonjour à tous et merci".into())]);
         let llm = FakeLlm::new(Ok("<output>Bonjour.</output>".into()), 60_000);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
-        assert_eq!(out.final_text, "bonjour");
+        assert_eq!(out.final_text, "bonjour à tous et merci");
         assert!(out.correction_error.unwrap().contains("délai"));
     }
 
     #[tokio::test(start_paused = true)]
     async fn corrector_without_output_tags_falls_back_to_raw() {
-        let stt = FakeStt::new(vec![Ok("bonjour".into())]);
+        let stt = FakeStt::new(vec![Ok("bonjour à tous et merci".into())]);
         let llm = FakeLlm::new(Ok("Voici le texte corrigé : Bonjour.".into()), 0);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
-        assert_eq!(out.final_text, "bonjour");
+        assert_eq!(out.final_text, "bonjour à tous et merci");
         assert!(out.correction_error.is_some());
     }
 
@@ -386,12 +410,12 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn server_errors_are_retried_and_client_errors_are_not() {
-        let llm = FakeLlm::new(Ok("<output>Bonjour.</output>".into()), 0);
-        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 503, body: "down".into() }), Ok("bonjour".into())]);
-        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap().final_text, "Bonjour.");
+        let llm = FakeLlm::new(Ok("<output>Bonjour à tous, et merci.</output>".into()), 0);
+        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 503, body: "down".into() }), Ok("bonjour à tous et merci".into())]);
+        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap().final_text, "Bonjour à tous, et merci.");
         assert_eq!(stt.calls(), 2);
 
-        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 429, body: String::new() }), Ok("bonjour".into())]);
+        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 429, body: String::new() }), Ok("bonjour à tous et merci".into())]);
         assert!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.is_ok());
         assert_eq!(stt.calls(), 2);
 

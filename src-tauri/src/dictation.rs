@@ -6,7 +6,7 @@ use scribe_core::audio::{self, AudioClip};
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::Mode;
 use scribe_core::insert::{self, InsertResult};
-use scribe_core::model::{Level, NewDictation, Outcome, TranscriptionUpdate};
+use scribe_core::model::{NewDictation, Outcome, TranscriptionUpdate};
 use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError};
 use scribe_core::prompt;
 use scribe_core::storage::Db;
@@ -114,7 +114,8 @@ pub fn build_record(meta: &RecordMeta, settings: &Settings, delivery: Delivery<'
             record.raw_text = Some(out.raw.clone());
             record.final_text = Some(out.final_text.clone());
             record.transcriber = Some(transcriber);
-            record.corrector = (settings.level != Level::Raw).then_some(corrector);
+            // Raw level and short dictations never reach the corrector (`pipeline::run`).
+            record.corrector = out.llm_ms.is_some().then_some(corrector);
             record.stt_ms = Some(out.stt_ms as i64);
             record.llm_ms = out.llm_ms.map(|v| v as i64);
             record.outcome = inserted.outcome();
@@ -228,7 +229,7 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
         raw_text: Some(out.raw),
         final_text: Some(out.final_text),
         transcriber: Some(stt.name()),
-        corrector: (settings.level != Level::Raw).then(|| llm.name()),
+        corrector: out.llm_ms.is_some().then(|| llm.name()),
         stt_ms: Some(out.stt_ms as i64),
         llm_ms: out.llm_ms.map(|v| v as i64),
         outcome,
