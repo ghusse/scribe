@@ -1,6 +1,8 @@
 // semantic-release (.github/workflows/semantic-release.yml): every push to main that CI validated is analysed
 // from the last vX.Y.Z tag; a feat, fix or perf commit releases a new version without any human step.
 // Plugin versions are pinned exactly in package.json (devDependencies) and bun.lock.
+// conventional-changelog-conventionalcommits stays on 9.x: 10.x needs conventional-changelog-writer 9, while
+// @semantic-release/release-notes-generator 14 renders with writer 8 ("Missing helper" error on 10.x).
 
 // Changelog sections (French, as in CHANGELOG.md). "hidden" types are left out of the notes and release nothing.
 const types = [
@@ -8,13 +10,13 @@ const types = [
   { type: "fix", section: "Corrections" },
   { type: "perf", section: "Performances" },
   { type: "revert", section: "Retours en arrière" },
-  { type: "refactor", section: "Refactorisation", effect: "hidden" },
-  { type: "docs", section: "Documentation", effect: "hidden" },
-  { type: "style", section: "Style", effect: "hidden" },
-  { type: "test", section: "Tests", effect: "hidden" },
-  { type: "build", section: "Build", effect: "hidden" },
-  { type: "ci", section: "CI", effect: "hidden" },
-  { type: "chore", section: "Divers", effect: "hidden" },
+  { type: "refactor", section: "Refactorisation", hidden: true },
+  { type: "docs", section: "Documentation", hidden: true },
+  { type: "style", section: "Style", hidden: true },
+  { type: "test", section: "Tests", hidden: true },
+  { type: "build", section: "Build", hidden: true },
+  { type: "ci", section: "CI", hidden: true },
+  { type: "chore", section: "Divers", hidden: true },
 ];
 
 export default {
@@ -26,14 +28,15 @@ export default {
       {
         preset: "conventionalcommits",
         presetConfig: { types },
-        // Checked before the defaults; a commit matching none of them falls back to the defaults (revert -> patch,
-        // anything else -> no release). Before 1.0 a breaking change bumps the minor version: change the first rule
-        // to "major" (or drop it) once 1.0.0 is out.
+        // Checked before the defaults; a commit matching none of them falls back to the defaults (a git
+        // "Revert ..." message -> patch, anything else -> no release). Before 1.0 a breaking change bumps the minor
+        // version: change the first rule to "major" (or drop it) once 1.0.0 is out.
         releaseRules: [
           { breaking: true, release: "minor" },
           { type: "feat", release: "minor" },
           { type: "fix", release: "patch" },
           { type: "perf", release: "patch" },
+          { type: "revert", release: "patch" },
         ],
       },
     ],
