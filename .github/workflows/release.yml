@@ -1,8 +1,10 @@
 name: Release
 
-# Manual fallback for release-please.yml (which builds and publishes releases on its own): pushing a tag vX.Y.Z
+# Manual fallback for semantic-release.yml (which builds and publishes releases on its own): pushing a tag vX.Y.Z
 # builds the installers and attaches them to a draft GitHub release, published by hand once checked. The tag must
-# match the version in src-tauri/Cargo.toml (the app version: tauri.conf.json has none).
+# match the version in src-tauri/Cargo.toml (the app version: tauri.conf.json has none). semantic-release then
+# starts from that tag: the next automatic release is computed from the commits made after it.
+# Tags pushed by semantic-release itself (with GITHUB_TOKEN) never trigger this workflow.
 on:
   push:
     # X.Y.Z only: the MSI bundler rejects pre-release versions such as 0.2.0-beta.

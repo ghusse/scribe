@@ -4,8 +4,9 @@
 
 Windows installers (`Scribe_<version>_x64-setup.exe`, recommended, and `Scribe_<version>_x64_en-US.msi`) and the
 macOS disk image (`Scribe_<version>_universal.dmg`, Apple Silicon and Intel) are built
-from this repository's source code by the release workflow
-[`.github/workflows/release.yml`](.github/workflows/release.yml) on GitHub-hosted runners, from a `vX.Y.Z` tag.
+from this repository's source code on GitHub-hosted runners, from a `vX.Y.Z` tag, by the release workflow
+[`.github/workflows/semantic-release.yml`](.github/workflows/semantic-release.yml) (or its manual fallback
+[`.github/workflows/release.yml`](.github/workflows/release.yml)).
 Third-party libraries are compiled from their published sources (Cargo and bun lock files are committed).
 
 The installers are **not Authenticode-signed**. On first install, Windows SmartScreen shows "Windows protected your

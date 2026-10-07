@@ -1,16 +1,22 @@
-name: Release Please
+name: Semantic Release
 
-# Continuous delivery from Conventional Commits (release-please-config.json, .release-please-manifest.json).
-# Each push to main updates the release PR (versions in package.json, src-tauri/Cargo.toml and Cargo.lock, plus
-# CHANGELOG.md). Merging that PR creates the tag vX.Y.Z and a DRAFT release; the jobs below then build Windows and
-# macOS into that draft and publish it only once both builds succeeded.
-# Everything runs in this workflow: a tag created with GITHUB_TOKEN triggers no other workflow (release.yml, the
-# manual fallback, does not run for it).
+# Continuous delivery from Conventional Commits, with no release PR and no human step (release.config.mjs).
+# Each push to main that CI validated is analysed by semantic-release from the last vX.Y.Z tag. When it contains a
+# feat, fix or perf commit, semantic-release writes the version into package.json, src-tauri/Cargo.toml and
+# Cargo.lock (scribe-app), adds the notes on top of CHANGELOG.md, commits "chore(release): X.Y.Z" to main, tags it
+# vX.Y.Z and creates a DRAFT release. The jobs below then build Windows and macOS from that tag into the draft and
+# publish it only once both builds succeeded.
+# Everything runs in this workflow: a commit or tag pushed with GITHUB_TOKEN triggers no other workflow (no CI run
+# for the release commit, no release.yml run for the tag, no new run of this workflow).
+# A CI run of main cancelled by a newer push (ci.yml: cancel-in-progress) releases nothing: the green run of the
+# newer push releases everything since the last tag.
 # Recovery: run this workflow by hand (workflow_dispatch) with the tag of a draft left unpublished. It rebuilds both
 # platforms into that draft (existing assets are replaced) and publishes it. "Re-run failed jobs" only helps when a
-# build or the publish failed: a re-run of the release job finds the release PR already tagged and creates nothing.
+# build or the publish failed: a re-run of the release job finds main moved (release commit) and creates nothing.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -27,40 +33,102 @@ env:
   RELEASE_BODY: "Windows : installeur NSIS (recommandé) ou MSI, non signés : à la première installation, SmartScreen > « Informations complémentaires » > « Exécuter quand même ». macOS : le .dmg universel (Apple Silicon et Intel), non notarisé : au premier lancement, clic droit sur Scribe > Ouvrir, puis autoriser Scribe dans Réglages Système > Confidentialité et sécurité > Accessibilité. Confidentialité : https://github.com/ghusse/scribe/blob/main/PRIVACY.md"
 
 jobs:
-  # Creates the tag and the draft release and nothing else (skip-github-pull-request): its outputs drive the builds.
-  # The release PR is updated by release-pr, so a failure there can never strand a release that already exists.
-  # Two runs never create releases at once. A pending run replaced by a newer push loses nothing: release-please
-  # releases every merged release PR still labelled "autorelease: pending", whichever push it runs for.
+  # Creates the release commit, the tag and the draft release, and nothing else: its outputs drive the builds.
+  # Only for a green CI run of a push to main of this repository (never a pull request, even from a fork branch
+  # named main), or a manual run. Two runs never release at once; a pending run replaced by a newer one loses
+  # nothing, since every run releases all the commits since the last tag.
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     concurrency:
-      group: release-please
+      group: semantic-release
       cancel-in-progress: false
     permissions:
-      contents: write # tags, releases (and listing drafts for a manual run)
-      issues: write # relabel the merged release PR "autorelease: tagged"
-      pull-requests: write
+      contents: write # release commit on main, tag, draft release (and listing drafts)
     outputs:
-      created: ${{ steps.release.outputs.release_created || steps.existing.outputs.created }}
-      id: ${{ steps.release.outputs.id || steps.existing.outputs.id }}
-      tag: ${{ steps.release.outputs.tag_name || steps.existing.outputs.tag }}
-      version: ${{ steps.release.outputs.version || steps.existing.outputs.version }}
+      created: ${{ steps.draft.outputs.created }}
+      id: ${{ steps.draft.outputs.id }}
+      tag: ${{ steps.draft.outputs.tag }}
+      version: ${{ steps.draft.outputs.version }}
     steps:
-      # Draft + force-tag-creation (release-please-config.json): the tag exists at once, the release stays private.
-      - id: release
-        if: ${{ github.event_name == 'push' }}
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        with:
-          skip-github-pull-request: true
-
-      # Manual run: the existing draft for that tag. A published release is never rebuilt.
-      - id: existing
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      # Release exactly the commit CI validated, and only while it is still the head of main. If main moved since,
+      # this run stops here: the newer push has its own CI run, which releases its commits and these ones. (Should
+      # main move between this check and the push of the release commit, that push is rejected as non-fast-forward
+      # and the run fails before any tag or release exists.)
+      - name: Main is still the commit CI validated
+        id: head
+        if: ${{ github.event_name == 'workflow_run' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          main=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
+          if [ "$main" = "$HEAD_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main is at $main, no longer at $HEAD_SHA validated by CI: nothing to release from this run"
+          fi
+
+      # Full history and tags: semantic-release reads the commits since the last vX.Y.Z tag. No stored
+      # credentials: semantic-release pushes with GITHUB_TOKEN itself.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.head.outputs.current == 'true' }}
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # semantic-release releases from the branch "main" (GITHUB_REF of a workflow_run event): give the validated
+      # commit that local branch name instead of a detached HEAD.
+      - name: Local main at the validated commit
+        if: ${{ steps.head.outputs.current == 'true' }}
+        run: git switch --force-create main
+
+      # semantic-release 25 needs Node ^22.14 or >= 24.10 (its git and changelog plugins ^22.22.2 or >= 24.15).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: ${{ steps.head.outputs.current == 'true' }}
+        with:
+          node-version: 24
+
+      # Bun installs the pinned plugins (bun.lock) and runs scripts/release-version.ts in the prepare step.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: ${{ steps.head.outputs.current == 'true' }}
+        with:
+          bun-version-file: package.json
+
+      - if: ${{ steps.head.outputs.current == 'true' }}
+        run: bun install --frozen-lockfile
+
+      # No release when the commits since the last tag hold no feat, fix or perf (nor breaking change): no output.
+      # Otherwise writes version=X.Y.Z to the step outputs (release.config.mjs > successCmd).
+      - name: semantic-release
+        id: semantic
+        if: ${{ steps.head.outputs.current == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: node node_modules/semantic-release/bin/semantic-release.js
+
+      # The draft release of the new tag, or (manual run) the existing draft for the given tag. A published release
+      # is never rebuilt.
+      - name: Draft release
+        id: draft
+        if: ${{ github.event_name == 'workflow_dispatch' || steps.semantic.outputs.version != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || format('v{0}', steps.semantic.outputs.version) }}
         run: |
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::the tag must look like vX.Y.Z"
@@ -78,27 +146,6 @@ jobs:
             echo "tag=$TAG"
             echo "version=${TAG#v}"
           } >> "$GITHUB_OUTPUT"
-
-  # Keeps the release PR up to date (skip-github-release). Runs after release, so a release PR merged by this push
-  # is tagged before a new one is proposed, but no build depends on it: if it fails, the run turns red and the
-  # release is still built and published. Same concurrency group as release: release-please never writes from two
-  # jobs at once, and a pending job replaced by a newer push loses nothing (that push's run updates the PR).
-  release-pr:
-    needs: release
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    concurrency:
-      group: release-please
-      cancel-in-progress: false
-    permissions:
-      contents: write # commits on the release branch
-      issues: write # labels of the release PR
-      pull-requests: write
-    steps:
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        with:
-          skip-github-release: true
 
   # The build chain uses one concurrency group per release, never cancelled. A re-run or manual run waiting for its
   # turn is therefore never replaced by later pushes to main (they queue in the release job's group), and two runs
@@ -143,7 +190,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # releaseId: upload into exactly release-please's draft without rewriting its name or body (the changelog),
+      # releaseId: upload into exactly the draft of semantic-release without rewriting its name or body (the changelog),
       # as tagName would. With releaseId, releaseBody only becomes the notes of latest.json.
       - name: Build and attach the installers
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0

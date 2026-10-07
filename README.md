@@ -87,39 +87,51 @@ leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 
 ## Publier une version
 
-Les versions sont publiées automatiquement à partir des [Conventional Commits](https://www.conventionalcommits.org/)
-(workflow `.github/workflows/release-please.yml`, configuration `release-please-config.json` et
-`.release-please-manifest.json`).
+Les versions sont publiées automatiquement, sans PR de version ni étape manuelle, à partir des
+[Conventional Commits](https://www.conventionalcommits.org/) (workflow `.github/workflows/semantic-release.yml`,
+configuration `release.config.mjs`, [semantic-release](https://semantic-release.gitbook.io/)).
 
 1. Fusionner les PR en **squash** avec un titre conventionnel : il devient le message du commit sur `main`. Avant
    1.0, `feat:` monte la version mineure (0.3.0 → 0.4.0), `fix:` et `perf:` la version de correctif (0.3.0 →
    0.3.1), un changement cassant (`feat!:` ou `BREAKING CHANGE:`) la version mineure. `chore:`, `docs:`, `ci:`,
-   `test:`, `refactor:` ne déclenchent pas de version.
-2. À chaque push sur `main`, release-please tient à jour une PR « chore: release X.Y.Z » : version dans
-   `package.json`, `src-tauri/Cargo.toml` et `Cargo.lock` (entrée `scribe-app` seulement), et `CHANGELOG.md`
-   (Fonctionnalités, Corrections, Performances). La CI ne tourne pas sur cette PR (elle est ouverte par
-   `GITHUB_TOKEN`) ; elle ne change que des numéros de version et le changelog.
-3. Fusionner cette PR publie la version : le workflow crée le tag `vX.Y.Z` et une release en brouillon, construit
-   les installeurs Windows puis le `.dmg` macOS universel dans ce brouillon (avec `latest.json` pour les deux
-   plateformes), et ne publie la release que si les deux builds ont réussi. Si un build ou la publication échoue,
-   le brouillon reste privé : relancer les jobs en échec (« Re-run failed jobs ») le complète puis le publie. Si
-   c'est le job `release` qui a échoué après avoir créé le brouillon, ou pour toute autre reprise : Actions >
-   Release Please > « Run workflow » avec le tag (`v0.4.0`) reconstruit les deux plateformes dans ce brouillon et
-   le publie. Un échec du job `release-pr` (mise à jour de la PR de version) ne bloque jamais la release.
+   `test:`, `refactor:`, `style:`, `build:` ne déclenchent pas de version (un `revert:` donne un correctif).
+2. Quand la CI de ce push sur `main` est verte, le workflow analyse les commits depuis le dernier tag `vX.Y.Z`. S'il
+   y trouve un `feat`, `fix` ou `perf`, il écrit la version dans `package.json`, `src-tauri/Cargo.toml` et
+   `Cargo.lock` (entrée `scribe-app` seulement), ajoute les notes en tête de `CHANGELOG.md` (Fonctionnalités,
+   Corrections, Performances), pousse le commit « chore(release): X.Y.Z » sur `main`, crée le tag `vX.Y.Z` et une
+   release en brouillon. Ce commit est poussé avec `GITHUB_TOKEN` : il ne relance ni la CI ni le workflow.
+3. Le workflow construit ensuite les installeurs Windows puis le `.dmg` macOS universel depuis ce tag, dans le
+   brouillon (avec `latest.json` pour les deux plateformes), et ne publie la release que si les deux builds ont
+   réussi.
+
+Chaque merge `feat`/`fix`/`perf` donne donc sa propre version. Pour en grouper plusieurs dans une seule version,
+les réunir sur une branche et la fusionner en un seul squash, ou fusionner d'abord des commits qui ne publient
+rien (`chore:`, `refactor:`…) : ils partent avec la version suivante. Si plusieurs merges arrivent avant la fin de
+la CI, seule la CI du dernier va au bout (`cancel-in-progress`) et sa version contient tout depuis le dernier tag ;
+un run lancé pour un commit qui n'est plus la tête de `main` ne publie rien.
+
+Reprise : si un build ou la publication échoue, le brouillon reste privé ; relancer les jobs en échec (« Re-run
+failed jobs ») le complète puis le publie. Si le job `release` a échoué après avoir créé le brouillon, ou pour toute
+autre reprise : Actions > Semantic Release > « Run workflow » avec le tag (`v0.4.0`) reconstruit les deux
+plateformes dans ce brouillon et le publie. Relancer le job `release` lui-même ne crée rien (le commit de version a
+déjà fait avancer `main`) ; si la CI de `main` a échoué ou a été annulée, la relancer (ou pousser un nouveau commit)
+suffit : rien n'est perdu, la version suivante part toujours du dernier tag.
 
 La version de l'app est celle de `src-tauri/Cargo.toml` (`tauri.conf.json` n'en a pas : Tauri reprend celle du
-crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main.
+crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main. Il n'y a plus de
+manifeste : ce sont les tags `vX.Y.Z` présents dans l'historique de `main` qui donnent la version de départ.
 
-Réglage du dépôt nécessaire : Settings > Actions > General > « Allow GitHub Actions to create and approve pull
-requests », sans quoi release-please ne peut pas ouvrir sa PR.
+Réglages du dépôt : « Allow GitHub Actions to create and approve pull requests » n'est plus nécessaire. `main` n'est
+pas protégée ; si elle le devient (protection de branche ou ruleset), le bot GitHub Actions doit rester autorisé à y
+pousser (le commit « chore(release) ») et à créer des tags `v*`, sans quoi le job `release` échoue avant de créer le
+tag.
 
 Repli manuel (`.github/workflows/release.yml`) : dans un même commit, monter la version dans
-`src-tauri/Cargo.toml`, `package.json`, `Cargo.lock` **et** `.release-please-manifest.json`, puis pousser ce commit
-et le tag ensemble (`git tag v0.4.0 && git push --atomic origin main v0.4.0`). Sans le manifeste dans ce commit,
-release-please proposerait de nouveau cette version dans une PR. Fermer ensuite la PR de version éventuellement
-ouverte (« chore: release … ») : la suivante repartira de la version publiée à la main. Le workflow vérifie que le
-tag correspond à `src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à
-publier à la main.
+`src-tauri/Cargo.toml`, `package.json` et `Cargo.lock`, puis pousser ce commit et le tag ensemble
+(`git tag v0.4.0 && git push --atomic origin main v0.4.0`). Le workflow vérifie que le tag correspond à
+`src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à publier à la main.
+semantic-release repart de ce tag : la version automatique suivante ne compte que les commits postérieurs. Le push
+du commit de version relance aussi la CI puis semantic-release, qui ne publie rien si ce commit est un `chore:`.
 
 Build local :
 
