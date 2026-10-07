@@ -246,6 +246,7 @@ impl Controller {
                 let on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
                 match self.deps.recorder.start(on_level) {
                     Ok(handle) => {
+                        (self.svc.warm_up)(&self.svc.settings.read().unwrap());
                         self.mode = Mode::Hold;
                         overlay.emit(OverlayEvent::Recording { locked: false });
                         self.recording = Some((handle, spawn_focus_snapshot(&self.svc)));

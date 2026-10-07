@@ -72,6 +72,8 @@ pub trait LaunchAtLogin: Send + Sync {
 pub type Providers = (Box<dyn Transcriber>, Box<dyn Corrector>);
 /// Builds the transcriber and corrector for the current settings (`providers::build` in the app).
 pub type ProviderFactory = Box<dyn Fn(&Settings, &dyn SecretStore) -> Result<Providers, ProviderError> + Send + Sync>;
+/// Opens the connections to the providers of these settings without waiting (`providers::warm_up` in the app).
+pub type WarmUp = Box<dyn Fn(&Settings) + Send + Sync>;
 
 /// Everything the controller, the processing tasks and the Tauri commands share.
 pub struct Services {
@@ -86,6 +88,8 @@ pub struct Services {
     pub field: Arc<dyn FieldReader>,
     pub secrets: Arc<dyn SecretStore>,
     pub providers: ProviderFactory,
+    /// Called when a recording starts, so the requests sent once it stops find their connections open.
+    pub warm_up: WarmUp,
     pub overlay: Overlay,
     pub ui: Arc<dyn UiSink>,
     pub autostart: Arc<dyn LaunchAtLogin>,

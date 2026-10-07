@@ -66,6 +66,23 @@ pub fn build(s: &Settings, store: &dyn SecretStore) -> Result<Providers, Provide
     Ok((Box::new(stt), build_corrector(s, llm_key)))
 }
 
+/// The hosts the next dictation will call: the transcription provider, then the correction one when the level uses
+/// it and it is another host. Unknown providers are skipped (the dictation reports them).
+pub fn warm_up_urls(s: &Settings) -> Vec<&'static str> {
+    let stt = catalog::stt_provider(&s.stt_provider).map(|p| p.base_url);
+    let llm = catalog::llm_provider(&s.llm_provider).filter(|_| s.level != Level::Raw).map(|p| p.base_url);
+    let mut urls: Vec<&'static str> = stt.into_iter().collect();
+    urls.extend(llm.filter(|url| Some(*url) != stt));
+    urls
+}
+
+/// The app's `WarmUp`: one request per host on the async runtime, never awaited.
+pub fn warm_up(s: &Settings) {
+    for url in warm_up_urls(s) {
+        tauri::async_runtime::spawn(scribe_providers::http::warm_up(url));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +96,18 @@ mod tests {
 
     fn settings(stt: &str, llm: &str, model: &str, level: Level) -> Settings {
         Settings { stt_provider: stt.into(), stt_model: "whisper-x".into(), llm_provider: llm.into(), llm_model: model.into(), level, ..Default::default() }
+    }
+
+    #[test]
+    fn warms_up_the_transcription_host_then_the_correction_host() {
+        let openai = "https://api.openai.com/v1";
+        let anthropic = "https://api.anthropic.com";
+        assert_eq!(warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted)), vec![openai, anthropic]);
+        assert_eq!(warm_up_urls(&settings("openai", "openai", "gpt-6-astra", Level::Clean)), vec![openai], "one host, once");
+        assert_eq!(warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Raw)), vec![openai], "no correction");
+        assert_eq!(warm_up_urls(&settings("nope", "anthropic", "claude-opus-5-5", Level::Formatted)), vec![anthropic]);
+        assert!(warm_up_urls(&settings("anthropic", "nope", "m", Level::Formatted)).is_empty(), "Anthropic has no transcription");
+        warm_up(&settings("nope", "nope", "m", Level::Formatted)); // nothing to open
     }
 
     #[test]

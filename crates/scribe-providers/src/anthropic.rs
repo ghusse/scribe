@@ -7,12 +7,14 @@ use serde_json::{json, Value};
 use scribe_core::pipeline::{Corrector, ProviderError};
 use scribe_core::prompt::CorrectionPrompt;
 
-use crate::http::{map_send_error, map_status};
+use crate::http::{map_send_error, map_status, shared_client};
 
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 
 pub struct AnthropicCorrector {
     client: reqwest::Client,
+    /// Per request: the client is shared by every provider.
+    timeout: Duration,
     base_url: String,
     api_key: String,
     model: String,
@@ -36,9 +38,9 @@ impl AnthropicCorrector {
         effort: Option<String>,
         timeout: Duration,
     ) -> Result<Self, ProviderError> {
-        let client = reqwest::Client::builder().timeout(timeout).build().map_err(|e| ProviderError::Config(e.to_string()))?;
         Ok(Self {
-            client,
+            client: shared_client()?,
+            timeout,
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -73,6 +75,7 @@ impl Corrector for AnthropicCorrector {
         let mut req = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
+            .timeout(self.timeout)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&self.build_body(prompt));

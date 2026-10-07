@@ -270,6 +270,8 @@ pub struct Fixture {
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
     pub plan: Arc<Mutex<ProviderPlan>>,
+    /// The transcription provider of each warm-up request.
+    pub warm_ups: Arc<Mutex<Vec<String>>>,
     pub ctrl_rx: Receiver<ControllerMsg>,
     pub _dir: tempfile::TempDir,
 }
@@ -295,6 +297,8 @@ impl Fixture {
         let secrets = Arc::new(MemorySecretStore::default());
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
         let factory_plan = plan.clone();
+        let warm_ups = Arc::new(Mutex::new(Vec::new()));
+        let warm_up_log = warm_ups.clone();
         let (tx, ctrl_rx) = mpsc::channel();
         let hook_cfg = Arc::new(HookConfig::new(&settings.trigger_keys, settings.lock_vk));
         let svc = Arc::new(Services {
@@ -312,6 +316,7 @@ impl Fixture {
                 plan.build?;
                 Ok((Box::new(FakeStt(plan.stt)), Box::new(FakeLlm(plan.llm))))
             }),
+            warm_up: Box::new(move |s| warm_up_log.lock().unwrap().push(s.stt_provider.clone())),
             overlay: Overlay::new(window.clone()),
             ui: ui.clone(),
             autostart: autostart.clone(),
@@ -320,7 +325,7 @@ impl Fixture {
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, autostart, permissions, updater, focus, secrets, plan, ctrl_rx, _dir: dir }
+        Self { svc, window, ui, clipboard, keys, field, autostart, permissions, updater, focus, secrets, plan, warm_ups, ctrl_rx, _dir: dir }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {
