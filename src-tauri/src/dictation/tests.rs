@@ -1,6 +1,6 @@
 use scribe_core::audio::TARGET_RATE;
 use scribe_core::focus::FocusState;
-use scribe_core::model::{Dictation, TermSource};
+use scribe_core::model::{Dictation, Level, TermSource};
 
 use super::*;
 use crate::testing::{editable, Fixture, UiCall};
@@ -124,7 +124,10 @@ fn build_record_for_a_delivered_dictation() {
     assert_eq!((r.transcriber.as_deref(), r.corrector.as_deref()), (Some("stt"), Some("llm")));
     assert_eq!((r.stt_ms, r.llm_ms), (Some(10), Some(20)));
     assert_eq!((r.outcome, r.error.as_deref()), (Outcome::PastedUncertain, Some("e")));
+    // What the pipeline returns at the raw level or for a short dictation: the corrector never ran.
+    let uncorrected = PipelineOutput { llm_ms: None, correction_error: None, ..out.clone() };
     let raw = Settings { level: Level::Raw, ..Default::default() };
+    let done = |inserted| Delivery::Done { out: &uncorrected, transcriber: "stt".into(), corrector: "llm".into(), inserted };
     let r = build_record(&meta(), &raw, done(InsertResult::ClipboardFailed));
     assert_eq!(r.corrector, None, "no corrector at the raw level");
     assert_eq!(r.outcome, Outcome::Error);
@@ -210,7 +213,7 @@ fn pasted_dictation_goes_idle_and_is_recorded() {
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Pasted);
-    assert_eq!((row.raw_text.as_deref(), row.final_text.as_deref()), (Some("bonjour scribe"), Some("Bonjour Scribe.")));
+    assert_eq!((row.raw_text.as_deref(), row.final_text.as_deref()), (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?")));
     assert_eq!((row.transcriber.as_deref(), row.corrector.as_deref()), (Some("fake-stt"), Some("fake-llm")));
     assert!(row.llm_ms.is_some() && row.stt_ms.is_some());
     assert_eq!(row.error, None);
@@ -237,7 +240,7 @@ fn pasted_without_correction_says_so() {
     f.plan(|p| p.llm = Err(ProviderError::Auth));
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("bonjour scribe")));
+    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("bonjour scribe comment ça va")));
     assert_eq!(row.error.as_deref(), Some("clé API refusée"));
     assert_eq!(f.window.last_event(), Some(toast(ToastLevel::Info, "Inséré sans correction (clé API refusée)", None, Some(row.id))));
 }
@@ -252,7 +255,7 @@ fn unknown_focus_pastes_with_a_doubt() {
     assert_eq!(row.outcome, Outcome::PastedUncertain);
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Uncertain, "Texte inséré ? (non corrigé : le modèle a refusé la requête)", Some("bonjour scribe"), Some(row.id)))
+        Some(toast(ToastLevel::Uncertain, "Texte inséré ? (non corrigé : le modèle a refusé la requête)", Some("bonjour scribe comment ça va"), Some(row.id)))
     );
 }
 
@@ -268,10 +271,10 @@ fn not_editable_focus_or_failed_paste_copies_the_text() {
         run(&f, speech(1_000));
         let row = only_row(&f);
         assert_eq!(row.outcome, Outcome::Clipboard);
-        assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe."));
+        assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"));
         assert_eq!(
             f.window.last_event(),
-            Some(toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("Bonjour Scribe."), Some(row.id)))
+            Some(toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
         );
     }
 }
@@ -280,7 +283,7 @@ fn not_editable_focus_or_failed_paste_copies_the_text() {
 fn a_paste_seen_in_the_field_is_recorded_as_inserted_even_with_an_uncertain_focus() {
     let f = Fixture::new();
     set_end_focus(&f, FocusState::Unknown);
-    f.field.script(&[Some("Objet : "), Some("Objet : Bonjour Scribe.")]);
+    f.field.script(&[Some("Objet : "), Some("Objet : Bonjour Scribe, comment ça va ?")]);
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Pasted);
@@ -296,10 +299,10 @@ fn a_paste_the_field_did_not_receive_leaves_the_text_to_paste_by_hand() {
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Clipboard);
     assert_eq!(*f.keys.pastes.lock().unwrap(), 1, "Ctrl+V was sent");
-    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe."), "not restored: ready for Ctrl+V");
+    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"), "not restored: ready for Ctrl+V");
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V", Some("Bonjour Scribe."), Some(row.id)))
+        Some(toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
     );
 }
 
@@ -309,10 +312,10 @@ fn unavailable_clipboard_keeps_the_text_in_the_history() {
     *f.clipboard.fail.lock().unwrap() = true;
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe.")));
+    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe, comment ça va ?")));
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique", Some("Bonjour Scribe."), Some(row.id)))
+        Some(toast(ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
     );
 }
 
@@ -321,7 +324,7 @@ fn raw_level_records_no_corrector() {
     let f = Fixture::with_settings(Settings { level: Level::Raw, restore_delay_ms: 0, ..Default::default() });
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!((row.final_text.as_deref(), row.corrector, row.llm_ms), (Some("bonjour scribe"), None, None));
+    assert_eq!((row.final_text.as_deref(), row.corrector, row.llm_ms), (Some("bonjour scribe comment ça va"), None, None));
     assert_eq!(row.level, Level::Raw);
 }
 
@@ -349,7 +352,7 @@ fn unwritable_audio_does_not_stop_the_dictation() {
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(row.audio_path, None);
-    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("Bonjour Scribe.")));
+    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("Bonjour Scribe, comment ça va ?")));
 }
 
 // --- retranscribe -------------------------------------------------------------------------------
@@ -378,10 +381,10 @@ fn retranscribing_a_failed_dictation_copies_the_new_text() {
     let id = stored(&f, Outcome::Error, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
-    assert_eq!((d.raw_text.as_deref(), d.final_text.as_deref()), (Some("bonjour scribe"), Some("Bonjour Scribe.")));
+    assert_eq!((d.raw_text.as_deref(), d.final_text.as_deref()), (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?")));
     assert_eq!((d.transcriber.as_deref(), d.corrector.as_deref()), (Some("fake-stt"), Some("fake-llm")));
     assert_eq!((d.outcome, d.error), (Outcome::Clipboard, None));
-    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe."));
+    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"));
     assert_eq!(f.ui.calls(), vec![UiCall::HistoryChanged]);
 }
 
@@ -392,7 +395,7 @@ fn retranscribe_keeps_the_error_outcome_when_the_copy_fails() {
     let id = stored(&f, Outcome::Error, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
-    assert_eq!((d.outcome, d.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe.")));
+    assert_eq!((d.outcome, d.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe, comment ça va ?")));
 }
 
 #[test]
@@ -407,13 +410,28 @@ fn retranscribing_a_delivered_dictation_keeps_its_outcome_and_clipboard() {
 }
 
 #[test]
+fn a_short_dictation_is_pasted_uncorrected_and_records_no_corrector() {
+    let f = Fixture::new();
+    f.plan(|p| p.stt = Ok("OK, merci beaucoup.".into()));
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("OK, merci beaucoup.")));
+    assert_eq!((row.corrector, row.llm_ms, row.error), (None, None, None));
+
+    let id = stored(&f, Outcome::Pasted, true);
+    retry(&f, id).unwrap();
+    let d = get(&f, id);
+    assert_eq!((d.final_text.as_deref(), d.corrector), (Some("OK, merci beaucoup."), None));
+}
+
+#[test]
 fn retranscribe_records_a_correction_failure() {
     let f = Fixture::new();
     f.plan(|p| p.llm = Ok("pas de balise".into()));
     let id = stored(&f, Outcome::Pasted, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
-    assert_eq!(d.final_text.as_deref(), Some("bonjour scribe"));
+    assert_eq!(d.final_text.as_deref(), Some("bonjour scribe comment ça va"));
     assert_eq!(d.error.as_deref(), Some("réponse du correcteur sans balise <output>"));
 }
 

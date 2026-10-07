@@ -42,7 +42,7 @@ fn history_commands_read_edit_and_delete_rows() {
     let f = Fixture::new();
     let wav = f.svc.paths.audio_dir.join("a.wav");
     std::fs::write(&wav, b"x").unwrap();
-    let a = insert(&f, Some("Bonjour Scribe."), Some(wav.to_string_lossy().into_owned()));
+    let a = insert(&f, Some("Bonjour Scribe, comment ça va ?"), Some(wav.to_string_lossy().into_owned()));
     let b = insert(&f, Some("Autre chose."), None);
     with_state(&f, |s| {
         let all = list_dictations(s.clone(), None, 10, 0).unwrap();

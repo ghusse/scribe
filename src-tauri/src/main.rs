@@ -80,6 +80,7 @@ fn main() {
                 audio_mute,
                 secrets: secret_store,
                 providers: Box::new(providers::build),
+                warm_up: Box::new(providers::warm_up),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
                 autostart: Arc::new(TauriAutostart(app.handle().clone())),

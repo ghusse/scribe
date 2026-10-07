@@ -224,6 +224,18 @@ fn hold_records_then_processes_in_hold_mode() {
 }
 
 #[test]
+fn connections_are_warmed_up_when_a_recording_starts() {
+    let mut h = Harness::new();
+    *h.rec.start_error.lock().unwrap() = Some("aucun périphérique".into());
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert!(h.f.warm_ups.lock().unwrap().is_empty(), "no request will follow a failed recording");
+    *h.rec.start_error.lock().unwrap() = None;
+    h.key(TRIGGER, true, 2_000);
+    assert_eq!(*h.f.warm_ups.lock().unwrap(), vec!["openai".to_string()]);
+}
+
+#[test]
 fn lock_key_switches_to_locked_mode() {
     let mut h = Harness::new();
     h.key(TRIGGER, true, 0);
