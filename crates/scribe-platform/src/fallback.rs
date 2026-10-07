@@ -5,9 +5,10 @@
 use std::sync::Arc;
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
-use scribe_core::insert::{FieldReader, KeySender};
+use scribe_core::insert::{FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::{Permission, PermissionStatus, SystemPermissions};
 
+use crate::output_mute::{OutputBackend, OutputMuter};
 use crate::{HookConfig, KeyCallback};
 
 pub struct HookHandle;
@@ -56,6 +57,30 @@ pub fn field_reader() -> Arc<dyn FieldReader> {
 /// Physical key state: unknown here, reported as up (there is no hook, so no trigger is ever held).
 pub fn is_key_pressed(_vk: u32) -> bool {
     false
+}
+
+/// No audio API here: there is no output to mute.
+pub struct NoOutputs;
+
+impl OutputBackend for NoOutputs {
+    fn active_outputs(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+    fn is_muted(&self, id: &str) -> Result<bool, String> {
+        Err(format!("sortie audio {id} inconnue"))
+    }
+    fn set_muted(&self, id: &str, _muted: bool) -> Result<(), String> {
+        Err(format!("sortie audio {id} inconnue"))
+    }
+}
+
+pub fn system_mute() -> Arc<dyn SystemMute> {
+    Arc::new(OutputMuter(NoOutputs))
+}
+
+/// No boot time here: the crash recovery restores the outputs whatever the boot session (there are none anyway).
+pub fn boot_time_ms() -> Option<u64> {
+    None
 }
 
 pub fn prepare_overlay(_raw_hwnd: isize) {}
@@ -117,6 +142,17 @@ mod tests {
         assert!(p.status().is_empty());
         p.request(Permission::Microphone);
         assert!(p.open_settings(Permission::Accessibility).is_err());
+    }
+
+    #[test]
+    fn there_is_no_output_to_mute() {
+        assert_eq!(NoOutputs.active_outputs(), Ok(Vec::new()));
+        assert!(NoOutputs.is_muted("speakers").is_err());
+        assert!(NoOutputs.set_muted("speakers", true).is_err());
+        let mute = system_mute();
+        assert!(mute.mute_all().is_empty());
+        mute.restore(&["speakers".to_string()]);
+        assert_eq!(boot_time_ms(), None);
     }
 
     #[test]

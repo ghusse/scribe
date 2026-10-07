@@ -59,6 +59,8 @@ export interface Settings {
   llm_timeout_per_char_ms: number;
   hint_budget_chars: number;
   audio_retention_days: number;
+  /** Mutes every audio output while recording. */
+  mute_audio_during_dictation: boolean;
 }
 
 export interface LlmModel { id: string; efforts: string[] }
