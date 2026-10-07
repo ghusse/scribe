@@ -10,9 +10,11 @@ name: Semantic Release
 # for the release commit, no release.yml run for the tag, no new run of this workflow).
 # A CI run of main cancelled by a newer push (ci.yml: cancel-in-progress) releases nothing: the green run of the
 # newer push releases everything since the last tag.
-# Recovery: run this workflow by hand (workflow_dispatch) with the tag of a draft left unpublished. It rebuilds both
-# platforms into that draft (existing assets are replaced) and publishes it. "Re-run failed jobs" only helps when a
-# build or the publish failed: a re-run of the release job finds main moved (release commit) and creates nothing.
+# Recovery: run this workflow by hand (workflow_dispatch) with the tag of a release left unpublished. It rebuilds both
+# platforms into its draft (existing assets are replaced) and publishes it. When semantic-release pushed the tag but
+# failed to create the draft, the manual run creates it first (notes taken from CHANGELOG.md at that tag). "Re-run
+# failed jobs" only helps when a build or the publish failed: a re-run of the release job finds main moved (release
+# commit) and creates nothing.
 on:
   workflow_run:
     workflows: [CI]
@@ -35,8 +37,11 @@ env:
 jobs:
   # Creates the release commit, the tag and the draft release, and nothing else: its outputs drive the builds.
   # Only for a green CI run of a push to main of this repository (never a pull request, even from a fork branch
-  # named main), or a manual run. Two runs never release at once; a pending run replaced by a newer one loses
-  # nothing, since every run releases all the commits since the last tag.
+  # named main), or a manual run.
+  # Concurrency: GitHub keeps one pending job per group and cancels the older one. Automatic runs share one group:
+  # two of them never release at once, and a pending one replaced by a newer one loses nothing, since every run
+  # releases all the commits since the last tag. A manual run never pushes anything, so it gets a group of its own
+  # per tag: an automatic run never cancels a pending recovery, and a recovery never cancels a pending release.
   release:
     if: >-
       github.event_name == 'workflow_dispatch' || (
@@ -48,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: semantic-release
+      group: semantic-release-${{ github.event_name == 'workflow_dispatch' && format('recovery-{0}', inputs.tag) || 'auto' }}
       cancel-in-progress: false
     permissions:
       contents: write # release commit on main, tag, draft release (and listing drafts)
@@ -120,8 +125,12 @@ jobs:
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: node node_modules/semantic-release/bin/semantic-release.js
 
-      # The draft release of the new tag, or (manual run) the existing draft for the given tag. A published release
-      # is never rebuilt.
+      # The draft release of the new tag, or (manual run) the draft for the given tag. A published release is never
+      # rebuilt. Manual run on a tag with no release at all (semantic-release pushed the release commit and the tag,
+      # then failed to create the draft): create the draft, named and described as semantic-release would (the
+      # tag, and that version's notes from CHANGELOG.md at the tag). Never for a tag that does not exist (the API
+      # would create it on main). Start such a run only once the automatic run of that tag has failed: during it,
+      # the run could add a second draft next to the one semantic-release is about to create.
       - name: Draft release
         id: draft
         if: ${{ github.event_name == 'workflow_dispatch' || steps.semantic.outputs.version != '' }}
@@ -136,6 +145,25 @@ jobs:
           fi
           # A draft is not reachable through releases/tags/{tag}: look for it in the list.
           id=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG) | .id' | head -n 1)
+          if [ -z "$id" ] && [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if gh api "repos/$GH_REPO/releases/tags/$TAG" --silent 2>/dev/null; then
+              echo "::error::$TAG is already published"
+              exit 1
+            fi
+            if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>/dev/null; then
+              echo "::error::no tag $TAG"
+              exit 1
+            fi
+            version="${TAG#v}"
+            # The section of this version: from its heading ("## [X.Y.Z](...)" or "## X.Y.Z") to the next one.
+            notes=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$GH_REPO/contents/CHANGELOG.md?ref=$TAG" |
+              awk -v v="$version" '
+                /^##? / { if (found) exit; h = $2; sub(/\(.*$/, "", h); gsub(/\[/, "", h); gsub(/\]/, "", h); if (h == v) { found = 1; next } }
+                found { print }
+              ')
+            id=$(gh api -X POST "repos/$GH_REPO/releases" -f tag_name="$TAG" -f name="$TAG" -F draft=true -f body="$notes" --jq .id)
+            echo "::notice::created the missing draft release for $TAG"
+          fi
           if [ -z "$id" ]; then
             echo "::error::no draft release for $TAG"
             exit 1

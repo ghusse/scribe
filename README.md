@@ -111,11 +111,15 @@ la CI, seule la CI du dernier va au bout (`cancel-in-progress`) et sa version co
 un run lancé pour un commit qui n'est plus la tête de `main` ne publie rien.
 
 Reprise : si un build ou la publication échoue, le brouillon reste privé ; relancer les jobs en échec (« Re-run
-failed jobs ») le complète puis le publie. Si le job `release` a échoué après avoir créé le brouillon, ou pour toute
-autre reprise : Actions > Semantic Release > « Run workflow » avec le tag (`v0.4.0`) reconstruit les deux
-plateformes dans ce brouillon et le publie. Relancer le job `release` lui-même ne crée rien (le commit de version a
-déjà fait avancer `main`) ; si la CI de `main` a échoué ou a été annulée, la relancer (ou pousser un nouveau commit)
-suffit : rien n'est perdu, la version suivante part toujours du dernier tag.
+failed jobs ») le complète puis le publie. Si le job `release` a échoué après avoir poussé le tag (avant ou après
+la création du brouillon), ou pour toute autre reprise : Actions > Semantic Release > « Run workflow » avec le tag
+(`v0.4.0`) reconstruit les deux plateformes dans ce brouillon et le publie ; si le tag n'a encore aucune release, ce
+run crée d'abord le brouillon, avec les notes de cette version prises dans `CHANGELOG.md` au tag (le lancer une fois
+le run automatique terminé, sans quoi il pourrait doubler le brouillon). Une reprise a son propre groupe de
+concurrence : un push sur `main` ne l'annule pas pendant qu'elle attend, et elle n'annule pas une publication en
+attente. Relancer le job `release` lui-même ne crée rien (le commit de version a déjà fait avancer `main`) ; si la CI
+de `main` a échoué ou a été annulée, la relancer (ou pousser un nouveau commit) suffit : rien n'est perdu, la
+version suivante part toujours du dernier tag.
 
 La version de l'app est celle de `src-tauri/Cargo.toml` (`tauri.conf.json` n'en a pas : Tauri reprend celle du
 crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main. Il n'y a plus de
