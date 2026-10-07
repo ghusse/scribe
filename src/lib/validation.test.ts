@@ -7,7 +7,7 @@ const ok: Settings = {
   gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
   level: "formatted", stt_provider: "openai", stt_model: "gpt-transcribe", llm_provider: "anthropic", llm_model: "claude-opus-5-5",
   llm_effort: "low", restore_delay_ms: 150, min_recording_ms: 300, max_recording_ms: 600000, silence_threshold_dbfs: -45,
-  llm_timeout_base_ms: 3000, llm_timeout_per_char_ms: 5, hint_budget_chars: 800, audio_retention_days: 30,
+  llm_timeout_base_ms: 5000, llm_timeout_per_char_ms: 5, hint_budget_chars: 800, audio_retention_days: 30,
   mute_audio_during_dictation: true,
 };
 const edited = (edit: (s: Settings) => void) => {
@@ -41,12 +41,20 @@ describe("checkNumbers", () => {
   it("allows fractional minutes", () => {
     expect(checkNumbers(edited((s) => (s.max_recording_ms = 90000)))).toBeNull();
   });
+  it("bounds the correction timeout between 1 and 60 s, fractions allowed", () => {
+    expect(checkNumbers(edited((s) => (s.llm_timeout_base_ms = 1000)))).toBeNull();
+    expect(checkNumbers(edited((s) => (s.llm_timeout_base_ms = 2500)))).toBeNull();
+    expect(checkNumbers(edited((s) => (s.llm_timeout_base_ms = 60000)))).toBeNull();
+    expect(checkNumbers(edited((s) => (s.llm_timeout_base_ms = 500)))?.message).toBe("Délai max. de correction : entre 1 et 60 s");
+    expect(checkNumbers(edited((s) => (s.llm_timeout_base_ms = 61000)))?.field).toBe("llm_timeout_s");
+  });
 });
 
 describe("labels and messages share the constants", () => {
   it("builds both from the same field", () => {
     expect(fieldHelp(NUMBER_FIELDS.restore_delay_ms)).toBe("Augmentez si le texte collé est parfois l'ancien contenu. Défaut : 150 ms.");
     expect(fieldHelp(NUMBER_FIELDS.max_recording_min)).toBe("Défaut : 10 min.");
+    expect(fieldHelp(NUMBER_FIELDS.llm_timeout_s)).toBe("Au-delà, le texte est collé sans correction. Défaut : 5 s.");
     expect(rangeMessage(NUMBER_FIELDS.double_tap_window_ms)).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
   });
 });

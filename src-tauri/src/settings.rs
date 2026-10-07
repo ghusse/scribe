@@ -58,7 +58,7 @@ impl Default for Settings {
             min_recording_ms: 300,
             max_recording_ms: 600_000,
             silence_threshold_dbfs: -45.0,
-            llm_timeout_base_ms: 3_000,
+            llm_timeout_base_ms: 5_000,
             llm_timeout_per_char_ms: 5,
             hint_budget_chars: 800,
             audio_retention_days: 30,
@@ -253,6 +253,12 @@ mod tests {
         let path = dir.path().join("settings.json");
         std::fs::write(&path, r#"{"trigger_keys":[65,163]}"#).unwrap();
         assert_eq!(Settings::load(&path).trigger_keys, vec![0xA2, 0x41]);
+    }
+
+    #[test]
+    fn the_correction_gets_five_seconds_by_default() {
+        // gpt-6-astra often answers in 2 to 3.3 s: a 3 s base timed out and pasted the raw text after the wait anyway.
+        assert_eq!(Settings::default().pipeline_config().llm_timeout_base_ms, 5_000);
     }
 
     #[test]

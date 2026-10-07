@@ -143,10 +143,12 @@ describe("Settings: autosave", () => {
     await setNumber(/Fenêtre de double-tap/, "400");
     await setNumber(/Restauration du presse-papier/, "200");
     await setNumber(/Durée max/, "2.5");
+    await setNumber(/Délai max. de correction/, "6.5");
     await fireEvent.change(select(/Conservation de l'audio/), { target: { value: "90" } });
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
     const s = lastSave();
     expect([s.gesture.double_tap_window_ms, s.restore_delay_ms, s.max_recording_ms, s.audio_retention_days]).toEqual([400, 200, 150000, 90]);
+    expect(s.llm_timeout_base_ms).toBe(6500);
   });
 
   it("a failed save stays visible with its details and can be retried", async () => {
