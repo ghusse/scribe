@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation};
 use scribe_core::insert::KeySender;
 
-use crate::mac_keys::{KeyMap, KEYCODE_V};
+use crate::mac_keys::{modifier_mask, KeyMap, KEYCODE_V};
 
 /// `EventSourceUserData` of the events Scribe posts: the hook lets them through untouched.
 pub const INJECTED_MARK: i64 = 0x5343_5249;
@@ -15,6 +15,9 @@ pub struct MacKeySender;
 
 /// Physical key state (any thread).
 pub fn is_key_pressed(vk: u32) -> bool {
+    if let Some(mask) = modifier_mask(vk) {
+        return CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState).0 & mask != 0;
+    }
     let keycode = KEY_MAP.lock().unwrap_or_else(|p| p.into_inner()).keycode(vk);
     keycode.is_some_and(|k| CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, k))
 }
