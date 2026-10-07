@@ -44,11 +44,11 @@ thresholds, and the two CI coverage steps.
   `crates.scribe-platform.src.windows.|crates.scribe-platform.src.macos.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
 - Rust files excluded by that regex: `crates/scribe-platform/src/device/clipboard.rs`,
-  `crates/scribe-platform/src/macos/focus.rs`, `crates/scribe-platform/src/macos/hook.rs`,
+  `crates/scribe-platform/src/macos/audio_output.rs`, `crates/scribe-platform/src/macos/focus.rs`, `crates/scribe-platform/src/macos/hook.rs`,
   `crates/scribe-platform/src/macos/keys.rs`, `crates/scribe-platform/src/macos/mod.rs`,
   `crates/scribe-platform/src/macos/permissions.rs`, `crates/scribe-platform/src/macos/window.rs`,
   `crates/scribe-platform/src/device/microphone.rs`, `crates/scribe-platform/src/device/mod.rs`,
-  `crates/scribe-platform/src/windows/focus.rs`,
+  `crates/scribe-platform/src/windows/audio_output.rs`, `crates/scribe-platform/src/windows/focus.rs`,
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
   `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
   `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
@@ -58,8 +58,8 @@ thresholds, and the two CI coverage steps.
 
 | Excluded | Why |
 |---|---|
-| `crates/scribe-platform/src/windows/` (`focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation); needs a live desktop session. `mod.rs` re-exports the Windows entry points (`lib.rs` re-exports them, or `fallback.rs` off Windows). |
-| `crates/scribe-platform/src/macos/` (`focus.rs`, `hook.rs`, `keys.rs`, `permissions.rs`, `window.rs`, `mod.rs`) | Raw macOS FFI (`CGEventTap`, `CGEventPost`, AX API, AVFoundation authorization, `NSPanel`); needs a live desktop session and the Accessibility permission. Compiled on macOS only, so the Windows CI never sees it. |
+| `crates/scribe-platform/src/windows/` (`audio_output.rs`, `focus.rs`, `hook.rs`, `keys.rs`, `window.rs`, `mod.rs`) | Raw Win32/UIA/WASAPI FFI (`SetWindowsHookExW`, `SendInput`, `SetWindowPos`, UI Automation, `IAudioEndpointVolume`); needs a live desktop session. `mod.rs` re-exports the Windows entry points (`lib.rs` re-exports them, or `fallback.rs` off Windows). |
+| `crates/scribe-platform/src/macos/` (`audio_output.rs`, `focus.rs`, `hook.rs`, `keys.rs`, `permissions.rs`, `window.rs`, `mod.rs`) | Raw macOS FFI (`CGEventTap`, `CGEventPost`, AX API, AVFoundation authorization, `NSPanel`, CoreAudio `AudioObject*` properties); needs a live desktop session and the Accessibility permission. Compiled on macOS only, so the Windows CI never sees it. |
 | `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
@@ -92,6 +92,10 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   `scribe_core::insert::verify`, the re-reading loop `insert::perform`. Remaining branches: FFI error
   propagation (`?`, `.ok()`), the password / text-pattern / value-pattern `if`s and the null foreground window →
   `FocusSnapshot::unknown()` guard.
+- `windows/audio_output.rs`, `macos/audio_output.rs`: one WASAPI / CoreAudio call per `OutputBackend` method;
+  which outputs to mute (not already muted, failures skipped) and which to unmute (still muted, vanished ones
+  ignored) is `output_mute::OutputMuter`. Remaining branches: FFI error propagation (`?`, status checks), the
+  output-streams filter and missing mute property (macOS), the UID lookup loop (macOS).
 - `device/microphone.rs`: the recording-thread protocol is `audio_capture::spawn_recorder`, sample conversions
   `audio_capture::{i16_to_f32, u16_to_f32}`, level metering, partial audio and the final clip
   `audio_capture::CaptureBuffer` (`push`, `set_error`, `finish`). Remaining branches: the cpal error paths

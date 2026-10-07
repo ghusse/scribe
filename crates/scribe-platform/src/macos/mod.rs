@@ -2,9 +2,12 @@
 use std::sync::Arc;
 
 use scribe_core::focus::FocusDetector;
-use scribe_core::insert::{FieldReader, KeySender};
+use scribe_core::insert::{FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::SystemPermissions;
 
+use crate::output_mute::OutputMuter;
+
+pub mod audio_output;
 pub mod focus;
 pub mod hook;
 pub mod keys;
@@ -25,6 +28,10 @@ pub fn key_sender() -> Arc<dyn KeySender> {
 
 pub fn field_reader() -> Arc<dyn FieldReader> {
     Arc::new(focus::AxFieldReader)
+}
+
+pub fn system_mute() -> Arc<dyn SystemMute> {
+    Arc::new(OutputMuter(audio_output::CoreAudioOutputs))
 }
 
 pub fn permissions() -> Arc<dyn SystemPermissions> {
