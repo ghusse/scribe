@@ -61,6 +61,8 @@ export interface Settings {
   audio_retention_days: number;
   /** Mutes every audio output while recording. */
   mute_audio_during_dictation: boolean;
+  /** Other apps get no microphone input while recording (falls back to shared input when refused). */
+  exclusive_microphone_during_dictation: boolean;
 }
 
 export interface LlmModel { id: string; efforts: string[] }
@@ -86,7 +88,8 @@ export function effortLevels(p: Provider | undefined, model: string): string[] {
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
 export type OverlayEvent =
   | { kind: "idle" }
-  | { kind: "recording"; locked: boolean }
+  /** `warning`: shown under the pill for the whole recording (e.g. microphone not exclusive). */
+  | { kind: "recording"; locked: boolean; warning: string | null }
   | { kind: "processing" }
   | { kind: "toast"; level: ToastLevel; message: string; preview: string | null; dictation_id: number | null };
 

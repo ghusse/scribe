@@ -21,6 +21,7 @@ export function settings(over: Partial<Settings> = {}): Settings {
     hint_budget_chars: 2000,
     audio_retention_days: 30,
     mute_audio_during_dictation: true,
+    exclusive_microphone_during_dictation: false,
     ...over,
   };
 }

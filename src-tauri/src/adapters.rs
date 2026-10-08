@@ -1,7 +1,7 @@
 //! Thin adapters from the app's seams to Tauri, Win32/AppKit and cpal. No decisions here: every rule lives
 //! in a tested module (`overlay::Overlay`, `overlay::overlay_position`, `controller`, ...).
 use scribe_core::audio::AudioClip;
-use scribe_platform::audio_capture::{self, LevelCallback, RecordingHandle};
+use scribe_platform::audio_capture::{self, LevelCallback, RecordOptions, RecordingHandle, RecordingStart};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
 use crate::bootstrap::MAIN_WINDOW;
@@ -175,13 +175,16 @@ pub struct CpalRecorder;
 struct CpalRecording(RecordingHandle);
 
 impl Recording for CpalRecording {
+    fn started(&self) -> RecordingStart {
+        self.0.started()
+    }
     fn stop(self: Box<Self>) -> Result<AudioClip, String> {
         self.0.stop()
     }
 }
 
 impl Recorder for CpalRecorder {
-    fn start(&self, on_level: LevelCallback) -> Result<Box<dyn Recording>, String> {
-        audio_capture::start_recording(on_level).map(|h| Box::new(CpalRecording(h)) as Box<dyn Recording>)
+    fn start(&self, options: RecordOptions, on_level: LevelCallback) -> Result<Box<dyn Recording>, String> {
+        audio_capture::start_recording(options, on_level).map(|h| Box::new(CpalRecording(h)) as Box<dyn Recording>)
     }
 }

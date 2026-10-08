@@ -35,15 +35,29 @@ describe("Overlay", () => {
 
   it("shows the recording pill with a live meter and the lock tag", async () => {
     const { container } = await mount();
-    await fire("overlay", { kind: "recording", locked: false });
+    await fire("overlay", { kind: "recording", locked: false, warning: null });
     const bars = () => [...container.querySelectorAll<HTMLElement>(".bars span")].map((b) => b.style.height);
     expect(bars()).toHaveLength(12);
     expect(screen.queryByText("Verrouillé")).toBeNull();
     await fire("audio-level", 1);
     expect(bars().at(-1)).toBe("28px");
-    await fire("overlay", { kind: "recording", locked: true });
+    await fire("overlay", { kind: "recording", locked: true, warning: null });
     expect(screen.getByText("Verrouillé")).toBeTruthy();
     expect(bars().at(-1)).toBe("28px"); // locking keeps the meter
+  });
+
+  it("warns under the pill when the microphone is not exclusive, locked or not", async () => {
+    await mount();
+    await fire("overlay", { kind: "recording", locked: false, warning: null });
+    expect(screen.queryByRole("alert")).toBeNull();
+    const warning = "Micro non exclusif : les autres applications vous entendent";
+    await fire("overlay", { kind: "recording", locked: false, warning });
+    expect(screen.getByRole("alert").textContent).toBe(warning);
+    await fire("overlay", { kind: "recording", locked: true, warning });
+    expect(screen.getByRole("alert").textContent).toBe(warning);
+    expect(screen.getByText("Verrouillé")).toBeTruthy();
+    await fire("overlay", { kind: "processing" });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the processing pill", async () => {

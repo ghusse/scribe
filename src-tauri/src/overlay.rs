@@ -17,7 +17,8 @@ pub enum ToastLevel {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OverlayEvent {
     Idle,
-    Recording { locked: bool },
+    /// `warning`: shown under the pill for the whole recording (e.g. the microphone could not be kept exclusive).
+    Recording { locked: bool, warning: Option<String> },
     Processing,
     Toast { level: ToastLevel, message: String, preview: Option<String>, dictation_id: Option<i64> },
 }
@@ -164,7 +165,7 @@ mod tests {
     #[test]
     fn idle_hides_and_everything_else_shows() {
         let (w, o) = overlay();
-        o.emit(OverlayEvent::Recording { locked: false });
+        o.emit(OverlayEvent::Recording { locked: false, warning: None });
         assert!(w.visible());
         o.emit(OverlayEvent::Processing);
         assert!(w.visible());
@@ -176,7 +177,7 @@ mod tests {
             w.last_event(),
             Some(OverlayEvent::Toast { level: ToastLevel::Copied, message: "copié".into(), preview: Some("texte".into()), dictation_id: Some(4) })
         );
-        assert_eq!(w.calls.lock().unwrap()[0], Call::Send(OverlayEvent::Recording { locked: false }));
+        assert_eq!(w.calls.lock().unwrap()[0], Call::Send(OverlayEvent::Recording { locked: false, warning: None }));
     }
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
 
     #[test]
     fn late_dismiss_does_not_hide_recording_or_processing() {
-        for ev in [OverlayEvent::Recording { locked: false }, OverlayEvent::Recording { locked: true }, OverlayEvent::Processing] {
+        for ev in [OverlayEvent::Recording { locked: false, warning: None }, OverlayEvent::Recording { locked: true, warning: None }, OverlayEvent::Processing] {
             let (w, o) = overlay();
             o.emit(ev);
             o.dismiss();
@@ -216,12 +217,12 @@ mod tests {
         let o2 = o.clone();
         let dismiss = std::thread::spawn(move || o2.dismiss());
         in_hide_rx.recv().unwrap();
-        o.emit(OverlayEvent::Recording { locked: false });
+        o.emit(OverlayEvent::Recording { locked: false, warning: None });
         dismiss.join().unwrap();
         assert!(w.visible(), "{:?}", w.calls.lock().unwrap());
         let calls = w.calls.lock().unwrap();
         let n = calls.len();
-        assert_eq!(calls[n - 3..], [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false }), Call::Show]);
+        assert_eq!(calls[n - 3..], [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false, warning: None }), Call::Show]);
     }
 
     #[test]
@@ -231,7 +232,7 @@ mod tests {
             serde_json::to_value(&ev).unwrap(),
             serde_json::json!({"kind": "toast", "level": "uncertain", "message": "m", "preview": null, "dictation_id": 2})
         );
-        assert_eq!(serde_json::to_value(OverlayEvent::Recording { locked: true }).unwrap(), serde_json::json!({"kind": "recording", "locked": true}));
+        assert_eq!(serde_json::to_value(OverlayEvent::Recording { locked: true, warning: None }).unwrap(), serde_json::json!({"kind": "recording", "locked": true, "warning": null}));
     }
 
     #[test]

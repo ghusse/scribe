@@ -116,6 +116,16 @@ describe("Settings: autosave", () => {
     expect(lastSave().mute_audio_during_dictation).toBe(false);
   });
 
+  it("saves the « exclusive microphone » checkbox, off by default, with its warning", async () => {
+    await setup();
+    const box = screen.getByLabelText(/Couper le micro des autres applications pendant la dictée/) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(document.getElementById(box.getAttribute("aria-describedby")!)?.textContent).toMatch(/visio.*perd le micro/);
+    await fireEvent.click(box);
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+    expect(lastSave().exclusive_microphone_during_dictation).toBe(true);
+  });
+
   it("an edit undone before the save is not saved", async () => {
     const { status } = await setup();
     const box = screen.getByLabelText(/Double-tap/);

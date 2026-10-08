@@ -445,6 +445,8 @@
   <section>
     <h2>Son</h2>
     <label class="check"><input type="checkbox" bind:checked={s.mute_audio_during_dictation} /> Couper le son de l'ordinateur pendant la dictée</label>
+    <label class="check"><input type="checkbox" bind:checked={s.exclusive_microphone_during_dictation} aria-describedby="exclusive-mic-note" /> Couper le micro des autres applications pendant la dictée</label>
+    <p class="note" id="exclusive-mic-note">Une visio ou un appel en cours perd le micro le temps de la dictée. Si le micro refuse cet accès exclusif, la dictée se fait quand même, sans couper les autres applications.</p>
   </section>
 
   <section>

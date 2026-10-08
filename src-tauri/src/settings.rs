@@ -40,6 +40,9 @@ pub struct Settings {
     pub audio_retention_days: u32,
     /// Mute every audio output while recording (`audio_mute`). Files from before this setting turn it on.
     pub mute_audio_during_dictation: bool,
+    /// Other apps get no microphone input while recording (`scribe_platform::exclusive_mic`). Off by default:
+    /// a call in progress would lose its microphone.
+    pub exclusive_microphone_during_dictation: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +66,7 @@ impl Default for Settings {
             hint_budget_chars: 800,
             audio_retention_days: 30,
             mute_audio_during_dictation: true,
+            exclusive_microphone_during_dictation: false,
         }
     }
 }
@@ -188,6 +192,18 @@ mod tests {
         assert_eq!((s.min_recording_ms, s.max_recording_ms, s.restore_delay_ms), (300, 600_000, 150));
         assert_eq!(s.level, Level::Formatted);
         assert!(s.mute_audio_during_dictation);
+        assert!(!s.exclusive_microphone_during_dictation);
+    }
+
+    #[test]
+    fn exclusive_microphone_is_off_for_files_from_before_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"llm_model":"claude-haiku-4-5","mute_audio_during_dictation":true}"#).unwrap();
+        assert!(!Settings::load(&path).exclusive_microphone_during_dictation);
+        let on = Settings { exclusive_microphone_during_dictation: true, ..Default::default() };
+        on.save(&path).unwrap();
+        assert_eq!(Settings::load(&path), on);
     }
 
     #[test]
