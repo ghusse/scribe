@@ -143,8 +143,14 @@ jobs:
             echo "::error::the tag must look like vX.Y.Z"
             exit 1
           fi
-          # A draft is not reachable through releases/tags/{tag}: look for it in the list.
-          id=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG) | .id' | head -n 1)
+          # A draft is not reachable through releases/tags/{tag}: look for it in the list. The list lags behind a
+          # draft created a second ago by semantic-release: retry before giving up.
+          attempts=$([ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && echo 1 || echo 12)
+          for i in $(seq "$attempts"); do
+            id=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft and .tag_name == env.TAG) | .id' | head -n 1)
+            [ -n "$id" ] || [ "$i" -eq "$attempts" ] && break
+            sleep 5
+          done
           if [ -z "$id" ] && [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             if gh api "repos/$GH_REPO/releases/tags/$TAG" --silent 2>/dev/null; then
               echo "::error::$TAG is already published"
