@@ -132,6 +132,13 @@ from the total.
 
 When you add or remove an exclusion, update this list, the regex/globs above, and the tooling in the same commit.
 
+## PR titles and commit subjects
+
+The changelog is generated from them (semantic-release, squash merge: the PR title becomes the commit subject).
+A `feat` or `fix` that the user can notice describes **what changes for the user**, in French and in their words,
+never how it was done: `fix(macos): coller la dictée au lieu de taper « v »`, not
+`fix(macos): chercher la touche « v » avec UCKeyTranslate`. The technical how goes in the PR body.
+
 ## Checks before finishing
 
 `cargo test --workspace`, `bun run test`, `bun run check`, `bun run build`, `bun run coverage:ui`, `bun run coverage:rust`.
