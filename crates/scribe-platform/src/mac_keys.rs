@@ -5,7 +5,7 @@
 //! Command is the Windows key group, Option the Alt group. Letters follow the active layout (the event's typed
 //! character), other keys their physical position.
 
-/// kVK_ANSI_V: with Command, the paste shortcut (the event also carries the character « v », see `macos/keys.rs`).
+/// kVK_ANSI_V: the key of « v » on QWERTY and AZERTY.
 pub const KEYCODE_V: u16 = 0x09;
 
 /// `CGEventType` values the hook listens to.
@@ -78,6 +78,15 @@ pub fn vk_for_key(keycode: u16, typed: Option<char>) -> Option<u32> {
 /// modifiers through the per-key state (`CGEventSourceKeyState`), only through the flags.
 pub fn modifier_mask(vk: u32) -> Option<u64> {
     MODIFIERS.iter().find(|&&(_, v, _)| v == vk).map(|&(_, _, mask)| mask)
+}
+
+/// The key that types « v » on the active layout (Command + that key pastes: shortcuts follow the layout, Dvorak
+/// included), `typed` giving a keycode's character without modifiers. kVK_ANSI_V when no key types it.
+pub fn paste_keycode(typed: &dyn Fn(u16) -> Option<char>) -> u16 {
+    std::iter::once(KEYCODE_V)
+        .chain(POSITIONS.iter().map(|&(k, _)| k))
+        .find(|&k| typed(k).is_some_and(|c| c.eq_ignore_ascii_case(&'v')))
+        .unwrap_or(KEYCODE_V)
 }
 
 /// Keycode of a virtual-key code by physical position (the reverse of [`vk_for_key`] without a layout).
@@ -205,6 +214,15 @@ mod tests {
         assert_eq!(m.keycode(0x26), Some(0x7E), "up arrow");
         assert_eq!(m.keycode(0x70), Some(0x7A), "F1");
         assert_eq!(m.keycode(0x11), None, "generic Ctrl has no key");
+    }
+
+    #[test]
+    fn paste_uses_the_key_that_types_v() {
+        assert_eq!(paste_keycode(&|k| (k == 0x09).then_some('v')), 0x09, "QWERTY, AZERTY");
+        assert_eq!(paste_keycode(&|k| [(0x09, '.'), (0x2F, 'v')].iter().find(|p| p.0 == k).map(|p| p.1)), 0x2F, "Dvorak");
+        assert_eq!(paste_keycode(&|k| (k == 0x2F).then_some('V')), 0x2F, "Caps Lock");
+        assert_eq!(paste_keycode(&|_| None), KEYCODE_V, "unreadable layout");
+        assert_eq!(paste_keycode(&|_| Some('ф')), KEYCODE_V, "no « v » (Cyrillic): its position");
     }
 
     #[test]

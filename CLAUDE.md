@@ -84,7 +84,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   Remaining branches: the AVFoundation status `match` and the `open` command result.
 - `macos/focus.rs`: classification is `focus_rules::classify_ax`, the app name `focus_rules::process_stem`.
   Remaining branches: AX error / downcast `?`s and the secure-field guard of `AxFieldReader`.
-- `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit calls and re-exports only. Overlay
+- `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit/Carbon calls and re-exports only (which key
+  pastes on the active layout is `mac_keys::paste_keycode`, which flag tells a modifier is down `mac_keys::modifier_mask`;
+  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). Overlay
   `show`/`hide` post to the main queue (`DispatchQueue::main().exec_async`), never wait (same rule as Windows).
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`
