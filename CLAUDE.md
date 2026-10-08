@@ -84,7 +84,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   Remaining branches: the AVFoundation status `match` and the `open` command result.
 - `macos/focus.rs`: classification is `focus_rules::classify_ax`, the app name `focus_rules::process_stem`.
   Remaining branches: AX error / downcast `?`s and the secure-field guard of `AxFieldReader`.
-- `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit calls and re-exports only. Overlay
+- `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit/Carbon calls and re-exports only (which key
+  pastes on the active layout is `mac_keys::paste_keycode`, which flag tells a modifier is down `mac_keys::modifier_mask`;
+  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). Overlay
   `show`/`hide` post to the main queue (`DispatchQueue::main().exec_async`), never wait (same rule as Windows).
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`
@@ -129,6 +131,13 @@ effect is small (about 150 lines, always fully run). Judge a file's own coverage
 from the total.
 
 When you add or remove an exclusion, update this list, the regex/globs above, and the tooling in the same commit.
+
+## PR titles and commit subjects
+
+The changelog is generated from them (semantic-release, squash merge: the PR title becomes the commit subject).
+A `feat` or `fix` that the user can notice describes **what changes for the user**, in French and in their words,
+never how it was done: `fix(macos): coller la dictée au lieu de taper « v »`, not
+`fix(macos): chercher la touche « v » avec UCKeyTranslate`. The technical how goes in the PR body.
 
 ## Checks before finishing
 
