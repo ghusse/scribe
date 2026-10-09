@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0](https://github.com/ghusse/scribe/compare/v0.3.2...v0.4.0) (2026-10-09)
+
+### Fonctionnalités
+
+* couper le micro des autres applications pendant la dictée ([#14](https://github.com/ghusse/scribe/issues/14)) ([440c203](https://github.com/ghusse/scribe/commit/440c2037dad6f0465291bf980f82a5a9a796697b))
+
 ## [0.3.2](https://github.com/ghusse/scribe/compare/v0.3.1...v0.3.2) (2026-10-08)
 
 ### Corrections
