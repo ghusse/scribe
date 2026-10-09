@@ -1,15 +1,16 @@
-//! Hog mode on the default input through CoreAudio: one `HogBackend` call each, no decision here (when to take
-//! and give back the device is `exclusive_mic::HogGuard`). macOS gives the device back if the process dies.
+//! Hog mode on the inputs through CoreAudio: one `HogBackend` call each, no decision here (which inputs to take, in
+//! which order, and when to give them back is `exclusive_mic::HogGuard`). macOS gives them back if the process dies.
 use std::ffi::c_void;
 use std::mem::size_of;
 use std::ptr::{self, NonNull};
 
 use objc2_core_audio::{
-    kAudioDevicePropertyHogMode, kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultInputDevice,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectID, AudioObjectSetPropertyData,
+    kAudioDevicePropertyHogMode, kAudioDevicePropertyStreams, kAudioDevicePropertyTransportType,
+    kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput,
+    kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectID, AudioObjectSetPropertyData,
 };
 
-use super::audio_output::{check, data_size, get, prop};
+use super::audio_output::{check, data_size, devices, get, prop};
 use crate::exclusive_mic::HogBackend;
 
 #[derive(Clone, Copy)]
@@ -20,7 +21,27 @@ impl HogBackend for CoreAudioHog {
         let mut device: AudioObjectID = 0;
         let mut address = prop(kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal);
         get(kAudioObjectSystemObject as AudioObjectID, &mut address, &mut device)?;
-        if device == 0 { Err("aucun micro détecté".into()) } else { Ok(device) }
+        if device == 0 {
+            Err("aucun micro détecté".into())
+        } else {
+            Ok(device)
+        }
+    }
+
+    fn inputs(&self) -> Result<Vec<u32>, String> {
+        let mut inputs = Vec::new();
+        for device in devices()? {
+            if data_size(device, &mut prop(kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput))? > 0 {
+                inputs.push(device);
+            }
+        }
+        Ok(inputs)
+    }
+
+    fn transport(&self, device: u32) -> Result<u32, String> {
+        let mut transport: u32 = 0;
+        get(device, &mut prop(kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal), &mut transport)?;
+        Ok(transport)
     }
 
     fn has_output(&self, device: u32) -> Result<bool, String> {

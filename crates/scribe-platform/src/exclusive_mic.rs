@@ -92,6 +92,10 @@ fn open_retrying(
 /// it: taken by us when free, given back when ours, unchanged when another process holds it.
 pub trait HogBackend {
     fn default_input(&self) -> Result<u32, String>;
+    /// Every device with an input stream.
+    fn inputs(&self) -> Result<Vec<u32>, String>;
+    /// `kAudioDevicePropertyTransportType`.
+    fn transport(&self, device: u32) -> Result<u32, String>;
     /// Whether the device also plays sound (headset, interface): hog mode reserves the whole device.
     fn has_output(&self, device: u32) -> Result<bool, String>;
     /// Pid of the process holding the device, -1 when free.
@@ -99,33 +103,55 @@ pub trait HogBackend {
     fn toggle(&self, device: u32) -> Result<(), String>;
 }
 
+/// `kAudioDeviceTransportTypeAggregate`, `kAudioDeviceTransportTypeVirtual`: no microphone of their own, and no
+/// hog mode.
+const UNHOGGABLE_TRANSPORTS: [u32; 2] = [u32::from_be_bytes(*b"grup"), u32::from_be_bytes(*b"virt")];
+
 fn own_pid() -> i32 {
     std::process::id() as i32
 }
 
-/// The default input held in hog mode; given back on drop, only if we still hold it.
+/// Every physical input held in hog mode, so that an app losing our microphone cannot switch to another one;
+/// each given back on drop, only if we still hold it.
 pub struct HogGuard<B: HogBackend> {
     backend: B,
-    device: u32,
+    held: Vec<u32>,
 }
 
 impl<B: HogBackend> HogGuard<B> {
+    /// The unused inputs first and ours last: an app cut off from ours finds no free microphone to switch to.
+    /// On any refusal, what was taken is given back.
     pub fn acquire(backend: B) -> Result<Self, String> {
-        let device = backend.default_input()?;
-        if backend.has_output(device)? {
+        let ours = backend.default_input()?;
+        let mut order = Vec::new();
+        for device in backend.inputs()? {
+            if device != ours && !UNHOGGABLE_TRANSPORTS.contains(&backend.transport(device)?) {
+                order.push(device);
+            }
+        }
+        order.push(ours);
+        let mut guard = Self { backend, held: Vec::new() };
+        for device in order {
+            guard.take(device)?;
+        }
+        Ok(guard)
+    }
+
+    fn take(&mut self, device: u32) -> Result<(), String> {
+        if self.backend.has_output(device)? {
             return Err("micro intégré à un appareil de sortie audio, dont le son serait coupé aussi".into());
         }
-        let owner = backend.owner(device)?;
+        let owner = self.backend.owner(device)?;
         if owner != own_pid() {
             if owner != -1 {
                 return Err(format!("micro déjà réservé par le processus {owner}"));
             }
-            backend.toggle(device)?;
+            self.backend.toggle(device)?;
         }
-        // Built before checking, so that a hog taken but misreported is still given back.
-        let guard = Self { backend, device };
-        match guard.backend.owner(device)? {
-            pid if pid == own_pid() => Ok(guard),
+        // Recorded before checking, so that a hog taken but misreported is still given back.
+        self.held.push(device);
+        match self.backend.owner(device)? {
+            pid if pid == own_pid() => Ok(()),
             _ => Err("le micro refuse l'accès exclusif".into()),
         }
     }
@@ -133,14 +159,16 @@ impl<B: HogBackend> HogGuard<B> {
 
 impl<B: HogBackend> Drop for HogGuard<B> {
     fn drop(&mut self) {
-        match self.backend.owner(self.device) {
-            Ok(pid) if pid == own_pid() => {
-                if let Err(e) = self.backend.toggle(self.device) {
-                    tracing::warn!("impossible de rendre le micro aux autres applications : {e}");
+        for &device in self.held.iter().rev() {
+            match self.backend.owner(device) {
+                Ok(pid) if pid == own_pid() => {
+                    if let Err(e) = self.backend.toggle(device) {
+                        tracing::warn!("impossible de rendre le micro {device} aux autres applications : {e}");
+                    }
                 }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("état du micro {device} illisible, accès exclusif non rendu : {e}"),
             }
-            Ok(_) => {}
-            Err(e) => tracing::warn!("état du micro illisible, accès exclusif non rendu : {e}"),
         }
     }
 }
@@ -206,7 +234,10 @@ mod tests {
     }
 
     /// An exclusive input and a shared one, sharing one log.
-    fn openers(exclusive: Result<(u16, u32), &'static str>, shared: Result<(u16, u32), &'static str>) -> (ExclusiveAccess, Opener, Log) {
+    fn openers(
+        exclusive: Result<(u16, u32), &'static str>,
+        shared: Result<(u16, u32), &'static str>,
+    ) -> (ExclusiveAccess, Opener, Log) {
         let log = Log::default();
         (ExclusiveAccess::Input(Box::new(opener("exclusive", exclusive, &log))), opener("shared", shared, &log), log)
     }
@@ -317,23 +348,46 @@ mod tests {
         assert_eq!(entries(&log), vec!["shared"; SETTLE_ATTEMPTS as usize]);
     }
 
-    /// One device in hog mode: `owner` is its pid (-1 = free). `toggle` follows CoreAudio unless `stuck`
-    /// (aggregate device: accepted, nothing changes). `broken` fails the given call names.
+    const OURS: u32 = 7;
+    const OTHER: u32 = 8;
+    const PHYSICAL: u32 = u32::from_be_bytes(*b"bltn");
+
+    /// One input in hog mode: `owner` is its pid (-1 = free). `toggle` follows CoreAudio unless `stuck` (accepted,
+    /// nothing changes).
+    #[derive(Clone)]
+    struct Dev {
+        owner: i32,
+        output: bool,
+        stuck: bool,
+        transport: u32,
+    }
+
+    impl Default for Dev {
+        fn default() -> Self {
+            Dev { owner: -1, output: false, stuck: false, transport: PHYSICAL }
+        }
+    }
+
+    /// Inputs by id, `OURS` being the default. `broken` fails the given call names; `toggles` logs each toggled id.
     #[derive(Clone, Default)]
     struct FakeHog(Arc<Mutex<HogState>>);
 
     #[derive(Default)]
     struct HogState {
-        owner: i32,
-        output: bool,
-        stuck: bool,
+        devices: std::collections::BTreeMap<u32, Dev>,
         broken: Vec<&'static str>,
-        toggles: u32,
+        toggles: Vec<u32>,
     }
 
     impl FakeHog {
+        fn with(devices: &[(u32, Dev)]) -> Self {
+            let hog = FakeHog::default();
+            hog.state().devices = devices.iter().cloned().collect();
+            hog
+        }
+        /// Our input alone, held by `owner`.
         fn owned_by(owner: i32) -> Self {
-            FakeHog(Arc::new(Mutex::new(HogState { owner, ..HogState::default() })))
+            Self::with(&[(OURS, Dev { owner, ..Dev::default() })])
         }
         fn free() -> Self {
             Self::owned_by(-1)
@@ -341,36 +395,53 @@ mod tests {
         fn state(&self) -> std::sync::MutexGuard<'_, HogState> {
             self.0.lock().unwrap()
         }
-        fn owner_and_toggles(&self) -> (i32, u32) {
-            let s = self.state();
-            (s.owner, s.toggles)
+        fn owner(&self, device: u32) -> i32 {
+            self.state().devices[&device].owner
         }
-        fn fails(&self, call: &str) -> Result<(), String> {
-            if self.state().broken.contains(&call) { Err(format!("{call} failed")) } else { Ok(()) }
+        fn toggles(&self) -> Vec<u32> {
+            self.state().toggles.clone()
+        }
+        fn dev(&self, call: &str, device: u32) -> Result<Dev, String> {
+            let s = self.state();
+            if s.broken.contains(&call) {
+                return Err(format!("{call} failed"));
+            }
+            Ok(s.devices[&device].clone())
         }
     }
 
     impl HogBackend for FakeHog {
         fn default_input(&self) -> Result<u32, String> {
-            self.fails("default_input").map(|()| 7)
+            if self.state().broken.contains(&"default_input") {
+                Err("default_input failed".into())
+            } else {
+                Ok(OURS)
+            }
+        }
+        fn inputs(&self) -> Result<Vec<u32>, String> {
+            let s = self.state();
+            if s.broken.contains(&"inputs") {
+                Err("inputs failed".into())
+            } else {
+                Ok(s.devices.keys().copied().collect())
+            }
+        }
+        fn transport(&self, device: u32) -> Result<u32, String> {
+            self.dev("transport", device).map(|d| d.transport)
         }
         fn has_output(&self, device: u32) -> Result<bool, String> {
-            assert_eq!(device, 7);
-            self.fails("has_output")?;
-            Ok(self.state().output)
+            self.dev("has_output", device).map(|d| d.output)
         }
         fn owner(&self, device: u32) -> Result<i32, String> {
-            assert_eq!(device, 7);
-            self.fails("owner")?;
-            Ok(self.state().owner)
+            self.dev("owner", device).map(|d| d.owner)
         }
         fn toggle(&self, device: u32) -> Result<(), String> {
-            assert_eq!(device, 7);
-            self.fails("toggle")?;
+            self.dev("toggle", device)?;
             let mut s = self.state();
-            s.toggles += 1;
-            if !s.stuck {
-                s.owner = match s.owner {
+            s.toggles.push(device);
+            let d = s.devices.get_mut(&device).unwrap();
+            if !d.stuck {
+                d.owner = match d.owner {
                     -1 => own_pid(),
                     pid if pid == own_pid() => -1,
                     other => other,
@@ -384,9 +455,52 @@ mod tests {
     fn a_free_microphone_is_held_then_given_back() {
         let hog = FakeHog::free();
         let guard = HogGuard::acquire(hog.clone()).unwrap();
-        assert_eq!(hog.state().owner, own_pid());
+        assert_eq!(hog.owner(OURS), own_pid());
         drop(guard);
-        assert_eq!(hog.owner_and_toggles(), (-1, 2));
+        assert_eq!((hog.owner(OURS), hog.toggles()), (-1, vec![OURS, OURS]));
+    }
+
+    #[test]
+    fn the_unused_microphones_are_held_before_ours_and_given_back_after_it() {
+        let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev::default()), (9, Dev::default())]);
+        let guard = HogGuard::acquire(hog.clone()).unwrap();
+        assert_eq!(hog.toggles(), [OTHER, 9, OURS]);
+        drop(guard);
+        assert_eq!(hog.toggles(), [OTHER, 9, OURS, OURS, 9, OTHER]);
+        assert!([OURS, OTHER, 9].iter().all(|d| hog.owner(*d) == -1));
+    }
+
+    #[test]
+    fn virtual_and_aggregate_inputs_are_skipped() {
+        let hog = FakeHog::with(&[
+            (OURS, Dev::default()),
+            (OTHER, Dev { transport: u32::from_be_bytes(*b"virt"), ..Dev::default() }),
+            (9, Dev { transport: u32::from_be_bytes(*b"grup"), ..Dev::default() }),
+        ]);
+        let _guard = HogGuard::acquire(hog.clone()).unwrap();
+        assert_eq!(hog.toggles(), [OURS]);
+    }
+
+    #[test]
+    fn a_refused_unused_microphone_gives_back_what_was_taken_and_leaves_ours_free() {
+        let hog = FakeHog::with(&[
+            (OURS, Dev::default()),
+            (OTHER, Dev::default()),
+            (9, Dev { owner: own_pid() + 1, ..Dev::default() }),
+        ]);
+        assert_eq!(
+            HogGuard::acquire(hog.clone()).err(),
+            Some(format!("micro déjà réservé par le processus {}", own_pid() + 1))
+        );
+        assert_eq!(hog.toggles(), [OTHER, OTHER]);
+        assert_eq!((hog.owner(OURS), hog.owner(OTHER)), (-1, -1));
+    }
+
+    #[test]
+    fn an_unused_headset_that_also_plays_sound_is_a_refusal() {
+        let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev { output: true, ..Dev::default() })]);
+        assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("sortie audio"));
+        assert!(hog.toggles().is_empty());
     }
 
     #[test]
@@ -396,41 +510,39 @@ mod tests {
             HogGuard::acquire(hog.clone()).err(),
             Some(format!("micro déjà réservé par le processus {}", own_pid() + 1))
         );
-        assert_eq!(hog.state().toggles, 0);
+        assert!(hog.toggles().is_empty());
     }
 
     #[test]
     fn a_microphone_already_ours_is_not_toggled_but_given_back() {
         let hog = FakeHog::owned_by(own_pid());
         let guard = HogGuard::acquire(hog.clone()).unwrap();
-        assert_eq!(hog.state().toggles, 0);
+        assert!(hog.toggles().is_empty());
         drop(guard);
-        assert_eq!(hog.owner_and_toggles(), (-1, 1));
+        assert_eq!((hog.owner(OURS), hog.toggles()), (-1, vec![OURS]));
     }
 
     #[test]
     fn a_microphone_that_also_plays_sound_is_not_held() {
-        let hog = FakeHog::free();
-        hog.state().output = true;
+        let hog = FakeHog::with(&[(OURS, Dev { output: true, ..Dev::default() })]);
         assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("sortie audio"));
-        assert_eq!(hog.owner_and_toggles(), (-1, 0));
+        assert!(hog.toggles().is_empty());
     }
 
     #[test]
     fn a_device_without_hog_mode_is_refused_and_nothing_is_given_back() {
-        let hog = FakeHog::free();
-        hog.state().stuck = true;
+        let hog = FakeHog::with(&[(OURS, Dev { stuck: true, ..Dev::default() })]);
         assert_eq!(HogGuard::acquire(hog.clone()).err(), Some("le micro refuse l'accès exclusif".into()));
-        assert_eq!(hog.owner_and_toggles(), (-1, 1));
+        assert_eq!((hog.owner(OURS), hog.toggles()), (-1, vec![OURS]));
     }
 
     #[test]
     fn errors_while_acquiring_are_returned() {
-        for call in ["default_input", "has_output", "owner", "toggle"] {
-            let hog = FakeHog::free();
+        for call in ["default_input", "inputs", "transport", "has_output", "owner", "toggle"] {
+            let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev::default())]);
             hog.state().broken.push(call);
             assert_eq!(HogGuard::acquire(hog.clone()).err(), Some(format!("{call} failed")));
-            assert_eq!(hog.state().owner, -1);
+            assert_eq!((hog.owner(OURS), hog.owner(OTHER)), (-1, -1));
         }
     }
 
@@ -438,9 +550,9 @@ mod tests {
     fn a_microphone_released_meanwhile_is_not_taken_back() {
         let hog = FakeHog::free();
         let guard = HogGuard::acquire(hog.clone()).unwrap();
-        hog.state().owner = -1;
+        hog.state().devices.get_mut(&OURS).unwrap().owner = -1;
         drop(guard);
-        assert_eq!(hog.owner_and_toggles(), (-1, 1));
+        assert_eq!(hog.toggles(), [OURS]);
     }
 
     #[test]
@@ -450,7 +562,7 @@ mod tests {
             let guard = HogGuard::acquire(hog.clone()).unwrap();
             hog.state().broken.push(call);
             drop(guard);
-            assert_eq!(hog.state().owner, own_pid());
+            assert_eq!(hog.owner(OURS), own_pid());
         }
     }
 
@@ -461,9 +573,9 @@ mod tests {
         let access = ExclusiveAccess::Hold(Box::new(HogMode(hog.clone())));
         let (s, start) = open_input(true, &access, &opener("shared", Ok((2, 48_000)), &log), capture()).unwrap();
         assert!(start.exclusive_microphone);
-        assert_eq!(hog.state().owner, own_pid());
+        assert_eq!(hog.owner(OURS), own_pid());
         drop(s.stream);
-        assert_eq!(hog.state().owner, -1);
+        assert_eq!(hog.owner(OURS), -1);
     }
 
     #[test]

@@ -105,8 +105,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   `audio_capture::CaptureBuffer` (`push`, `set_error`, `finish`), exclusive-else-shared input
   `exclusive_mic::open_input`. Remaining branches: the cpal error paths (no device, unusable config, unsupported
   format, open/play failure → `ready` error) and the sample-format `match`.
-- `macos/audio_input.rs`: one CoreAudio hog-mode call per `exclusive_mic::HogBackend` method; when to take the
-  default input (not when it also plays sound) and give it back (only if ours) is `exclusive_mic::HogGuard`;
+- `macos/audio_input.rs`: one CoreAudio hog-mode call per `exclusive_mic::HogBackend` method; which inputs to take
+  (every physical one, unused ones first, refused when one also plays sound) and give back (only if ours) is
+  `exclusive_mic::HogGuard`;
   taking it once the shared cpal stream runs, keeping that stream when refused and waiting for a device restarting
   after a release is `exclusive_mic::open_input` (`ExclusiveAccess::Hold`). Remaining branches: status checks and
   the « no default input » guard.
