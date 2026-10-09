@@ -117,13 +117,18 @@ mod tests {
     fn exclusive_mic_holds_the_hog_while_recording() {
         use crate::exclusive_mic::HogBackend;
         use crate::macos::audio_input::CoreAudioHog;
-        let device = CoreAudioHog.default_input().unwrap();
-        assert_eq!(CoreAudioHog.owner(device), Ok(-1));
+        let default = CoreAudioHog.default_input().unwrap();
+        let inputs: Vec<u32> = CoreAudioHog.inputs().unwrap();
+        let owners = || inputs.iter().map(|d| (*d, CoreAudioHog.owner(*d))).collect::<Vec<_>>();
+        let physical = |d: &u32| ![*b"grup", *b"virt"].map(u32::from_be_bytes).contains(&CoreAudioHog.transport(*d).unwrap());
+        assert!(owners().iter().all(|(_, o)| *o == Ok(-1)), "{:?}", owners());
         let h = start_recording(RecordOptions { exclusive_microphone: true }, Arc::new(|_| {})).unwrap();
-        assert_eq!(CoreAudioHog.owner(device), Ok(std::process::id() as i32));
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        let ours = Ok(std::process::id() as i32);
+        assert!(owners().iter().all(|(d, o)| !physical(d) || *o == ours), "{:?}", owners());
+        std::thread::sleep(std::time::Duration::from_millis(3_000));
         assert!(!h.stop().unwrap().samples.is_empty());
-        assert_eq!(CoreAudioHog.owner(device), Ok(-1));
+        assert!(owners().iter().all(|(_, o)| *o == Ok(-1)), "{:?}", owners());
+        assert_eq!(CoreAudioHog.default_input(), Ok(default));
         // The device restarts for a few ms once given back: the next test would find it unusable.
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
