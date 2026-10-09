@@ -41,12 +41,12 @@ describe("pure helpers", () => {
 
   it("resets the meter on a new recording, keeps it when locking, schedules toasts", () => {
     const view: OverlayView = { ov: { kind: "idle" }, levels: pushLevel(emptyLevels(), 0.1) };
-    const rec = reduce(view, { kind: "recording", locked: false });
+    const rec = reduce(view, { kind: "recording", locked: false, warning: null });
     expect(rec.view.levels).toEqual(emptyLevels());
     expect(rec.timeout).toBeNull();
-    const locked = reduce(view, { kind: "recording", locked: true });
+    const locked = reduce(view, { kind: "recording", locked: true, warning: null });
     expect(locked.view.levels).toBe(view.levels);
-    expect(locked.view.ov).toEqual({ kind: "recording", locked: true });
+    expect(locked.view.ov).toEqual({ kind: "recording", locked: true, warning: null });
     expect(reduce(view, toast({ level: "error" })).timeout).toBe(10000);
     expect(reduce(view, { kind: "processing" }).timeout).toBeNull();
   });
@@ -82,10 +82,10 @@ describe("createOverlay", () => {
 
   it("feeds the level meter", () => {
     const { ctl, views } = setup();
-    ctl.event({ kind: "recording", locked: false });
+    ctl.event({ kind: "recording", locked: false, warning: null });
     ctl.level(0.1);
     expect(views.at(-1)!.levels[LEVEL_BARS - 1]).toBeCloseTo(0.6);
-    expect(views.at(-1)!.ov).toEqual({ kind: "recording", locked: false });
+    expect(views.at(-1)!.ov).toEqual({ kind: "recording", locked: false, warning: null });
   });
 
   it("dismisses a toast on its own after its timeout and tells the backend", () => {
@@ -101,7 +101,7 @@ describe("createOverlay", () => {
   it("a new event cancels the pending toast timer", () => {
     const { ctl, deps, timers } = setup();
     ctl.event(toast());
-    ctl.event({ kind: "recording", locked: false });
+    ctl.event({ kind: "recording", locked: false, warning: null });
     expect(timers[0].cancelled).toBe(true);
     expect(deps.cancel).toHaveBeenCalledTimes(1);
   });
@@ -147,10 +147,10 @@ describe("createOverlay", () => {
     const s = setup();
     s.ctl.event(toast());
     const done = s.ctl.copy();
-    s.ctl.event({ kind: "recording", locked: false });
+    s.ctl.event({ kind: "recording", locked: false, warning: null });
     s.resolveCopy();
     await done;
-    expect(s.ctl.view().ov).toEqual({ kind: "recording", locked: false });
+    expect(s.ctl.view().ov).toEqual({ kind: "recording", locked: false, warning: null });
     expect(s.deps.dismiss).not.toHaveBeenCalled();
   });
 

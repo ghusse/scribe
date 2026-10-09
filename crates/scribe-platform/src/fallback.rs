@@ -8,6 +8,7 @@ use scribe_core::focus::{FocusDetector, FocusSnapshot};
 use scribe_core::insert::{FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::{Permission, PermissionStatus, SystemPermissions};
 
+use crate::exclusive_mic::ExclusiveAccess;
 use crate::output_mute::{OutputBackend, OutputMuter};
 use crate::{HookConfig, KeyCallback};
 
@@ -83,6 +84,11 @@ pub fn boot_time_ms() -> Option<u64> {
     None
 }
 
+/// No exclusive microphone access here: recordings use the shared input.
+pub fn exclusive_input() -> ExclusiveAccess {
+    ExclusiveAccess::Unsupported
+}
+
 pub fn prepare_overlay(_raw_hwnd: isize) {}
 
 struct NoPermissions;
@@ -153,6 +159,11 @@ mod tests {
         assert!(mute.mute_all().is_empty());
         mute.restore(&["speakers".to_string()]);
         assert_eq!(boot_time_ms(), None);
+    }
+
+    #[test]
+    fn exclusive_microphone_access_is_unsupported() {
+        assert!(matches!(exclusive_input(), ExclusiveAccess::Unsupported));
     }
 
     #[test]

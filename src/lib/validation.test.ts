@@ -8,7 +8,7 @@ const ok: Settings = {
   level: "formatted", stt_provider: "openai", stt_model: "gpt-transcribe", llm_provider: "anthropic", llm_model: "claude-opus-5-5",
   llm_effort: "low", restore_delay_ms: 150, min_recording_ms: 300, max_recording_ms: 600000, silence_threshold_dbfs: -45,
   llm_timeout_base_ms: 5000, llm_timeout_per_char_ms: 5, hint_budget_chars: 800, audio_retention_days: 30,
-  mute_audio_during_dictation: true,
+  mute_audio_during_dictation: true, exclusive_microphone_during_dictation: false,
 };
 const edited = (edit: (s: Settings) => void) => {
   const s = structuredClone(ok);

@@ -5,8 +5,10 @@ use scribe_core::focus::FocusDetector;
 use scribe_core::insert::{FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::SystemPermissions;
 
+use crate::exclusive_mic::{ExclusiveAccess, HogMode};
 use crate::output_mute::OutputMuter;
 
+pub mod audio_input;
 pub mod audio_output;
 pub mod focus;
 pub mod hook;
@@ -37,4 +39,8 @@ pub fn system_mute() -> Arc<dyn SystemMute> {
 
 pub fn permissions() -> Arc<dyn SystemPermissions> {
     Arc::new(permissions::MacPermissions)
+}
+
+pub fn exclusive_input() -> ExclusiveAccess {
+    ExclusiveAccess::Hold(Box::new(HogMode(audio_input::CoreAudioHog)))
 }

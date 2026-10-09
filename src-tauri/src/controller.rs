@@ -8,7 +8,7 @@ use scribe_core::chord;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
 use scribe_core::session::{self, Session, SessionAction};
-use scribe_platform::audio_capture::LevelCallback;
+use scribe_platform::audio_capture::{LevelCallback, RecordOptions, RecordingStart};
 use scribe_platform::HookEvent;
 
 use crate::audio_mute::MuteGuard;
@@ -29,11 +29,12 @@ pub enum ControllerMsg {
 
 /// Microphone access (cpal in the app).
 pub trait Recorder: Send + Sync {
-    fn start(&self, on_level: LevelCallback) -> Result<Box<dyn Recording>, String>;
+    fn start(&self, options: RecordOptions, on_level: LevelCallback) -> Result<Box<dyn Recording>, String>;
 }
 
 /// A recording in progress.
 pub trait Recording: Send {
+    fn started(&self) -> RecordingStart;
     /// Stops capture and returns 16 kHz mono audio.
     fn stop(self: Box<Self>) -> Result<AudioClip, String>;
 }
@@ -92,6 +93,13 @@ pub fn level_emitter(ui: Arc<dyn UiSink>, clock: Clock, min_interval_ms: u64) ->
 
 const LEVEL_INTERVAL_MS: u64 = 50;
 
+pub const SHARED_MICROPHONE_WARNING: &str = "Micro non exclusif : les autres applications vous entendent";
+
+/// The overlay warning of a recording: exclusive access was asked for but not obtained.
+pub fn microphone_warning(options: RecordOptions, started: RecordingStart) -> Option<String> {
+    (options.exclusive_microphone && !started.exclusive_microphone).then(|| SHARED_MICROPHONE_WARNING.to_string())
+}
+
 /// A recording in progress, with what it holds until it ends.
 struct Active {
     handle: Box<dyn Recording>,
@@ -101,6 +109,8 @@ struct Active {
     /// Restores the sound when dropped, so every path that ends the recording restores it. Dropped after the
     /// microphone is stopped.
     mute: Option<MuteGuard>,
+    /// Kept on the pill when the recording locks.
+    warning: Option<String>,
 }
 
 pub struct Controller {
@@ -254,14 +264,18 @@ impl Controller {
         match action {
             SessionAction::BeginRecording => {
                 let on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
-                match self.deps.recorder.start(on_level) {
+                let exclusive_microphone = self.svc.settings.read().unwrap().exclusive_microphone_during_dictation;
+                let options = RecordOptions { exclusive_microphone };
+                match self.deps.recorder.start(options, on_level) {
                     Ok(handle) => {
                         (self.svc.warm_up)(&self.svc.settings.read().unwrap());
                         self.mode = Mode::Hold;
-                        overlay.emit(OverlayEvent::Recording { locked: false });
+                        let warning = microphone_warning(options, handle.started());
+                        overlay.emit(OverlayEvent::Recording { locked: false, warning: warning.clone() });
                         let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
                         let mute = mute_on.then(|| self.svc.audio_mute.guard());
-                        self.recording = Some(Active { handle, focus_start: spawn_focus_snapshot(&self.svc), mute });
+                        let focus_start = spawn_focus_snapshot(&self.svc);
+                        self.recording = Some(Active { handle, focus_start, mute, warning });
                     }
                     Err(e) => {
                         self.session.abort();
@@ -272,7 +286,8 @@ impl Controller {
             }
             SessionAction::SetMode(mode) => {
                 self.mode = mode;
-                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked });
+                let warning = self.recording.as_ref().and_then(|a| a.warning.clone());
+                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, warning });
             }
             SessionAction::DiscardRecording => {
                 if let Some(Active { handle, mute, .. }) = self.recording.take() {
@@ -282,7 +297,7 @@ impl Controller {
                 overlay.emit(OverlayEvent::Idle);
             }
             SessionAction::FinishRecording => {
-                let Some(Active { handle, focus_start, mute }) = self.recording.take() else {
+                let Some(Active { handle, focus_start, mute, .. }) = self.recording.take() else {
                     self.session.on_processing_done();
                     return;
                 };

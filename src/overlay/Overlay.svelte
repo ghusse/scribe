@@ -30,12 +30,15 @@
 </script>
 
 {#if view.ov.kind === "recording"}
-  <div class="pill" role="status" aria-label="Enregistrement">
-    <span class="dot"></span>
-    <div class="bars">
-      {#each view.levels as l}<span style="height: {barHeight(l)}px"></span>{/each}
+  <div class="recording">
+    <div class="pill" role="status" aria-label="Enregistrement">
+      <span class="dot"></span>
+      <div class="bars">
+        {#each view.levels as l}<span style="height: {barHeight(l)}px"></span>{/each}
+      </div>
+      {#if view.ov.locked}<span class="tag">Verrouillé</span>{/if}
     </div>
-    {#if view.ov.locked}<span class="tag">Verrouillé</span>{/if}
+    {#if view.ov.warning}<p class="warning" role="alert">{view.ov.warning}</p>{/if}
   </div>
 {:else if view.ov.kind === "processing"}
   <div class="pill" role="status"><span class="spinner"></span><span class="label">Transcription…</span></div>
@@ -57,6 +60,8 @@
   :global(body) { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: flex-end; height: 100vh; }
   .pill, .toast { background: rgba(24, 24, 32, 0.92); color: #fff; border-radius: 999px; padding: 10px 18px;
     display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.35); margin-bottom: 8px; }
+  .recording { display: flex; flex-direction: column; align-items: center; }
+  .warning { background: #b45309; color: #fff; font-size: 12px; border-radius: 8px; padding: 4px 10px; margin: 0 0 8px; }
   .toast { border-radius: 14px; max-width: 420px; align-items: flex-start; }
   .toast.error { border-left: 4px solid #ef4444; }
   .toast.copied, .toast.uncertain { border-left: 4px solid #6366f1; }

@@ -10,12 +10,31 @@ pub use crate::device::microphone::start_recording;
 /// Receives the RMS (0.0–1.0) of each captured buffer, from the audio thread.
 pub type LevelCallback = Arc<dyn Fn(f32) + Send + Sync>;
 
+/// How a recording uses the microphone.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RecordOptions {
+    /// Other apps get no microphone input while recording (`exclusive_mic`); falls back to shared input.
+    pub exclusive_microphone: bool,
+}
+
+/// What a recording got from the microphone once started.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RecordingStart {
+    /// Other apps get no microphone input (false when not asked or refused).
+    pub exclusive_microphone: bool,
+}
+
 pub struct RecordingHandle {
+    started: RecordingStart,
     stop_tx: mpsc::Sender<()>,
     join: Option<JoinHandle<Result<AudioClip, String>>>,
 }
 
 impl RecordingHandle {
+    pub fn started(&self) -> RecordingStart {
+        self.started
+    }
+
     /// Stops capture and returns 16 kHz mono audio. Partial audio is kept if the device failed mid-way.
     pub fn stop(mut self) -> Result<AudioClip, String> {
         let _ = self.stop_tx.send(());
@@ -30,19 +49,19 @@ impl RecordingHandle {
 /// The recording thread body: `(stop, ready) -> clip`. Boxed so that the device glue does not instantiate
 /// `spawn_recorder` again (an untested generic copy would count as uncovered lines).
 pub type RecorderBody =
-    Box<dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<(), String>>) -> Result<AudioClip, String> + Send>;
+    Box<dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<RecordingStart, String>>) -> Result<AudioClip, String> + Send>;
 
-/// Runs `body` on a dedicated recording thread. `body` reports through `ready` whether capture started
+/// Runs `body` on a dedicated recording thread. `body` reports through `ready` how capture started
 /// (`Err` aborts the start), records until `stop` receives, then returns the clip.
 pub fn spawn_recorder(body: RecorderBody) -> Result<RecordingHandle, String> {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<RecordingStart, String>>();
     let join = std::thread::Builder::new()
         .name("scribe-recorder".into())
         .spawn(move || body(stop_rx, ready_tx))
         .map_err(|e| e.to_string())?;
     match ready_rx.recv() {
-        Ok(Ok(())) => Ok(RecordingHandle { stop_tx, join: Some(join) }),
+        Ok(Ok(started)) => Ok(RecordingHandle { started, stop_tx, join: Some(join) }),
         Ok(Err(e)) => {
             let _ = join.join();
             Err(e)
@@ -185,7 +204,7 @@ mod tests {
     fn recorder_runs_until_stopped_and_returns_the_clip() {
         let (stopped_tx, stopped_rx) = mpsc::channel();
         let h = spawn_recorder(Box::new(move |stop, ready| {
-            ready.send(Ok(())).unwrap();
+            ready.send(Ok(RecordingStart::default())).unwrap();
             stop.recv().unwrap();
             stopped_tx.send("stopped").unwrap();
             Ok(clip(vec![1, 2, 3]))
@@ -194,6 +213,19 @@ mod tests {
         assert!(stopped_rx.recv_timeout(Duration::from_millis(100)).is_err(), "still recording before stop");
         assert_eq!(h.stop(), Ok(clip(vec![1, 2, 3])));
         assert_eq!(stopped_rx.recv().unwrap(), "stopped");
+    }
+
+    #[test]
+    fn the_handle_tells_how_the_recording_started() {
+        let exclusive = RecordingStart { exclusive_microphone: true };
+        let h = spawn_recorder(Box::new(move |stop, ready| {
+            ready.send(Ok(exclusive)).unwrap();
+            stop.recv().unwrap();
+            Ok(clip(vec![]))
+        }))
+        .unwrap();
+        assert_eq!(h.started(), exclusive);
+        h.stop().unwrap();
     }
 
     #[test]
@@ -221,7 +253,7 @@ mod tests {
     #[test]
     fn panic_while_recording_is_reported_by_stop() {
         let h = spawn_recorder(Box::new(|stop, ready| {
-            ready.send(Ok(())).unwrap();
+            ready.send(Ok(RecordingStart::default())).unwrap();
             stop.recv().unwrap();
             panic!("cpal callback panicked");
         }))
@@ -233,7 +265,7 @@ mod tests {
     fn device_failure_after_start_still_returns_its_audio() {
         // The thread may end on its own (stream error): stop must not hang and returns what it produced.
         let h = spawn_recorder(Box::new(|_, ready| {
-            ready.send(Ok(())).unwrap();
+            ready.send(Ok(RecordingStart::default())).unwrap();
             Ok(clip(vec![7]))
         }))
         .unwrap();

@@ -23,6 +23,10 @@ struct FakeRecorder {
     start_error: Mutex<Option<String>>,
     stop_error: Mutex<Option<String>>,
     started: AtomicU32,
+    /// The options of each successful start.
+    options: Mutex<Vec<RecordOptions>>,
+    /// Exclusive access is refused: such a start records shared.
+    exclusive_refused: Mutex<bool>,
     stopped: Arc<AtomicU32>,
     on_level: Mutex<Option<LevelCallback>>,
     /// Runs when the microphone stops, before it returns.
@@ -32,12 +36,16 @@ struct FakeRecorder {
 type OnStop = Arc<dyn Fn() + Send + Sync>;
 
 struct FakeRecording {
+    started: RecordingStart,
     error: Option<String>,
     stopped: Arc<AtomicU32>,
     on_stop: Option<OnStop>,
 }
 
 impl Recording for FakeRecording {
+    fn started(&self) -> RecordingStart {
+        self.started
+    }
     fn stop(self: Box<Self>) -> Result<AudioClip, String> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
         if let Some(on_stop) = &self.on_stop {
@@ -51,13 +59,16 @@ impl Recording for FakeRecording {
 }
 
 impl Recorder for FakeRecorder {
-    fn start(&self, on_level: LevelCallback) -> Result<Box<dyn Recording>, String> {
+    fn start(&self, options: RecordOptions, on_level: LevelCallback) -> Result<Box<dyn Recording>, String> {
         if let Some(e) = self.start_error.lock().unwrap().clone() {
             return Err(e);
         }
         self.started.fetch_add(1, Ordering::SeqCst);
+        self.options.lock().unwrap().push(options);
         *self.on_level.lock().unwrap() = Some(on_level);
+        let exclusive_microphone = options.exclusive_microphone && !*self.exclusive_refused.lock().unwrap();
         Ok(Box::new(FakeRecording {
+            started: RecordingStart { exclusive_microphone },
             error: self.stop_error.lock().unwrap().clone(),
             stopped: self.stopped.clone(),
             on_stop: self.on_stop.lock().unwrap().clone(),
@@ -203,7 +214,7 @@ fn hold_records_then_processes_in_hold_mode() {
     let mut h = Harness::new();
     h.key(TRIGGER, true, 0);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
     h.key(0x41, true, 100); // other keys do nothing
     h.key(0x41, false, 150);
     h.key(TRIGGER, false, 800);
@@ -240,7 +251,7 @@ fn lock_key_switches_to_locked_mode() {
     let mut h = Harness::new();
     h.key(TRIGGER, true, 0);
     h.key(LOCK, true, 50);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None }));
     h.key(LOCK, false, 60);
     h.key(TRIGGER, false, 900);
     assert_eq!(h.stopped(), 0, "still recording once locked");
@@ -263,7 +274,7 @@ fn unavailable_microphone_aborts_and_resets() {
     *h.rec.start_error.lock().unwrap() = None;
     h.key(TRIGGER, true, 2_000);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
 }
 
 #[test]
@@ -278,7 +289,7 @@ fn microphone_failure_resets_the_detector_for_a_quick_retry() {
     *h.rec.start_error.lock().unwrap() = None;
     h.key(TRIGGER, true, 200);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
 }
 
 #[test]
@@ -580,6 +591,80 @@ fn the_setting_is_read_at_the_start_of_each_recording() {
     h.key(TRIGGER, true, 2_000);
     h.key(TRIGGER, false, 2_800);
     assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+fn exclusive_starts(h: &Harness) -> Vec<bool> {
+    h.rec.options.lock().unwrap().iter().map(|o| o.exclusive_microphone).collect()
+}
+
+#[test]
+fn the_microphone_is_shared_by_default() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert_eq!(exclusive_starts(&h), vec![false]);
+}
+
+#[test]
+fn the_microphone_is_asked_exclusively_when_the_setting_is_on() {
+    let s = Settings { exclusive_microphone_during_dictation: true, ..Default::default() };
+    let mut h = Harness::with(Fixture::with_settings(s));
+    h.key(TRIGGER, true, 0);
+    h.key(TRIGGER, false, 800);
+    assert_eq!(exclusive_starts(&h), vec![true]);
+    assert_eq!(h.job_modes(), vec![Mode::Hold]);
+}
+
+fn exclusive(refused: bool) -> Harness {
+    let h = Harness::with(Fixture::with_settings(Settings { exclusive_microphone_during_dictation: true, ..Default::default() }));
+    *h.rec.exclusive_refused.lock().unwrap() = refused;
+    h
+}
+
+fn warning(locked: bool) -> Option<OverlayEvent> {
+    Some(OverlayEvent::Recording { locked, warning: Some(SHARED_MICROPHONE_WARNING.into()) })
+}
+
+#[test]
+fn the_overlay_warns_for_the_whole_recording_when_exclusive_access_is_refused() {
+    let mut h = exclusive(true);
+    h.key(TRIGGER, true, 0);
+    assert_eq!(h.last_overlay(), warning(false));
+    h.key(LOCK, true, 50);
+    assert_eq!(h.last_overlay(), warning(true), "kept once locked");
+}
+
+#[test]
+fn no_microphone_warning_when_exclusive_access_is_obtained_or_not_asked() {
+    let not_asked = Harness::new();
+    *not_asked.rec.exclusive_refused.lock().unwrap() = true;
+    for mut h in [exclusive(false), not_asked] {
+        h.key(TRIGGER, true, 0);
+        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
+        h.key(LOCK, true, 50);
+        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None }));
+    }
+}
+
+#[test]
+fn microphone_warning_only_when_exclusive_access_was_asked_and_not_obtained() {
+    let asked = RecordOptions { exclusive_microphone: true };
+    let (shared, held) = (RecordingStart { exclusive_microphone: false }, RecordingStart { exclusive_microphone: true });
+    assert_eq!(microphone_warning(asked, shared), Some(SHARED_MICROPHONE_WARNING.to_string()));
+    assert_eq!(microphone_warning(asked, held), None);
+    assert_eq!(microphone_warning(RecordOptions::default(), shared), None);
+}
+
+#[test]
+fn exclusive_microphone_is_read_at_the_start_of_each_recording() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.f.svc.settings.write().unwrap().exclusive_microphone_during_dictation = true;
+    h.key(TRIGGER, false, 800);
+    h.c.handle(ControllerMsg::ProcessingDone);
+    h.key(TRIGGER, true, 2_000);
+    h.key(TRIGGER, false, 2_800);
+    assert_eq!(exclusive_starts(&h), vec![false, true]);
 }
 
 #[test]
