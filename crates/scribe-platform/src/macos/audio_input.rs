@@ -28,6 +28,21 @@ impl HogBackend for CoreAudioHog {
         }
     }
 
+    fn set_default_input(&self, device: u32) -> Result<(), String> {
+        let mut address = prop(kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal);
+        let status = unsafe {
+            AudioObjectSetPropertyData(
+                kAudioObjectSystemObject as AudioObjectID,
+                NonNull::from(&mut address),
+                0,
+                ptr::null(),
+                size_of::<AudioObjectID>() as u32,
+                NonNull::from(&device).cast::<c_void>(),
+            )
+        };
+        check(status)
+    }
+
     fn inputs(&self) -> Result<Vec<u32>, String> {
         let mut inputs = Vec::new();
         for device in devices()? {

@@ -117,6 +117,7 @@ mod tests {
     fn exclusive_mic_holds_the_hog_while_recording() {
         use crate::exclusive_mic::HogBackend;
         use crate::macos::audio_input::CoreAudioHog;
+        let default = CoreAudioHog.default_input().unwrap();
         let inputs: Vec<u32> = CoreAudioHog.inputs().unwrap();
         let owners = || inputs.iter().map(|d| (*d, CoreAudioHog.owner(*d))).collect::<Vec<_>>();
         let physical = |d: &u32| ![*b"grup", *b"virt"].map(u32::from_be_bytes).contains(&CoreAudioHog.transport(*d).unwrap());
@@ -127,6 +128,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(3_000));
         assert!(!h.stop().unwrap().samples.is_empty());
         assert!(owners().iter().all(|(_, o)| *o == Ok(-1)), "{:?}", owners());
+        assert_eq!(CoreAudioHog.default_input(), Ok(default));
         // The device restarts for a few ms once given back: the next test would find it unusable.
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

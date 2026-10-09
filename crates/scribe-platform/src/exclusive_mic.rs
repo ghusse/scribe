@@ -92,6 +92,7 @@ fn open_retrying(
 /// it: taken by us when free, given back when ours, unchanged when another process holds it.
 pub trait HogBackend {
     fn default_input(&self) -> Result<u32, String>;
+    fn set_default_input(&self, device: u32) -> Result<(), String>;
     /// Every device with an input stream.
     fn inputs(&self) -> Result<Vec<u32>, String>;
     /// `kAudioDevicePropertyTransportType`.
@@ -112,9 +113,11 @@ fn own_pid() -> i32 {
 }
 
 /// Every physical input held in hog mode, so that an app losing our microphone cannot switch to another one;
-/// each given back on drop, only if we still hold it.
+/// each given back on drop, only if we still hold it. The system default input is then put back on ours: macOS
+/// may move it while every input is held.
 pub struct HogGuard<B: HogBackend> {
     backend: B,
+    ours: u32,
     held: Vec<u32>,
 }
 
@@ -130,7 +133,7 @@ impl<B: HogBackend> HogGuard<B> {
             }
         }
         order.push(ours);
-        let mut guard = Self { backend, held: Vec::new() };
+        let mut guard = Self { backend, ours, held: Vec::new() };
         for device in order {
             guard.take(device)?;
         }
@@ -169,6 +172,16 @@ impl<B: HogBackend> Drop for HogGuard<B> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!("état du micro {device} illisible, accès exclusif non rendu : {e}"),
             }
+        }
+        if self.held.is_empty() {
+            return;
+        }
+        let restored = match self.backend.default_input() {
+            Ok(device) if device == self.ours => Ok(()),
+            _ => self.backend.set_default_input(self.ours),
+        };
+        if let Err(e) = restored {
+            tracing::warn!("micro par défaut du système non rétabli : {e}");
         }
     }
 }
@@ -377,12 +390,16 @@ mod tests {
         devices: std::collections::BTreeMap<u32, Dev>,
         broken: Vec<&'static str>,
         toggles: Vec<u32>,
+        /// `None`: the default input as macOS shows it while every input is held.
+        default: Option<u32>,
+        defaults_set: Vec<u32>,
     }
 
     impl FakeHog {
         fn with(devices: &[(u32, Dev)]) -> Self {
             let hog = FakeHog::default();
             hog.state().devices = devices.iter().cloned().collect();
+            hog.state().default = Some(OURS);
             hog
         }
         /// Our input alone, held by `owner`.
@@ -412,11 +429,20 @@ mod tests {
 
     impl HogBackend for FakeHog {
         fn default_input(&self) -> Result<u32, String> {
-            if self.state().broken.contains(&"default_input") {
-                Err("default_input failed".into())
-            } else {
-                Ok(OURS)
+            let s = self.state();
+            if s.broken.contains(&"default_input") {
+                return Err("default_input failed".into());
             }
+            s.default.ok_or_else(|| "aucun micro détecté".into())
+        }
+        fn set_default_input(&self, device: u32) -> Result<(), String> {
+            let mut s = self.state();
+            if s.broken.contains(&"set_default_input") {
+                return Err("set_default_input failed".into());
+            }
+            s.defaults_set.push(device);
+            s.default = Some(device);
+            Ok(())
         }
         fn inputs(&self) -> Result<Vec<u32>, String> {
             let s = self.state();
@@ -468,6 +494,45 @@ mod tests {
         drop(guard);
         assert_eq!(hog.toggles(), [OTHER, 9, OURS, OURS, 9, OTHER]);
         assert!([OURS, OTHER, 9].iter().all(|d| hog.owner(*d) == -1));
+    }
+
+    #[test]
+    fn the_default_input_moved_while_held_is_put_back_on_ours() {
+        for moved in [Some(OTHER), None] {
+            let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev::default())]);
+            let guard = HogGuard::acquire(hog.clone()).unwrap();
+            hog.state().default = moved;
+            drop(guard);
+            assert_eq!(hog.state().defaults_set, [OURS]);
+            assert_eq!(hog.default_input(), Ok(OURS));
+        }
+    }
+
+    #[test]
+    fn an_unmoved_default_input_is_left_alone() {
+        let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev::default())]);
+        drop(HogGuard::acquire(hog.clone()).unwrap());
+        assert!(hog.state().defaults_set.is_empty());
+    }
+
+    #[test]
+    fn nothing_held_leaves_the_default_input_alone() {
+        let hog = FakeHog::owned_by(own_pid() + 1);
+        assert!(HogGuard::acquire(hog.clone()).is_err());
+        assert!(hog.state().defaults_set.is_empty());
+    }
+
+    #[test]
+    fn a_default_input_that_cannot_be_put_back_is_only_logged() {
+        let hog = FakeHog::free();
+        let guard = HogGuard::acquire(hog.clone()).unwrap();
+        {
+            let mut s = hog.state();
+            s.default = Some(OTHER);
+            s.broken.push("set_default_input");
+        }
+        drop(guard);
+        assert_eq!((hog.owner(OURS), hog.state().default), (-1, Some(OTHER)));
     }
 
     #[test]
