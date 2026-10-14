@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.2](https://github.com/ghusse/scribe/compare/v0.4.1...v0.4.2) (2026-10-14)
+
+### Corrections
+
+* **macos:** « Copier » dans l'overlay ne change plus de bureau ([#19](https://github.com/ghusse/scribe/issues/19)) ([1a0ca79](https://github.com/ghusse/scribe/commit/1a0ca7990cf8cf16ba5616346c9436ded142cb6e))
+
 ## [0.4.1](https://github.com/ghusse/scribe/compare/v0.4.0...v0.4.1) (2026-10-14)
 
 ### Corrections
