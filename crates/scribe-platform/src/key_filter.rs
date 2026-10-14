@@ -127,7 +127,11 @@ impl KeyFilter {
             self.swallowed.retain(|&k| k != vk);
             was_swallowed
         };
-        KeyDecision { event: Some(HookEvent { key: RawKey { vk, down, repeat, t_ms }, gestures }), swallow, inject_mask }
+        KeyDecision {
+            event: Some(HookEvent { key: RawKey { vk, down, repeat, t_ms }, gestures }),
+            swallow,
+            inject_mask,
+        }
     }
 
     /// Whether `vk` going down completes the combination: all its keys held and no other key. Held keys that
@@ -495,7 +499,11 @@ mod tests {
         // AltGr = fake left Ctrl (scan 0x21D) then Alt droit.
         let altgr = |h: &mut H, down: bool| {
             let fake = h.f.on_event(&h.cfg, LCTRL, ALTGR_FAKE_CTRL_SCAN, down, false, 7, &pressed);
-            assert_eq!(fake, KeyDecision { event: None, swallow: false, inject_mask: false }, "ignored, passed through");
+            assert_eq!(
+                fake,
+                KeyDecision { event: None, swallow: false, inject_mask: false },
+                "ignored, passed through"
+            );
             h.ev(0xA5, down)
         };
         let mut h = H::new(&[0xA5], SPACE);

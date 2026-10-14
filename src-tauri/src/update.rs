@@ -49,7 +49,10 @@ mod tests {
     #[test]
     fn status_reports_the_running_and_the_published_versions() {
         let f = Fixture::new();
-        assert_eq!(tauri::async_runtime::block_on(status(&f.svc)), Ok(UpdateStatus { current: "0.1.0".into(), available: None }));
+        assert_eq!(
+            tauri::async_runtime::block_on(status(&f.svc)),
+            Ok(UpdateStatus { current: "0.1.0".into(), available: None })
+        );
         *f.updater.available.lock().unwrap() = Some(update("0.2.0"));
         assert_eq!(tauri::async_runtime::block_on(status(&f.svc)).unwrap().available, Some(update("0.2.0")));
         *f.updater.fail.lock().unwrap() = Some("réseau indisponible".into());

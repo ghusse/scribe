@@ -104,9 +104,7 @@ const HALLUCINATIONS: &[&str] = &[
 
 pub fn is_blank_or_hallucination(text: &str) -> bool {
     let lowered = text.trim().to_lowercase().replace('’', "'");
-    let normalized = lowered
-        .trim_end_matches(|c: char| matches!(c, '.' | '!' | '?') || c.is_whitespace())
-        .trim();
+    let normalized = lowered.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?') || c.is_whitespace()).trim();
     normalized.is_empty() || HALLUCINATIONS.contains(&normalized)
 }
 
@@ -123,7 +121,9 @@ pub fn strip_trailing_hallucinations(text: &str) -> String {
         let body = s.trim_end_matches(|c: char| matches!(c, '.' | '!' | '?' | '…') || c.is_whitespace());
         for phrase in HALLUCINATIONS {
             let n = phrase.chars().count();
-            let Some((start, _)) = body.char_indices().rev().nth(n - 1) else { continue };
+            let Some((start, _)) = body.char_indices().rev().nth(n - 1) else {
+                continue;
+            };
             if normalize_quotes_lower(&body[start..]) != *phrase {
                 continue;
             }
@@ -209,7 +209,9 @@ mod tests {
     }
     #[async_trait]
     impl Transcriber for FakeStt {
-        fn name(&self) -> String { "fake-stt".into() }
+        fn name(&self) -> String {
+            "fake-stt".into()
+        }
         async fn transcribe(&self, _wav: &[u8], hints: &[String]) -> Result<String, ProviderError> {
             self.hints_seen.lock().unwrap().push(hints.to_vec());
             self.responses.lock().unwrap().pop_front().expect("unexpected call")
@@ -228,7 +230,9 @@ mod tests {
     }
     #[async_trait]
     impl Corrector for FakeLlm {
-        fn name(&self) -> String { "fake-llm".into() }
+        fn name(&self) -> String {
+            "fake-llm".into()
+        }
         async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -241,8 +245,16 @@ mod tests {
     }
 
     fn term(id: i64, t: &str) -> Term {
-        Term { id, term: t.into(), variants: vec![], note: None, source: TermSource::Manual, use_count: 0,
-               last_used_at: None, created_at: "2026-10-05T10:00:00.000Z".into() }
+        Term {
+            id,
+            term: t.into(),
+            variants: vec![],
+            note: None,
+            source: TermSource::Manual,
+            use_count: 0,
+            last_used_at: None,
+            created_at: "2026-10-05T10:00:00.000Z".into(),
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -268,7 +280,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn short_transcript_skips_corrector() {
-        for (raw, level) in [("OK, merci beaucoup.", Level::Clean), ("à demain", Level::Formatted), ("Oui.", Level::Formatted)] {
+        for (raw, level) in
+            [("OK, merci beaucoup.", Level::Clean), ("à demain", Level::Formatted), ("Oui.", Level::Formatted)]
+        {
             let stt = FakeStt::new(vec![Ok(raw.into())]);
             let llm = FakeLlm::new(Ok("<output>X</output>".into()), 0);
             let out = run(&cfg(level), b"wav", &[], None, &stt, &llm).await.unwrap();
@@ -339,7 +353,11 @@ mod tests {
         for raw in ["", "   ", "Sous-titres réalisés par la communauté d'Amara.org", "Merci d’avoir regardé !"] {
             let stt = FakeStt::new(vec![Ok(raw.into())]);
             let llm = FakeLlm::new(Ok("<output>X</output>".into()), 0);
-            assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await, Err(PipelineError::Empty), "{raw}");
+            assert_eq!(
+                run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await,
+                Err(PipelineError::Empty),
+                "{raw}"
+            );
             assert_eq!(llm.calls.load(Ordering::SeqCst), 0);
         }
     }
@@ -411,17 +429,29 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn server_errors_are_retried_and_client_errors_are_not() {
         let llm = FakeLlm::new(Ok("<output>Bonjour à tous, et merci.</output>".into()), 0);
-        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 503, body: "down".into() }), Ok("bonjour à tous et merci".into())]);
-        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap().final_text, "Bonjour à tous, et merci.");
+        let stt = FakeStt::new(vec![
+            Err(ProviderError::Http { status: 503, body: "down".into() }),
+            Ok("bonjour à tous et merci".into()),
+        ]);
+        assert_eq!(
+            run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap().final_text,
+            "Bonjour à tous, et merci."
+        );
         assert_eq!(stt.calls(), 2);
 
-        let stt = FakeStt::new(vec![Err(ProviderError::Http { status: 429, body: String::new() }), Ok("bonjour à tous et merci".into())]);
+        let stt = FakeStt::new(vec![
+            Err(ProviderError::Http { status: 429, body: String::new() }),
+            Ok("bonjour à tous et merci".into()),
+        ]);
         assert!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.is_ok());
         assert_eq!(stt.calls(), 2);
 
         let bad = ProviderError::Http { status: 400, body: "bad audio".into() };
         let stt = FakeStt::new(vec![Err(bad.clone())]);
-        assert_eq!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await, Err(PipelineError::Transcription(bad)));
+        assert_eq!(
+            run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await,
+            Err(PipelineError::Transcription(bad))
+        );
         assert_eq!(stt.calls(), 1);
     }
 }

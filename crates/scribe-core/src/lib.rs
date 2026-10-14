@@ -1,13 +1,13 @@
 //! Pure, OS-independent logic of Scribe.
+pub mod audio;
 pub mod chord;
 pub mod clock;
-pub mod gesture;
-pub mod session;
-pub mod audio;
-pub mod model;
-pub mod storage;
-pub mod prompt;
 pub mod focus;
+pub mod gesture;
 pub mod insert;
-pub mod pipeline;
+pub mod model;
 pub mod permissions;
+pub mod pipeline;
+pub mod prompt;
+pub mod session;
+pub mod storage;

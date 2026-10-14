@@ -60,7 +60,8 @@ fn main() {
             let hook_cfg = Arc::new(HookConfig::new(&settings.trigger_keys, settings.lock_vk));
             let (tx, rx) = mpsc::channel::<ControllerMsg>();
             let secret_store: Arc<dyn SecretStore> = Arc::new(KeyringStore::system());
-            let needs_setup = bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
+            let needs_setup =
+                bootstrap::needs_setup(&settings, |id| secrets::get_key(secret_store.as_ref(), id).is_some());
             let permissions = scribe_platform::permissions();
             let missing_permissions = scribe_core::permissions::any_missing(&permissions.status());
             let audio_mute = AudioMute::spawn(
@@ -94,19 +95,20 @@ fn main() {
             dictation::purge_audio(&svc);
             // Scribe lives in the tray for weeks: enforce the retention daily, not only at launch.
             let purge_svc = svc.clone();
-            std::thread::Builder::new()
-                .name("scribe-audio-purge".into())
-                .spawn(move || loop {
-                    std::thread::sleep(AUDIO_PURGE_INTERVAL);
-                    dictation::purge_audio(&purge_svc);
-                })?;
+            std::thread::Builder::new().name("scribe-audio-purge".into()).spawn(move || loop {
+                std::thread::sleep(AUDIO_PURGE_INTERVAL);
+                dictation::purge_audio(&purge_svc);
+            })?;
             adapters::setup_overlay(app.handle())?;
             tray::setup(app.handle())?;
 
             let key_tx = tx.clone();
-            match scribe_platform::start_keyboard_hook(hook_cfg, Box::new(move |k| {
-                let _ = key_tx.send(ControllerMsg::Key(k));
-            })) {
+            match scribe_platform::start_keyboard_hook(
+                hook_cfg,
+                Box::new(move |k| {
+                    let _ = key_tx.send(ControllerMsg::Key(k));
+                }),
+            ) {
                 Ok(handle) => {
                     app.manage(HookGuard(handle));
                 }

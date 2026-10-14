@@ -22,7 +22,10 @@ jobs:
         with:
           # Pinned by SHA, the action no longer reads the toolchain from the ref: name it.
           toolchain: stable
-          components: llvm-tools-preview
+          components: llvm-tools-preview, rustfmt
+
+      - name: Rust format (cargo fmt)
+        run: bun run fmt:check
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2

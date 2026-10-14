@@ -130,7 +130,13 @@ impl PcmFormat {
 /// Formats to try, in order: the device's own (`native`, e.g. its default format then its mix format), then
 /// common capture formats. Exclusive mode gets no conversion: only a format the hardware takes as is works.
 pub fn candidate_formats(native: &[PcmFormat]) -> Vec<PcmFormat> {
-    let samples = [(SampleKind::I16, 16), (SampleKind::I24, 24), (SampleKind::I32, 24), (SampleKind::I32, 32), (SampleKind::F32, 32)];
+    let samples = [
+        (SampleKind::I16, 16),
+        (SampleKind::I24, 24),
+        (SampleKind::I32, 24),
+        (SampleKind::I32, 32),
+        (SampleKind::F32, 32),
+    ];
     let mut all = native.to_vec();
     for rate in [48_000, 44_100] {
         for channels in [1, 2] {
@@ -150,8 +156,15 @@ pub fn candidate_formats(native: &[PcmFormat]) -> Vec<PcmFormat> {
 pub fn decode(kind: SampleKind, bytes: &[u8]) -> Vec<f32> {
     const I32_SCALE: f32 = 2_147_483_648.0;
     match kind {
-        SampleKind::I16 => audio_capture::i16_to_f32(&bytes.as_chunks().0.iter().map(|b| i16::from_le_bytes(*b)).collect::<Vec<_>>()),
-        SampleKind::I24 => bytes.as_chunks::<3>().0.iter().map(|[a, b, c]| i32::from_le_bytes([0, *a, *b, *c]) as f32 / I32_SCALE).collect(),
+        SampleKind::I16 => {
+            audio_capture::i16_to_f32(&bytes.as_chunks().0.iter().map(|b| i16::from_le_bytes(*b)).collect::<Vec<_>>())
+        }
+        SampleKind::I24 => bytes
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|[a, b, c]| i32::from_le_bytes([0, *a, *b, *c]) as f32 / I32_SCALE)
+            .collect(),
         SampleKind::I32 => bytes.as_chunks().0.iter().map(|b| i32::from_le_bytes(*b) as f32 / I32_SCALE).collect(),
         SampleKind::F32 => bytes.as_chunks().0.iter().map(|b| f32::from_le_bytes(*b)).collect(),
     }
@@ -176,7 +189,9 @@ pub fn aligned_duration(frames: u32, rate: u32) -> i64 {
 pub fn describe_failure(code: i32, message: &str) -> String {
     match code {
         AUDCLNT_E_DEVICE_IN_USE => "micro déjà réservé par une autre application".into(),
-        AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED => "mode exclusif désactivé pour ce micro dans les réglages Son de Windows".into(),
+        AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED => {
+            "mode exclusif désactivé pour ce micro dans les réglages Son de Windows".into()
+        }
         AUDCLNT_E_DEVICE_INVALIDATED => "micro débranché ou désactivé".into(),
         AUDCLNT_E_UNSUPPORTED_FORMAT => "format audio refusé par le micro".into(),
         _ => format!("{message} ({:#010x})", code as u32),
@@ -200,10 +215,7 @@ pub trait ExclusiveClient {
 
 /// Errors telling about the device, not the format: no other format can work.
 fn device_refused(code: i32) -> bool {
-    matches!(
-        code,
-        AUDCLNT_E_DEVICE_IN_USE | AUDCLNT_E_DEVICE_INVALIDATED | AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED
-    )
+    matches!(code, AUDCLNT_E_DEVICE_IN_USE | AUDCLNT_E_DEVICE_INVALIDATED | AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED)
 }
 
 /// Initialises `client` in exclusive mode on the first format the device takes, retrying once with an aligned
@@ -309,7 +321,10 @@ mod tests {
         assert_eq!(PcmFormat::from_wave(&plain(WAVE_FORMAT_IEEE_FLOAT, 32)).unwrap().kind, SampleKind::F32);
 
         let f = PcmFormat::from_wave(&extensible(KSDATAFORMAT_SUBTYPE_PCM, 32, 24, 4, 0x33)).unwrap();
-        assert_eq!(f, PcmFormat { kind: SampleKind::I32, valid_bits: 24, channels: 4, rate: 48_000, channel_mask: 0x33 });
+        assert_eq!(
+            f,
+            PcmFormat { kind: SampleKind::I32, valid_bits: 24, channels: 4, rate: 48_000, channel_mask: 0x33 }
+        );
         let f = PcmFormat::from_wave(&extensible(KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, 32, 0, 1, 4)).unwrap();
         assert_eq!((f.kind, f.valid_bits), (SampleKind::F32, 32));
     }
@@ -327,22 +342,28 @@ mod tests {
     #[test]
     fn writes_an_extensible_wave_format() {
         let w = PcmFormat::new(SampleKind::I24, 24, 2, 48_000).to_wave();
-        assert_eq!(w, WaveDesc {
-            tag: WAVE_FORMAT_EXTENSIBLE,
-            channels: 2,
-            rate: 48_000,
-            avg_bytes_per_sec: 288_000,
-            block_align: 6,
-            bits: 24,
-            valid_bits: 24,
-            channel_mask: 3,
-            sub_format: KSDATAFORMAT_SUBTYPE_PCM,
-        });
+        assert_eq!(
+            w,
+            WaveDesc {
+                tag: WAVE_FORMAT_EXTENSIBLE,
+                channels: 2,
+                rate: 48_000,
+                avg_bytes_per_sec: 288_000,
+                block_align: 6,
+                bits: 24,
+                valid_bits: 24,
+                channel_mask: 3,
+                sub_format: KSDATAFORMAT_SUBTYPE_PCM,
+            }
+        );
         let w = PcmFormat::new(SampleKind::F32, 32, 1, 44_100).to_wave();
         assert_eq!((w.sub_format, w.block_align, w.channel_mask), (KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, 4, 4));
         assert_eq!(PcmFormat::new(SampleKind::I16, 16, 6, 48_000).channel_mask, 0);
         let native = extensible(KSDATAFORMAT_SUBTYPE_PCM, 32, 24, 4, 0x33);
-        assert_eq!(PcmFormat::from_wave(&native).unwrap().to_wave(), WaveDesc { avg_bytes_per_sec: 768_000, block_align: 16, ..native });
+        assert_eq!(
+            PcmFormat::from_wave(&native).unwrap().to_wave(),
+            WaveDesc { avg_bytes_per_sec: 768_000, block_align: 16, ..native }
+        );
     }
 
     #[test]
@@ -362,7 +383,10 @@ mod tests {
         assert_eq!(decode(SampleKind::I16, &[0x00, 0x40, 0x00, 0x80, 0xFF]), vec![0.5, -1.0]);
         assert_eq!(decode(SampleKind::I24, &[0x00, 0x00, 0x40, 0x00, 0x00, 0x80]), vec![0.5, -1.0]);
         assert_eq!(decode(SampleKind::I32, &[0, 0, 0, 0x40, 0, 0, 0, 0xC0]), vec![0.5, -0.5]);
-        assert_eq!(decode(SampleKind::F32, &[0.25f32.to_le_bytes(), (-1.0f32).to_le_bytes()].concat()), vec![0.25, -1.0]);
+        assert_eq!(
+            decode(SampleKind::F32, &[0.25f32.to_le_bytes(), (-1.0f32).to_le_bytes()].concat()),
+            vec![0.25, -1.0]
+        );
         assert!(decode(SampleKind::F32, &[1, 2, 3]).is_empty());
     }
 
@@ -405,7 +429,11 @@ mod tests {
 
     impl FakeClient {
         fn fails(&self, call: &str) -> Result<(), String> {
-            if self.broken.contains(&call) { Err(format!("{call} failed")) } else { Ok(()) }
+            if self.broken.contains(&call) {
+                Err(format!("{call} failed"))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -473,7 +501,8 @@ mod tests {
 
     #[test]
     fn initialisation_failures_are_refusals() {
-        let mut c = FakeClient { accepted: vec![mono16()], init: vec![Err(AUDCLNT_E_DEVICE_IN_USE)], ..FakeClient::default() };
+        let mut c =
+            FakeClient { accepted: vec![mono16()], init: vec![Err(AUDCLNT_E_DEVICE_IN_USE)], ..FakeClient::default() };
         assert_eq!(negotiate(&mut c), Err("micro déjà réservé par une autre application".into()));
 
         let mut c = FakeClient {
@@ -524,7 +553,10 @@ mod tests {
         for (code, reason) in [
             (AUDCLNT_E_DEVICE_IN_USE, "micro déjà réservé par une autre application"),
             (AUDCLNT_E_DEVICE_INVALIDATED, "micro débranché ou désactivé"),
-            (AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, "mode exclusif désactivé pour ce micro dans les réglages Son de Windows"),
+            (
+                AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED,
+                "mode exclusif désactivé pour ce micro dans les réglages Son de Windows",
+            ),
         ] {
             let mut c = FakeClient { accepted: vec![stereo16()], refusal: Some(code), ..FakeClient::default() };
             assert_eq!(negotiate(&mut c), Err(reason.into()));

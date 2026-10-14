@@ -192,7 +192,11 @@ mod tests {
 
     #[test]
     fn term_source_roundtrips() {
-        assert_roundtrip(&[TermSource::Manual, TermSource::Correction, TermSource::Mined], TermSource::as_str, TermSource::parse);
+        assert_roundtrip(
+            &[TermSource::Manual, TermSource::Correction, TermSource::Mined],
+            TermSource::as_str,
+            TermSource::parse,
+        );
         assert_eq!(TermSource::parse("auto"), None);
     }
 

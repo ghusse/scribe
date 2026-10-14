@@ -76,7 +76,8 @@ pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, St
                     std::thread::sleep(TRUST_POLL);
                 }
             }
-            let mask = (1u64 << CGEventType::KeyDown.0) | (1 << CGEventType::KeyUp.0) | (1 << CGEventType::FlagsChanged.0);
+            let mask =
+                (1u64 << CGEventType::KeyDown.0) | (1 << CGEventType::KeyUp.0) | (1 << CGEventType::FlagsChanged.0);
             let Some(tap) = CGEvent::tap_create(
                 CGEventTapLocation::SessionEventTap,
                 CGEventTapPlacement::HeadInsertEventTap,
@@ -89,7 +90,8 @@ pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, St
                 tracing::error!("installation du hook clavier impossible");
                 return;
             };
-            let (Some(source), Some(run_loop)) = (CFMachPort::new_run_loop_source(None, Some(&tap), 0), CFRunLoop::current())
+            let (Some(source), Some(run_loop)) =
+                (CFMachPort::new_run_loop_source(None, Some(&tap), 0), CFRunLoop::current())
             else {
                 let _ = ready_tx.send(Err("installation du hook clavier impossible".into()));
                 return;
@@ -148,8 +150,11 @@ unsafe extern "C-unwind" fn tap_proc(
     }
     let keycode = CGEvent::integer_value_field(Some(ev), CGEventField::KeyboardEventKeycode) as u16;
     let typed = if kind == EventKind::KeyDown { typed_char(ev) } else { None };
-    let decoded = KEY_MAP.lock().unwrap_or_else(|p| p.into_inner()).decode(kind, keycode, CGEvent::flags(Some(ev)).0, typed);
-    let Some((vk, down)) = decoded else { return pass };
+    let decoded =
+        KEY_MAP.lock().unwrap_or_else(|p| p.into_inner()).decode(kind, keycode, CGEvent::flags(Some(ev)).0, typed);
+    let Some((vk, down)) = decoded else {
+        return pass;
+    };
     let decision = s.filter.lock().unwrap_or_else(|p| p.into_inner()).on_event(
         &s.cfg,
         vk,

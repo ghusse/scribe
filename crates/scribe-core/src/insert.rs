@@ -26,7 +26,11 @@ pub fn decide(start: &FocusSnapshot, end: &FocusSnapshot) -> InsertPlan {
 pub enum ClipboardContent {
     Empty,
     Text(String),
-    Image { width: usize, height: usize, rgba: Vec<u8> },
+    Image {
+        width: usize,
+        height: usize,
+        rgba: Vec<u8>,
+    },
     /// Files or formats we cannot round-trip: never restored.
     Unsupported,
 }
@@ -282,7 +286,11 @@ mod tests {
     impl KeySender for FakeKeys {
         fn send_paste(&self) -> Result<(), String> {
             *self.sent.lock().unwrap() += 1;
-            if self.ok { Ok(()) } else { Err("bloqué".into()) }
+            if self.ok {
+                Ok(())
+            } else {
+                Err("bloqué".into())
+            }
         }
     }
 
@@ -306,7 +314,11 @@ mod tests {
     impl FieldReader for FakeField {
         fn focused_text(&self) -> Option<String> {
             let mut v = self.0.lock().unwrap();
-            if v.len() > 1 { v.pop().unwrap() } else { v[0].clone() }
+            if v.len() > 1 {
+                v.pop().unwrap()
+            } else {
+                v[0].clone()
+            }
         }
     }
 
@@ -327,7 +339,11 @@ mod tests {
         let some = Some;
         assert_eq!(verify(some("Bonjour"), some("Bonjour, à demain."), "à demain."), Verdict::Inserted);
         assert_eq!(verify(some("à demain"), some("à demain"), "À demain"), Verdict::NotInserted, "an unchanged field");
-        assert_eq!(verify(some("à demain"), some("à demain\nà demain"), "à demain"), Verdict::Inserted, "same text twice");
+        assert_eq!(
+            verify(some("à demain"), some("à demain\nà demain"), "à demain"),
+            Verdict::Inserted,
+            "same text twice"
+        );
         assert_eq!(verify(some("abc"), some("abc"), "à demain"), Verdict::NotInserted);
         assert_eq!(verify(some("a,b c"), some("a, b c."), "a, b, c"), Verdict::Unknown, "too short to recognise");
         assert_eq!(verify(some("abc"), some("abc [Pasted text #1 +3 lines]"), "à demain"), Verdict::Unknown);
@@ -373,7 +389,10 @@ mod tests {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
         let field = FakeField::new(&[Some("début"), Some("début"), Some("début dicté")]);
         let delays = Delays::default();
-        let r = perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| delays.push(ms));
+        let r =
+            perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| {
+                delays.push(ms)
+            });
         assert_eq!(r, InsertResult::Pasted);
         assert_eq!(delays.get(), vec![100, 100], "stops reading once seen; the restore delay already elapsed");
         assert_eq!(cb.get(), ClipboardContent::Text("ancien".into()));
@@ -384,7 +403,10 @@ mod tests {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
         let delays = Delays::default();
         let field = FakeField::new(&[Some("début")]);
-        let r = perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| delays.push(ms));
+        let r =
+            perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| {
+                delays.push(ms)
+            });
         assert_eq!(r, InsertResult::NotPasted);
         assert_eq!(r.outcome(), Outcome::Clipboard);
         assert_eq!(delays.get().len() as u64, VERIFY_ATTEMPTS, "waits for a slow app before giving up");
@@ -397,7 +419,9 @@ mod tests {
             let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
             let field = FakeField::new(&[Some("> "), Some("> [Pasted text #1 +3 lines]")]);
             let delays = Delays::default();
-            let r = perform(InsertPlan::Paste { uncertain }, "dicté", &cb, &FakeKeys::new(true), &field, 1000, &|ms| delays.push(ms));
+            let r = perform(InsertPlan::Paste { uncertain }, "dicté", &cb, &FakeKeys::new(true), &field, 1000, &|ms| {
+                delays.push(ms)
+            });
             assert_eq!(r, expected);
             let delays = delays.get();
             assert_eq!(delays.iter().sum::<u64>(), 1000, "the restore delay counts the reading time: {delays:?}");
@@ -410,7 +434,10 @@ mod tests {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
         let delays = Delays::default();
         let field = FakeField::new(&[Some("début"), None, Some("début")]);
-        let r = perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| delays.push(ms));
+        let r =
+            perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| {
+                delays.push(ms)
+            });
         assert_eq!(r, InsertResult::PastedUncertain, "falls back on the prediction");
         assert_eq!(delays.get(), vec![100, 50], "one read, then the rest of the restore delay");
         assert_eq!(cb.get(), ClipboardContent::Text("ancien".into()));
@@ -439,16 +466,28 @@ mod tests {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
         let delays = Delays::default();
         let field = FakeField::new(&[None, Some("dicté")]);
-        let r = perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| delays.push(ms));
+        let r =
+            perform(InsertPlan::Paste { uncertain: true }, "dicté", &cb, &FakeKeys::new(true), &field, 150, &|ms| {
+                delays.push(ms)
+            });
         assert_eq!(r, InsertResult::PastedUncertain);
         assert_eq!(delays.get(), vec![150]);
     }
 
     #[test]
     fn decide_by_focus_state() {
-        assert_eq!(decide(&snap(1, FocusState::Unknown), &snap(1, FocusState::Editable)), InsertPlan::Paste { uncertain: false });
-        assert_eq!(decide(&snap(1, FocusState::Editable), &snap(1, FocusState::Unknown)), InsertPlan::Paste { uncertain: true });
-        assert_eq!(decide(&snap(1, FocusState::Editable), &snap(1, FocusState::NotEditable)), InsertPlan::ClipboardOnly);
+        assert_eq!(
+            decide(&snap(1, FocusState::Unknown), &snap(1, FocusState::Editable)),
+            InsertPlan::Paste { uncertain: false }
+        );
+        assert_eq!(
+            decide(&snap(1, FocusState::Editable), &snap(1, FocusState::Unknown)),
+            InsertPlan::Paste { uncertain: true }
+        );
+        assert_eq!(
+            decide(&snap(1, FocusState::Editable), &snap(1, FocusState::NotEditable)),
+            InsertPlan::ClipboardOnly
+        );
     }
 
     #[test]
@@ -463,7 +502,9 @@ mod tests {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
         let keys = FakeKeys::new(true);
         let delays = Delays::default();
-        let r = perform(InsertPlan::Paste { uncertain: false }, "nouveau", &cb, &keys, &NoField, 150, &|ms| delays.push(ms));
+        let r = perform(InsertPlan::Paste { uncertain: false }, "nouveau", &cb, &keys, &NoField, 150, &|ms| {
+            delays.push(ms)
+        });
         assert_eq!(r, InsertResult::Pasted);
         assert_eq!(*keys.sent.lock().unwrap(), 1);
         assert_eq!(delays.get(), vec![150]);
@@ -474,7 +515,15 @@ mod tests {
     fn paste_restores_previous_image_and_multiline_text_with_crlf() {
         let img = ClipboardContent::Image { width: 1, height: 1, rgba: vec![1, 2, 3, 4] };
         let cb = FakeClipboard { content: Mutex::new(Some(img.clone())), crlf: true, fail_write: false };
-        let r = perform(InsertPlan::Paste { uncertain: true }, "ligne 1\nligne 2", &cb, &FakeKeys::new(true), &NoField, 0, &no_sleep);
+        let r = perform(
+            InsertPlan::Paste { uncertain: true },
+            "ligne 1\nligne 2",
+            &cb,
+            &FakeKeys::new(true),
+            &NoField,
+            0,
+            &no_sleep,
+        );
         assert_eq!(r, InsertResult::PastedUncertain);
         assert_eq!(cb.get(), img);
     }
@@ -482,9 +531,17 @@ mod tests {
     #[test]
     fn user_copy_during_paste_is_not_overwritten() {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
-        let r = perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(true), &NoField, 150, &|_| {
-            cb.write_text("copié par l'utilisateur").unwrap();
-        });
+        let r = perform(
+            InsertPlan::Paste { uncertain: false },
+            "dicté",
+            &cb,
+            &FakeKeys::new(true),
+            &NoField,
+            150,
+            &|_| {
+                cb.write_text("copié par l'utilisateur").unwrap();
+            },
+        );
         assert_eq!(r, InsertResult::Pasted);
         assert_eq!(cb.get(), ClipboardContent::Text("copié par l'utilisateur".into()));
     }
@@ -499,7 +556,15 @@ mod tests {
     #[test]
     fn paste_key_failure_leaves_text_in_clipboard() {
         let cb = FakeClipboard::with(ClipboardContent::Text("ancien".into()));
-        let r = perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(false), &NoField, 0, &no_sleep);
+        let r = perform(
+            InsertPlan::Paste { uncertain: false },
+            "dicté",
+            &cb,
+            &FakeKeys::new(false),
+            &NoField,
+            0,
+            &no_sleep,
+        );
         assert_eq!(r, InsertResult::PasteFailed);
         assert_eq!(r.outcome(), Outcome::Clipboard);
         assert_eq!(cb.get(), ClipboardContent::Text("dicté".into()));
@@ -509,7 +574,10 @@ mod tests {
     fn clipboard_only_never_sends_keys() {
         let cb = FakeClipboard::default();
         let keys = FakeKeys::new(true);
-        assert_eq!(perform(InsertPlan::ClipboardOnly, "dicté", &cb, &keys, &NoField, 0, &no_sleep), InsertResult::ClipboardOnly);
+        assert_eq!(
+            perform(InsertPlan::ClipboardOnly, "dicté", &cb, &keys, &NoField, 0, &no_sleep),
+            InsertResult::ClipboardOnly
+        );
         assert_eq!(*keys.sent.lock().unwrap(), 0);
         assert_eq!(cb.get(), ClipboardContent::Text("dicté".into()));
     }
@@ -517,7 +585,8 @@ mod tests {
     #[test]
     fn clipboard_write_failure_is_reported() {
         let cb = FakeClipboard { fail_write: true, ..Default::default() };
-        let r = perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(true), &NoField, 0, &no_sleep);
+        let r =
+            perform(InsertPlan::Paste { uncertain: false }, "dicté", &cb, &FakeKeys::new(true), &NoField, 0, &no_sleep);
         assert_eq!(r, InsertResult::ClipboardFailed);
         assert_eq!(r.outcome(), Outcome::Error);
     }
@@ -536,7 +605,10 @@ mod tests {
     fn clipboard_only_write_failure_is_reported_without_keys() {
         let cb = FakeClipboard { fail_write: true, ..Default::default() };
         let keys = FakeKeys::new(true);
-        assert_eq!(perform(InsertPlan::ClipboardOnly, "dicté", &cb, &keys, &NoField, 0, &no_sleep), InsertResult::ClipboardFailed);
+        assert_eq!(
+            perform(InsertPlan::ClipboardOnly, "dicté", &cb, &keys, &NoField, 0, &no_sleep),
+            InsertResult::ClipboardFailed
+        );
         assert_eq!(*keys.sent.lock().unwrap(), 0);
     }
 }

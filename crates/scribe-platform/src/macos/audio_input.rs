@@ -6,7 +6,8 @@ use std::ptr::{self, NonNull};
 
 use objc2_core_audio::{
     kAudioDevicePropertyHogMode, kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultInputDevice,
-    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectID, AudioObjectSetPropertyData,
+    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioObjectID,
+    AudioObjectSetPropertyData,
 };
 
 use super::audio_output::{check, data_size, get, prop};
@@ -20,7 +21,11 @@ impl HogBackend for CoreAudioHog {
         let mut device: AudioObjectID = 0;
         let mut address = prop(kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal);
         get(kAudioObjectSystemObject as AudioObjectID, &mut address, &mut device)?;
-        if device == 0 { Err("aucun micro détecté".into()) } else { Ok(device) }
+        if device == 0 {
+            Err("aucun micro détecté".into())
+        } else {
+            Ok(device)
+        }
     }
 
     fn has_output(&self, device: u32) -> Result<bool, String> {

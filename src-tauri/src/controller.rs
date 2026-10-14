@@ -141,9 +141,10 @@ pub fn spawn_processing(svc: Arc<Services>, job: Job, tx: Sender<ControllerMsg>)
         let _done = ProcessingDoneGuard(tx);
         let rx = job.focus_start;
         // Bounded by FOCUS_TIMEOUT_MS inside the snapshot thread.
-        let focus_start = tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown()))
-            .await
-            .unwrap_or_else(|_| FocusSnapshot::unknown());
+        let focus_start =
+            tauri::async_runtime::spawn_blocking(move || rx.recv().unwrap_or_else(|_| FocusSnapshot::unknown()))
+                .await
+                .unwrap_or_else(|_| FocusSnapshot::unknown());
         dictation::process(svc, Captured { clip: job.clip, mode: job.mode, focus_start }).await;
     });
 }

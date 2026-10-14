@@ -56,8 +56,12 @@ impl Default for GestureConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
     Idle,
-    Pressed { down_at: u64 },
-    AwaitSecondTap { up_at: u64 },
+    Pressed {
+        down_at: u64,
+    },
+    AwaitSecondTap {
+        up_at: u64,
+    },
     /// Locked, trigger still physically held (second tap or lock key).
     LockedHeld,
     Locked,
@@ -168,9 +172,15 @@ mod tests {
     use super::*;
     use GestureCommand::*;
 
-    fn trig(down: bool, t: u64) -> KeyEvent { KeyEvent { role: KeyRole::Trigger, down, t_ms: t } }
-    fn lock(down: bool, t: u64) -> KeyEvent { KeyEvent { role: KeyRole::Lock, down, t_ms: t } }
-    fn det() -> GestureDetector { GestureDetector::new(GestureConfig::default()) }
+    fn trig(down: bool, t: u64) -> KeyEvent {
+        KeyEvent { role: KeyRole::Trigger, down, t_ms: t }
+    }
+    fn lock(down: bool, t: u64) -> KeyEvent {
+        KeyEvent { role: KeyRole::Lock, down, t_ms: t }
+    }
+    fn det() -> GestureDetector {
+        GestureDetector::new(GestureConfig::default())
+    }
 
     #[test]
     fn hold_starts_on_press_and_stops_on_release() {

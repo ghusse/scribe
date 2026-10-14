@@ -155,6 +155,12 @@ A `feat` or `fix` that the user can notice describes **what changes for the user
 never how it was done: `fix(macos): coller la dictée au lieu de taper « v »`, not
 `fix(macos): chercher la touche « v » avec UCKeyTranslate`. The technical how goes in the PR body.
 
+## Rust formatting
+
+`cargo fmt` with `rustfmt.toml` (120 columns): `bun run fmt`. CI fails on unformatted code
+(`bun run fmt:check`); the pre-commit hook in `.githooks/` (enabled by `bun install` through `core.hooksPath`)
+reformats and aborts the commit when a staged Rust change is not formatted.
+
 ## Checks before finishing
 
-`cargo test --workspace`, `bun run test`, `bun run check`, `bun run build`, `bun run coverage:ui`, `bun run coverage:rust`.
+`bun run fmt:check`, `cargo test --workspace`, `bun run test`, `bun run check`, `bun run build`, `bun run coverage:ui`, `bun run coverage:rust`.

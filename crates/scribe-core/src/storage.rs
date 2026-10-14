@@ -175,7 +175,12 @@ async fn transaction(conn: &Connection, steps: impl Future<Output = Result<()>>)
 }
 
 /// Every row of a query, mapped.
-async fn all<T>(conn: &Connection, sql: &str, params: impl IntoParams, map: fn(&Row) -> turso::Result<T>) -> Result<Vec<T>> {
+async fn all<T>(
+    conn: &Connection,
+    sql: &str,
+    params: impl IntoParams,
+    map: fn(&Row) -> turso::Result<T>,
+) -> Result<Vec<T>> {
     let mut rows = conn.query(sql, params).await?;
     let mut out = Vec::new();
     while let Some(row) = rows.next().await? {
@@ -186,7 +191,8 @@ async fn all<T>(conn: &Connection, sql: &str, params: impl IntoParams, map: fn(&
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
-        let path = path.to_str().ok_or_else(|| StorageError::Invalid(format!("chemin non UTF-8 : {}", path.display())))?;
+        let path =
+            path.to_str().ok_or_else(|| StorageError::Invalid(format!("chemin non UTF-8 : {}", path.display())))?;
         let db = Self::init(path)?;
         db.all("PRAGMA journal_mode=WAL", (), |_| Ok(()))?;
         Ok(db)
@@ -231,7 +237,12 @@ impl Db {
             block(transaction(conn, async {
                 conn.execute_batch(SCHEMA_V2).await?;
                 let rows = all(conn, "SELECT id, raw_text, final_text, edited_text FROM dictations", (), |r| {
-                    Ok((r.get::<i64>(0)?, r.get::<Option<String>>(1)?, r.get::<Option<String>>(2)?, r.get::<Option<String>>(3)?))
+                    Ok((
+                        r.get::<i64>(0)?,
+                        r.get::<Option<String>>(1)?,
+                        r.get::<Option<String>>(2)?,
+                        r.get::<Option<String>>(3)?,
+                    ))
                 })
                 .await?;
                 for (id, raw, final_text, edited) in rows {
@@ -251,9 +262,22 @@ impl Db {
              final_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error, search_text) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             (
-                d.created_at.as_str(), d.mode.as_str(), d.app_name.clone(), d.app_bundle_id.clone(), d.audio_path.clone(),
-                d.duration_ms, d.raw_text.clone(), d.final_text.clone(), d.level.as_str(), d.transcriber.clone(),
-                d.corrector.clone(), d.stt_ms, d.llm_ms, d.outcome.as_str(), d.error.clone(), search,
+                d.created_at.as_str(),
+                d.mode.as_str(),
+                d.app_name.clone(),
+                d.app_bundle_id.clone(),
+                d.audio_path.clone(),
+                d.duration_ms,
+                d.raw_text.clone(),
+                d.final_text.clone(),
+                d.level.as_str(),
+                d.transcriber.clone(),
+                d.corrector.clone(),
+                d.stt_ms,
+                d.llm_ms,
+                d.outcome.as_str(),
+                d.error.clone(),
+                search,
             ),
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -307,7 +331,8 @@ impl Db {
     }
 
     pub fn delete_dictation(&self, id: i64) -> Result<Option<String>> {
-        let audio = self.first("SELECT audio_path FROM dictations WHERE id = ?1", (id,), |r| r.get::<Option<String>>(0))?;
+        let audio =
+            self.first("SELECT audio_path FROM dictations WHERE id = ?1", (id,), |r| r.get::<Option<String>>(0))?;
         self.execute("DELETE FROM dictations WHERE id = ?1", (id,))?;
         Ok(audio.flatten())
     }
@@ -334,7 +359,14 @@ impl Db {
         )
     }
 
-    pub fn add_term(&self, term: &str, variants: &[String], note: Option<&str>, source: TermSource, now: &str) -> Result<i64> {
+    pub fn add_term(
+        &self,
+        term: &str,
+        variants: &[String],
+        note: Option<&str>,
+        source: TermSource,
+        now: &str,
+    ) -> Result<i64> {
         let term = validate_term(term)?;
         let variants = serde_json::to_string(&clean_variants(variants, term)).expect("serialize variants");
         let note = note.map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
@@ -367,8 +399,11 @@ impl Db {
         let conn = &self.conn;
         block(transaction(conn, async {
             for &id in ids {
-                conn.execute("UPDATE glossary_terms SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1", (id, now))
-                    .await?;
+                conn.execute(
+                    "UPDATE glossary_terms SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1",
+                    (id, now),
+                )
+                .await?;
             }
             Ok(())
         }))
@@ -470,17 +505,25 @@ mod tests {
         db.set_edited_text(id, Some("Bonjour")).unwrap();
         assert_eq!(found("kubernetes"), 0, "an edit back to the final text is cleared");
         db.set_edited_text(id, Some("Salut Kubernetes")).unwrap();
-        db.update_transcription(id, &TranscriptionUpdate {
-            raw_text: Some("Été brut".into()),
-            final_text: Some("Été".into()),
-            transcriber: None,
-            corrector: None,
-            stt_ms: None,
-            llm_ms: None,
-            outcome: Outcome::Clipboard,
-            error: None,
-        }).unwrap();
-        assert_eq!((found("kubernetes"), found("bonjour"), found("ÉTÉ")), (0, 0, 1), "retranscription replaces every text");
+        db.update_transcription(
+            id,
+            &TranscriptionUpdate {
+                raw_text: Some("Été brut".into()),
+                final_text: Some("Été".into()),
+                transcriber: None,
+                corrector: None,
+                stt_ms: None,
+                llm_ms: None,
+                outcome: Outcome::Clipboard,
+                error: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (found("kubernetes"), found("bonjour"), found("ÉTÉ")),
+            (0, 0, 1),
+            "retranscription replaces every text"
+        );
         db.set_edited_text(9_999, Some("x")).unwrap();
         assert_eq!(found("x"), 0, "an unknown id changes nothing");
     }
@@ -496,12 +539,18 @@ mod tests {
             assert_eq!(db.first("PRAGMA user_version", (), |r| r.get::<i64>(0)).unwrap(), Some(2));
             let all = db.list_dictations(None, 10, 0).unwrap();
             assert_eq!(all.len(), 1);
-            assert_eq!((all[0].final_text.as_deref(), all[0].edited_text.as_deref()), (Some("Été à Paris"), Some("Été à LYON")));
+            assert_eq!(
+                (all[0].final_text.as_deref(), all[0].edited_text.as_deref()),
+                (Some("Été à Paris"), Some("Été à LYON"))
+            );
             for q in ["lyon", "ÉTÉ À PARIS", "brut"] {
                 assert_eq!(db.list_dictations(Some(q), 10, 0).unwrap().len(), 1, "existing rows are searchable: {q}");
             }
             let terms = db.list_terms().unwrap();
-            assert_eq!((terms[0].term.as_str(), terms[0].variants.clone()), ("Kubernetes", vec!["cube ernetes".to_string()]));
+            assert_eq!(
+                (terms[0].term.as_str(), terms[0].variants.clone()),
+                ("Kubernetes", vec!["cube ernetes".to_string()])
+            );
         }
     }
 
@@ -524,8 +573,19 @@ mod tests {
     fn deleting_a_dictation_cascades_to_its_bench_runs() {
         let db = Db::open_in_memory().unwrap();
         let id = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "x", None)).unwrap();
-        db.execute("INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (?1, 'p', 'm', 'now')", (id,)).unwrap();
-        assert!(db.execute("INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (999, 'p', 'm', 'now')", ()).is_err(), "foreign keys are on");
+        db.execute(
+            "INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (?1, 'p', 'm', 'now')",
+            (id,),
+        )
+        .unwrap();
+        assert!(
+            db.execute(
+                "INSERT INTO bench_runs (dictation_id, provider, model, created_at) VALUES (999, 'p', 'm', 'now')",
+                ()
+            )
+            .is_err(),
+            "foreign keys are on"
+        );
         db.delete_dictation(id).unwrap();
         assert_eq!(db.first("SELECT count(*) FROM bench_runs", (), |r| r.get::<i64>(0)).unwrap(), Some(0));
     }
@@ -549,16 +609,20 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let id = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "Ancien", None)).unwrap();
         db.set_edited_text(id, Some("X")).unwrap();
-        db.update_transcription(id, &TranscriptionUpdate {
-            raw_text: Some("brut".into()),
-            final_text: Some("X".into()),
-            transcriber: None,
-            corrector: None,
-            stt_ms: None,
-            llm_ms: None,
-            outcome: Outcome::Clipboard,
-            error: None,
-        }).unwrap();
+        db.update_transcription(
+            id,
+            &TranscriptionUpdate {
+                raw_text: Some("brut".into()),
+                final_text: Some("X".into()),
+                transcriber: None,
+                corrector: None,
+                stt_ms: None,
+                llm_ms: None,
+                outcome: Outcome::Clipboard,
+                error: None,
+            },
+        )
+        .unwrap();
         let d = db.get_dictation(id).unwrap().unwrap();
         assert_eq!(d.edited_text, None);
         assert_eq!(d.best_text(), Some("X"));
@@ -585,16 +649,20 @@ mod tests {
         nd.final_text = None;
         nd.error = Some("réseau".into());
         let id = db.insert_dictation(&nd).unwrap();
-        db.update_transcription(id, &TranscriptionUpdate {
-            raw_text: Some("brut".into()),
-            final_text: Some("Final.".into()),
-            transcriber: Some("t".into()),
-            corrector: Some("c".into()),
-            stt_ms: Some(1),
-            llm_ms: Some(2),
-            outcome: Outcome::Clipboard,
-            error: None,
-        }).unwrap();
+        db.update_transcription(
+            id,
+            &TranscriptionUpdate {
+                raw_text: Some("brut".into()),
+                final_text: Some("Final.".into()),
+                transcriber: Some("t".into()),
+                corrector: Some("c".into()),
+                stt_ms: Some(1),
+                llm_ms: Some(2),
+                outcome: Outcome::Clipboard,
+                error: None,
+            },
+        )
+        .unwrap();
         let d = db.get_dictation(id).unwrap().unwrap();
         assert_eq!((d.final_text.as_deref(), d.outcome, d.error), (Some("Final."), Outcome::Clipboard, None));
     }
@@ -604,7 +672,8 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let old = db.insert_dictation(&new_dictation("2026-08-01T10:00:00.000Z", "vieux", Some("old.wav"))).unwrap();
         db.insert_dictation(&new_dictation("2026-08-01T10:00:00.000Z", "sans audio", None)).unwrap();
-        let recent = db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "récent", Some("new.wav"))).unwrap();
+        let recent =
+            db.insert_dictation(&new_dictation("2026-10-05T10:00:00.000Z", "récent", Some("new.wav"))).unwrap();
         assert_eq!(db.audio_to_purge("2026-09-05T00:00:00.000Z").unwrap(), vec![(old, "old.wav".to_string())]);
         db.clear_audio_path(old).unwrap();
         assert!(db.audio_to_purge("2026-09-05T00:00:00.000Z").unwrap().is_empty());
@@ -616,17 +685,22 @@ mod tests {
     fn terms_crud_with_case_insensitive_uniqueness_and_clean_variants() {
         let db = Db::open_in_memory().unwrap();
         let now = "2026-10-05T10:00:00.000Z";
-        let id = db.add_term(
-            " Kubernetes ",
-            &["cube ernetes".into(), " ".into(), "kubernetes".into(), "Cube Ernetes".into()],
-            Some("orchestrateur"),
-            TermSource::Manual,
-            now,
-        ).unwrap();
+        let id = db
+            .add_term(
+                " Kubernetes ",
+                &["cube ernetes".into(), " ".into(), "kubernetes".into(), "Cube Ernetes".into()],
+                Some("orchestrateur"),
+                TermSource::Manual,
+                now,
+            )
+            .unwrap();
         let t = &db.list_terms().unwrap()[0];
         assert_eq!(t.term, "Kubernetes");
         assert_eq!(t.variants, vec!["cube ernetes".to_string()]);
-        assert!(matches!(db.add_term("kubernetes", &[], None, TermSource::Manual, now), Err(StorageError::DuplicateTerm(_))));
+        assert!(matches!(
+            db.add_term("kubernetes", &[], None, TermSource::Manual, now),
+            Err(StorageError::DuplicateTerm(_))
+        ));
         assert!(matches!(db.add_term("  ", &[], None, TermSource::Manual, now), Err(StorageError::Invalid(_))));
         db.update_term(id, "Kubernetes", &["kubernetis".into()], None).unwrap();
         assert_eq!(db.list_terms().unwrap()[0].variants, vec!["kubernetis".to_string()]);

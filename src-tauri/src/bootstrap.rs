@@ -79,7 +79,10 @@ mod tests {
         assert!(shows_main_at_launch(false, args(&["scribe-app.exe"])), "manual launch");
         assert!(!shows_main_at_launch(false, args(&["scribe-app.exe", "--minimized"])), "start with Windows");
         assert!(shows_main_at_launch(true, args(&["scribe-app.exe", "--minimized"])), "setup to finish");
-        assert!(shows_main_at_launch(false, args(&["scribe-app.exe", "--minimized=no", "-minimized"])), "only the exact flag");
+        assert!(
+            shows_main_at_launch(false, args(&["scribe-app.exe", "--minimized=no", "-minimized"])),
+            "only the exact flag"
+        );
     }
 
     #[test]

@@ -206,7 +206,10 @@ mod tests {
     }
 
     /// An exclusive input and a shared one, sharing one log.
-    fn openers(exclusive: Result<(u16, u32), &'static str>, shared: Result<(u16, u32), &'static str>) -> (ExclusiveAccess, Opener, Log) {
+    fn openers(
+        exclusive: Result<(u16, u32), &'static str>,
+        shared: Result<(u16, u32), &'static str>,
+    ) -> (ExclusiveAccess, Opener, Log) {
         let log = Log::default();
         (ExclusiveAccess::Input(Box::new(opener("exclusive", exclusive, &log))), opener("shared", shared, &log), log)
     }
@@ -346,7 +349,11 @@ mod tests {
             (s.owner, s.toggles)
         }
         fn fails(&self, call: &str) -> Result<(), String> {
-            if self.state().broken.contains(&call) { Err(format!("{call} failed")) } else { Ok(()) }
+            if self.state().broken.contains(&call) {
+                Err(format!("{call} failed"))
+            } else {
+                Ok(())
+            }
         }
     }
 

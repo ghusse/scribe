@@ -35,19 +35,35 @@ fn with_correction_note(msg: &str, correction_error: Option<&str>) -> String {
 
 fn preview(text: &str) -> String {
     let p: String = text.chars().take(140).collect();
-    if p.len() < text.len() { format!("{p}…") } else { p }
+    if p.len() < text.len() {
+        format!("{p}…")
+    } else {
+        p
+    }
 }
 
 /// What the overlay shows once a transcribed dictation was delivered (or not).
-pub fn feedback(inserted: InsertResult, correction_error: Option<&str>, final_text: &str, id: Option<i64>) -> OverlayEvent {
-    let toast = |level, message: String, preview: Option<String>| OverlayEvent::Toast { level, message, preview, dictation_id: id };
+pub fn feedback(
+    inserted: InsertResult,
+    correction_error: Option<&str>,
+    final_text: &str,
+    id: Option<i64>,
+) -> OverlayEvent {
+    let toast = |level, message: String, preview: Option<String>| OverlayEvent::Toast {
+        level,
+        message,
+        preview,
+        dictation_id: id,
+    };
     let p = Some(preview(final_text));
     match inserted {
         InsertResult::Pasted => match correction_error {
             Some(err) => toast(ToastLevel::Info, format!("Inséré sans correction ({err})"), None),
             None => OverlayEvent::Idle,
         },
-        InsertResult::PastedUncertain => toast(ToastLevel::Uncertain, with_correction_note("Texte inséré ?", correction_error), p),
+        InsertResult::PastedUncertain => {
+            toast(ToastLevel::Uncertain, with_correction_note("Texte inséré ?", correction_error), p)
+        }
         InsertResult::ClipboardOnly | InsertResult::PasteFailed => {
             toast(ToastLevel::Copied, with_correction_note("Texte copié dans le presse-papier", correction_error), p)
         }
@@ -162,11 +178,24 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
         }
     };
     let terms = svc.db.lock().unwrap().list_terms().unwrap_or_default();
-    let meta = RecordMeta { created_at, mode: cap.mode, app_name: cap.focus_start.app_name.clone(), audio_path, duration_ms: duration };
+    let meta = RecordMeta {
+        created_at,
+        mode: cap.mode,
+        app_name: cap.focus_start.app_name.clone(),
+        audio_path,
+        duration_ms: duration,
+    };
     let result = match svc.build_providers(&settings) {
-        Ok((stt, llm)) => pipeline::run(&settings.pipeline_config(), &wav, &terms, meta.app_name.as_deref(), stt.as_ref(), llm.as_ref())
-            .await
-            .map(|out| (out, stt.name(), llm.name())),
+        Ok((stt, llm)) => pipeline::run(
+            &settings.pipeline_config(),
+            &wav,
+            &terms,
+            meta.app_name.as_deref(),
+            stt.as_ref(),
+            llm.as_ref(),
+        )
+        .await
+        .map(|out| (out, stt.name(), llm.name())),
         Err(e) => Err(PipelineError::Transcription(e)),
     };
 
@@ -209,9 +238,16 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
     let path = dictation.audio_path.ok_or("l'audio de cette dictée a été purgé")?;
     let wav = std::fs::read(&path).map_err(|e| format!("lecture audio impossible : {e}"))?;
     let (stt, llm) = svc.build_providers(&settings).map_err(|e| e.to_string())?;
-    let out = pipeline::run(&settings.pipeline_config(), &wav, &terms, dictation.app_name.as_deref(), stt.as_ref(), llm.as_ref())
-        .await
-        .map_err(|e| e.to_string())?;
+    let out = pipeline::run(
+        &settings.pipeline_config(),
+        &wav,
+        &terms,
+        dictation.app_name.as_deref(),
+        stt.as_ref(),
+        llm.as_ref(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     // A failed dictation was never delivered: hand the new text over through the clipboard, and
     // only record « Clipboard » when that copy actually happened.
     let outcome = if dictation.outcome == Outcome::Error {
@@ -255,7 +291,9 @@ pub fn purge_audio_in(db: &Db, days: u32, now: chrono::DateTime<chrono::Utc>) ->
     let mut purged = Vec::new();
     for (id, path) in db.audio_to_purge(&cutoff).unwrap_or_default() {
         match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != ErrorKind::NotFound => tracing::warn!("purge audio impossible ({path}) : {e}"),
+            Err(e) if e.kind() != ErrorKind::NotFound => {
+                tracing::warn!("purge audio impossible ({path}) : {e}")
+            }
             _ => {
                 if db.clear_audio_path(id).is_ok() {
                     purged.push(id);

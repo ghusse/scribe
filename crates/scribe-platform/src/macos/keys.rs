@@ -3,7 +3,9 @@ use std::ffi::c_void;
 use dispatch2::DispatchQueue;
 use std::sync::Mutex;
 
-use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation};
+use objc2_core_graphics::{
+    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
+};
 use scribe_core::insert::KeySender;
 
 use crate::mac_keys::{modifier_mask, paste_keycode, KeyMap, KEYCODE_V};

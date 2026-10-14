@@ -64,7 +64,11 @@ mod tests {
     impl Fake {
         fn write(&self, what: String) -> Result<(), String> {
             self.log.lock().unwrap().push(what);
-            if self.fail_writes { Err("clipboard locked".into()) } else { Ok(()) }
+            if self.fail_writes {
+                Err("clipboard locked".into())
+            } else {
+                Ok(())
+            }
         }
         fn log(&self) -> Vec<String> {
             self.log.lock().unwrap().clone()
@@ -127,7 +131,10 @@ mod tests {
         let cb = BackendClipboard(Fake { fail_writes: true, ..Fake::default() });
         assert_eq!(cb.write_text("x"), Err("clipboard locked".into()));
         assert_eq!(cb.restore(&ClipboardContent::Text("x".into())), Err("clipboard locked".into()));
-        assert_eq!(cb.restore(&ClipboardContent::Image { width: 1, height: 1, rgba: vec![0; 4] }), Err("clipboard locked".into()));
+        assert_eq!(
+            cb.restore(&ClipboardContent::Image { width: 1, height: 1, rgba: vec![0; 4] }),
+            Err("clipboard locked".into())
+        );
         assert_eq!(cb.restore(&ClipboardContent::Empty), Err("clipboard locked".into()));
         assert_eq!(cb.restore(&ClipboardContent::Unsupported), Ok(()), "nothing to restore, nothing written");
         assert_eq!(cb.0.log().len(), 4);

@@ -15,7 +15,9 @@ pub fn accessibility_granted() -> bool {
 }
 
 fn microphone() -> PermissionState {
-    let Some(audio) = (unsafe { AVMediaTypeAudio }) else { return PermissionState::Denied };
+    let Some(audio) = (unsafe { AVMediaTypeAudio }) else {
+        return PermissionState::Denied;
+    };
     match unsafe { AVCaptureDevice::authorizationStatusForMediaType(audio) } {
         AVAuthorizationStatus::Authorized => PermissionState::Granted,
         AVAuthorizationStatus::NotDetermined => PermissionState::NotDetermined,
@@ -26,7 +28,8 @@ fn microphone() -> PermissionState {
 impl SystemPermissions for MacPermissions {
     /// Accessibility is never « denied »: its prompt can always be shown again.
     fn status(&self) -> Vec<PermissionStatus> {
-        let accessibility = if accessibility_granted() { PermissionState::Granted } else { PermissionState::NotDetermined };
+        let accessibility =
+            if accessibility_granted() { PermissionState::Granted } else { PermissionState::NotDetermined };
         vec![
             PermissionStatus { permission: Permission::Accessibility, state: accessibility },
             PermissionStatus { permission: Permission::Microphone, state: microphone() },
@@ -41,7 +44,10 @@ impl SystemPermissions for MacPermissions {
                 if let Some(id) = NSBundle::mainBundle().bundleIdentifier() {
                     let _ = Command::new("tccutil").args(["reset", "Accessibility", &id.to_string()]).status();
                 }
-                let options = CFDictionary::from_slices(&[unsafe { kAXTrustedCheckOptionPrompt }], &[unsafe { kCFBooleanTrue }.unwrap()]);
+                let options = CFDictionary::from_slices(
+                    &[unsafe { kAXTrustedCheckOptionPrompt }],
+                    &[unsafe { kCFBooleanTrue }.unwrap()],
+                );
                 unsafe { AXIsProcessTrustedWithOptions(Some(options.as_opaque())) };
             }
             Permission::Microphone => {

@@ -117,7 +117,11 @@ impl FakeField {
 impl FieldReader for FakeField {
     fn focused_text(&self) -> Option<String> {
         let mut v = self.0.lock().unwrap();
-        if v.len() > 1 { v.pop().flatten() } else { v.first().cloned().flatten() }
+        if v.len() > 1 {
+            v.pop().flatten()
+        } else {
+            v.first().cloned().flatten()
+        }
     }
 }
 
@@ -228,7 +232,11 @@ pub struct ProviderPlan {
 
 impl Default for ProviderPlan {
     fn default() -> Self {
-        Self { build: Ok(()), stt: Ok("bonjour scribe comment ça va".into()), llm: Ok("<output>Bonjour Scribe, comment ça va ?</output>".into()) }
+        Self {
+            build: Ok(()),
+            stt: Ok("bonjour scribe comment ça va".into()),
+            llm: Ok("<output>Bonjour Scribe, comment ça va ?</output>".into()),
+        }
     }
 }
 
@@ -364,7 +372,24 @@ impl Fixture {
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
         });
-        Self { svc, window, ui, clipboard, keys, field, mute, autostart, permissions, updater, focus, secrets, plan, warm_ups, ctrl_rx, _dir: dir }
+        Self {
+            svc,
+            window,
+            ui,
+            clipboard,
+            keys,
+            field,
+            mute,
+            autostart,
+            permissions,
+            updater,
+            focus,
+            secrets,
+            plan,
+            warm_ups,
+            ctrl_rx,
+            _dir: dir,
+        }
     }
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {

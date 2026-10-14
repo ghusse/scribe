@@ -48,8 +48,9 @@ impl RecordingHandle {
 
 /// The recording thread body: `(stop, ready) -> clip`. Boxed so that the device glue does not instantiate
 /// `spawn_recorder` again (an untested generic copy would count as uncovered lines).
-pub type RecorderBody =
-    Box<dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<RecordingStart, String>>) -> Result<AudioClip, String> + Send>;
+pub type RecorderBody = Box<
+    dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<RecordingStart, String>>) -> Result<AudioClip, String> + Send,
+>;
 
 /// Runs `body` on a dedicated recording thread. `body` reports through `ready` how capture started
 /// (`Err` aborts the start), records until `stop` receives, then returns the clip.
