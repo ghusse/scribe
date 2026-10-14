@@ -4,19 +4,19 @@
 // conventional-changelog-conventionalcommits stays on 9.x: 10.x needs conventional-changelog-writer 9, while
 // @semantic-release/release-notes-generator 14 renders with writer 8 ("Missing helper" error on 10.x).
 
-// Changelog sections (French, as in CHANGELOG.md). "hidden" types are left out of the notes and release nothing.
+// Changelog sections. "hidden" types are left out of the notes and release nothing.
 const types = [
-  { type: "feat", section: "Fonctionnalités" },
-  { type: "fix", section: "Corrections" },
-  { type: "perf", section: "Performances" },
-  { type: "revert", section: "Retours en arrière" },
-  { type: "refactor", section: "Refactorisation", hidden: true },
+  { type: "feat", section: "Features" },
+  { type: "fix", section: "Bug Fixes" },
+  { type: "perf", section: "Performance" },
+  { type: "revert", section: "Reverts" },
+  { type: "refactor", section: "Refactoring", hidden: true },
   { type: "docs", section: "Documentation", hidden: true },
   { type: "style", section: "Style", hidden: true },
   { type: "test", section: "Tests", hidden: true },
   { type: "build", section: "Build", hidden: true },
   { type: "ci", section: "CI", hidden: true },
-  { type: "chore", section: "Divers", hidden: true },
+  { type: "chore", section: "Miscellaneous", hidden: true },
 ];
 
 export default {
