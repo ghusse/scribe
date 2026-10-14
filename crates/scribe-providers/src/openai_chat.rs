@@ -92,8 +92,14 @@ mod tests {
     }
 
     fn corrector(server: &MockServer, effort: Option<&str>) -> OpenAiChatCorrector {
-        OpenAiChatCorrector::new(format!("{}/v1/", server.uri()), "k", "gpt-6.1-sol", effort.map(String::from), Duration::from_secs(5))
-            .unwrap()
+        OpenAiChatCorrector::new(
+            format!("{}/v1/", server.uri()),
+            "k",
+            "gpt-6.1-sol",
+            effort.map(String::from),
+            Duration::from_secs(5),
+        )
+        .unwrap()
     }
 
     fn reply(content: Value, finish: &str) -> ResponseTemplate {
@@ -133,7 +139,11 @@ mod tests {
     #[tokio::test]
     async fn maps_refusals_errors_and_empty_answers() {
         let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(reply(Value::Null, "content_filter")).up_to_n_times(1).mount(&server).await;
+        Mock::given(method("POST"))
+            .respond_with(reply(Value::Null, "content_filter"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
         assert_eq!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Refusal));
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(401)).up_to_n_times(1).mount(&server).await;
         assert_eq!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Auth));

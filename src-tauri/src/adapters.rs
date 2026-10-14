@@ -17,7 +17,9 @@ const OVERLAY_MARGIN: f64 = 80.0;
 /// managed: its page invokes commands as soon as it loads, which in a release build (embedded assets) can happen
 /// while setup still runs (setup pumps the event loop), and a command would then find no `Services` state.
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<()> {
-    let Some(config) = app.config().app.windows.iter().find(|w| w.label == MAIN_WINDOW) else { return Ok(()) };
+    let Some(config) = app.config().app.windows.iter().find(|w| w.label == MAIN_WINDOW) else {
+        return Ok(());
+    };
     tauri::WebviewWindowBuilder::from_config(app, config)?.build()?;
     Ok(())
 }
@@ -151,7 +153,9 @@ impl OverlayWindow for TauriOverlayWindow {
 
 /// Places the overlay (see `overlay::overlay_position`) and makes it non-activating.
 pub fn setup_overlay(app: &AppHandle) -> tauri::Result<()> {
-    let Some(win) = app.get_webview_window(OVERLAY_WINDOW) else { return Ok(()) };
+    let Some(win) = app.get_webview_window(OVERLAY_WINDOW) else {
+        return Ok(());
+    };
     if let Some(monitor) = win.primary_monitor()? {
         let size = win.outer_size()?;
         let (x, y) = overlay::overlay_position(

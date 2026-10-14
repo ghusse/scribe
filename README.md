@@ -34,6 +34,7 @@ discret.
 ## Tests et couverture
 
 ```bash
+bun run fmt        # cargo fmt (rustfmt.toml) ; vérifié par le CI et par le hook pre-commit installé par `bun install`
 cargo test --workspace
 bun run test
 bun run check

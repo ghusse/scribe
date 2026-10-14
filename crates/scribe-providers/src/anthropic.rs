@@ -181,10 +181,17 @@ mod tests {
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(401)).up_to_n_times(1).mount(&server).await;
         assert_eq!(corrector(&server, "claude-opus-5-5").correct(&prompt()).await, Err(ProviderError::Auth));
         Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content": [{"type": "thinking", "thinking": ""}], "stop_reason": "end_turn"})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"content": [{"type": "thinking", "thinking": ""}], "stop_reason": "end_turn"}),
+                ),
+            )
             .mount(&server)
             .await;
-        assert!(matches!(corrector(&server, "claude-opus-5-5").correct(&prompt()).await, Err(ProviderError::Malformed(_))));
+        assert!(matches!(
+            corrector(&server, "claude-opus-5-5").correct(&prompt()).await,
+            Err(ProviderError::Malformed(_))
+        ));
     }
 
     #[tokio::test]
@@ -194,7 +201,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
             .mount(&server)
             .await;
-        let c = AnthropicCorrector::new(server.uri(), "k", "claude-haiku-4-5", None, Duration::from_millis(100)).unwrap();
+        let c =
+            AnthropicCorrector::new(server.uri(), "k", "claude-haiku-4-5", None, Duration::from_millis(100)).unwrap();
         assert_eq!(c.name(), "claude-haiku-4-5");
         assert_eq!(c.correct(&prompt()).await, Err(ProviderError::Timeout));
     }

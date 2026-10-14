@@ -10,7 +10,10 @@ const WARM_UP_TIMEOUT: Duration = Duration::from_secs(10);
 /// dictation does not pay a DNS + TCP + TLS handshake for each request. Timeouts are set per request.
 pub fn shared_client() -> Result<reqwest::Client, ProviderError> {
     static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
-    CLIENT.get_or_init(|| reqwest::Client::builder().build().map_err(|e| e.to_string())).clone().map_err(ProviderError::Config)
+    CLIENT
+        .get_or_init(|| reqwest::Client::builder().build().map_err(|e| e.to_string()))
+        .clone()
+        .map_err(ProviderError::Config)
 }
 
 /// Opens a pooled connection to `base_url` while the user is still speaking, so the transcription and correction
@@ -22,7 +25,11 @@ pub async fn warm_up(base_url: &str) {
 }
 
 pub fn map_send_error(e: reqwest::Error) -> ProviderError {
-    if e.is_timeout() { ProviderError::Timeout } else { ProviderError::Network(e.to_string()) }
+    if e.is_timeout() {
+        ProviderError::Timeout
+    } else {
+        ProviderError::Network(e.to_string())
+    }
 }
 
 pub async fn map_status(resp: reqwest::Response) -> Result<reqwest::Response, ProviderError> {

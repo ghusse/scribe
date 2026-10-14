@@ -55,16 +55,27 @@ impl OutputBackend for CoreAudioOutputs {
     }
 }
 
-pub(super) fn prop(selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope) -> AudioObjectPropertyAddress {
+pub(super) fn prop(
+    selector: AudioObjectPropertySelector,
+    scope: AudioObjectPropertyScope,
+) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress { mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain }
 }
 
 pub(super) fn check(status: i32) -> Result<(), String> {
-    if status == 0 { Ok(()) } else { Err(format!("erreur CoreAudio {status}")) }
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(format!("erreur CoreAudio {status}"))
+    }
 }
 
 /// Reads a fixed-size property into `out`.
-pub(super) fn get<T>(object: AudioObjectID, address: &mut AudioObjectPropertyAddress, out: &mut T) -> Result<(), String> {
+pub(super) fn get<T>(
+    object: AudioObjectID,
+    address: &mut AudioObjectPropertyAddress,
+    out: &mut T,
+) -> Result<(), String> {
     let mut size = size_of::<T>() as u32;
     let status = unsafe {
         AudioObjectGetPropertyData(

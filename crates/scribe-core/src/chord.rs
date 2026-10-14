@@ -274,7 +274,10 @@ mod tests {
     #[test]
     fn validate_rejects_bad_combinations() {
         assert_eq!(validate(&[], SPACE), Err("choisissez un raccourci".into()));
-        assert_eq!(validate(&[LCTRL, LSHIFT, LALT, LWIN, A], SPACE), Err("un raccourci compte au plus 4 touches".into()));
+        assert_eq!(
+            validate(&[LCTRL, LSHIFT, LALT, LWIN, A], SPACE),
+            Err("un raccourci compte au plus 4 touches".into())
+        );
         assert_eq!(validate(&[0], SPACE), Err("raccourci invalide".into()));
         assert_eq!(validate(&[0xFF], SPACE), Err("raccourci invalide".into()));
         assert_eq!(validate(&[A, A], SPACE), Err("raccourci invalide".into()));
@@ -376,7 +379,11 @@ mod tests {
         assert_eq!(r.feed(LCTRL, false, false), Recorded::Done(vec![LCTRL, A]));
         let mut r = ChordRecorder::new();
         feed_all(&mut r, &[(LCTRL, true), (LSHIFT, true), (A, true), (A, false), (LSHIFT, false)]);
-        assert_eq!(r.feed(LCTRL, false, false), Recorded::Done(vec![LCTRL, LSHIFT, A]), "a smaller set never replaces a larger one");
+        assert_eq!(
+            r.feed(LCTRL, false, false),
+            Recorded::Done(vec![LCTRL, LSHIFT, A]),
+            "a smaller set never replaces a larger one"
+        );
     }
 
     #[test]

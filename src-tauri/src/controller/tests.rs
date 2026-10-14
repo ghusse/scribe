@@ -190,7 +190,8 @@ fn processing_done_is_sent_even_on_panic() {
 #[test]
 fn a_combination_works_like_a_single_trigger_key() {
     let (ctrl, shift, a) = (0xA2, 0xA0, 0x41);
-    let mut h = Harness::with(Fixture::with_settings(Settings { trigger_keys: vec![ctrl, shift, a], ..Default::default() }));
+    let mut h =
+        Harness::with(Fixture::with_settings(Settings { trigger_keys: vec![ctrl, shift, a], ..Default::default() }));
     h.key(ctrl, true, 0);
     h.key(shift, true, 10);
     assert_eq!(h.started(), 0, "incomplete combination");
@@ -223,7 +224,11 @@ fn hold_records_then_processes_in_hold_mode() {
     assert_eq!(h.job_modes(), vec![Mode::Hold]);
     let job = h.jobs.lock().unwrap().pop().unwrap();
     assert_eq!(job.clip.samples.len(), 16);
-    assert_eq!(job.focus_start.recv_timeout(Duration::from_secs(5)).unwrap(), editable("Notepad"), "start focus resolved off-thread");
+    assert_eq!(
+        job.focus_start.recv_timeout(Duration::from_secs(5)).unwrap(),
+        editable("Notepad"),
+        "start focus resolved off-thread"
+    );
 
     // A press during processing is ignored; once done, the next press records again.
     h.key(TRIGGER, true, 1_000);
@@ -266,7 +271,12 @@ fn unavailable_microphone_aborts_and_resets() {
     h.key(TRIGGER, true, 0);
     assert_eq!(
         h.last_overlay(),
-        Some(OverlayEvent::Toast { level: ToastLevel::Error, message: "Micro indisponible : aucun périphérique".into(), preview: None, dictation_id: None })
+        Some(OverlayEvent::Toast {
+            level: ToastLevel::Error,
+            message: "Micro indisponible : aucun périphérique".into(),
+            preview: None,
+            dictation_id: None
+        })
     );
     h.key(TRIGGER, false, 800);
     assert!(h.jobs.lock().unwrap().is_empty());
@@ -300,7 +310,12 @@ fn lost_recording_is_reported_and_the_session_goes_idle() {
     h.key(TRIGGER, false, 800);
     assert_eq!(
         h.last_overlay(),
-        Some(OverlayEvent::Toast { level: ToastLevel::Error, message: "Enregistrement perdu : micro débranché".into(), preview: None, dictation_id: None })
+        Some(OverlayEvent::Toast {
+            level: ToastLevel::Error,
+            message: "Enregistrement perdu : micro débranché".into(),
+            preview: None,
+            dictation_id: None
+        })
     );
     assert!(h.jobs.lock().unwrap().is_empty());
     h.key(TRIGGER, true, 2_000);
@@ -544,7 +559,11 @@ fn spawned_controller_handles_messages_on_its_thread() {
     spawn(f.svc.clone(), rx, tx.clone(), deps);
     let (_, capture) = f.svc.key_capture.begin();
     for down in [true, false] {
-        tx.send(ControllerMsg::Key(HookEvent { key: RawKey { vk: 0x42, down, repeat: false, t_ms: 0 }, gestures: vec![] })).unwrap();
+        tx.send(ControllerMsg::Key(HookEvent {
+            key: RawKey { vk: 0x42, down, repeat: false, t_ms: 0 },
+            gestures: vec![],
+        }))
+        .unwrap();
     }
     assert_eq!(capture.recv_timeout(Duration::from_secs(5)), Ok(vec![0x42]));
 }
@@ -571,7 +590,8 @@ fn the_sound_is_muted_while_recording_and_restored_once_the_microphone_is_stoppe
 
 #[test]
 fn the_sound_is_left_alone_when_the_setting_is_off() {
-    let mut h = Harness::with(Fixture::with_settings(Settings { mute_audio_during_dictation: false, ..Default::default() }));
+    let mut h =
+        Harness::with(Fixture::with_settings(Settings { mute_audio_during_dictation: false, ..Default::default() }));
     h.key(TRIGGER, true, 0);
     h.key(TRIGGER, false, 800);
     assert_eq!(h.job_modes(), vec![Mode::Hold]);
@@ -616,7 +636,10 @@ fn the_microphone_is_asked_exclusively_when_the_setting_is_on() {
 }
 
 fn exclusive(refused: bool) -> Harness {
-    let h = Harness::with(Fixture::with_settings(Settings { exclusive_microphone_during_dictation: true, ..Default::default() }));
+    let h = Harness::with(Fixture::with_settings(Settings {
+        exclusive_microphone_during_dictation: true,
+        ..Default::default()
+    }));
     *h.rec.exclusive_refused.lock().unwrap() = refused;
     h
 }
@@ -649,7 +672,8 @@ fn no_microphone_warning_when_exclusive_access_is_obtained_or_not_asked() {
 #[test]
 fn microphone_warning_only_when_exclusive_access_was_asked_and_not_obtained() {
     let asked = RecordOptions { exclusive_microphone: true };
-    let (shared, held) = (RecordingStart { exclusive_microphone: false }, RecordingStart { exclusive_microphone: true });
+    let (shared, held) =
+        (RecordingStart { exclusive_microphone: false }, RecordingStart { exclusive_microphone: true });
     assert_eq!(microphone_warning(asked, shared), Some(SHARED_MICROPHONE_WARNING.to_string()));
     assert_eq!(microphone_warning(asked, held), None);
     assert_eq!(microphone_warning(RecordOptions::default(), shared), None);

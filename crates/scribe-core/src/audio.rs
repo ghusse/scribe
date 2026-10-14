@@ -11,10 +11,7 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
         return interleaved.to_vec();
     }
-    interleaved
-        .chunks(channels as usize)
-        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-        .collect()
+    interleaved.chunks(channels as usize).map(|frame| frame.iter().sum::<f32>() / frame.len() as f32).collect()
 }
 
 /// Linear-interpolation resampler; good enough for speech-to-text input.
@@ -62,7 +59,11 @@ pub const MIN_VOICED_FRAMES: usize = 3;
 fn frame_dbfs(f: &[i16]) -> f32 {
     let mean_sq = f.iter().map(|&s| (s as f64) * (s as f64)).sum::<f64>() / f.len() as f64;
     let rms = mean_sq.sqrt();
-    if rms <= 0.0 { f32::NEG_INFINITY } else { (20.0 * (rms / 32768.0).log10()) as f32 }
+    if rms <= 0.0 {
+        f32::NEG_INFINITY
+    } else {
+        (20.0 * (rms / 32768.0).log10()) as f32
+    }
 }
 
 pub fn is_silent(clip: &AudioClip, threshold_dbfs: f32) -> bool {

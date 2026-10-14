@@ -134,12 +134,18 @@ impl Settings {
             return Err("les délais du raccourci doivent être supérieurs à 0 ms".into());
         }
         if self.audio_retention_days > MAX_AUDIO_RETENTION_DAYS {
-            return Err(format!("la durée de conservation de l'audio ne peut pas dépasser {MAX_AUDIO_RETENTION_DAYS} jours"));
+            return Err(format!(
+                "la durée de conservation de l'audio ne peut pas dépasser {MAX_AUDIO_RETENTION_DAYS} jours"
+            ));
         }
         if self.restore_delay_ms > MAX_RESTORE_DELAY_MS {
-            return Err(format!("le délai de restauration du presse-papiers ne peut pas dépasser {MAX_RESTORE_DELAY_MS} ms"));
+            return Err(format!(
+                "le délai de restauration du presse-papiers ne peut pas dépasser {MAX_RESTORE_DELAY_MS} ms"
+            ));
         }
-        if self.llm_timeout_base_ms > MAX_LLM_TIMEOUT_BASE_MS || self.llm_timeout_per_char_ms > MAX_LLM_TIMEOUT_PER_CHAR_MS {
+        if self.llm_timeout_base_ms > MAX_LLM_TIMEOUT_BASE_MS
+            || self.llm_timeout_per_char_ms > MAX_LLM_TIMEOUT_PER_CHAR_MS
+        {
             return Err("le délai de correction est trop élevé".into());
         }
         if catalog::stt_provider(&self.stt_provider).is_none() {
@@ -221,7 +227,12 @@ mod tests {
     fn save_and_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let s = Settings { stt_provider: "groq".into(), llm_provider: "mistral".into(), level: Level::Clean, ..Default::default() };
+        let s = Settings {
+            stt_provider: "groq".into(),
+            llm_provider: "mistral".into(),
+            level: Level::Clean,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
     }
@@ -243,7 +254,11 @@ mod tests {
     fn legacy_stt_preset_field_is_still_read() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"stt_preset":"groq","stt_base_url":"https://api.groq.com/openai/v1","stt_model":"whisper-large-v3"}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"stt_preset":"groq","stt_base_url":"https://api.groq.com/openai/v1","stt_model":"whisper-large-v3"}"#,
+        )
+        .unwrap();
         let s = Settings::load(&path);
         assert_eq!((s.stt_provider.as_str(), s.stt_model.as_str()), ("groq", "whisper-large-v3"));
     }
@@ -336,7 +351,11 @@ mod tests {
             Settings { audio_retention_days: 0, ..Default::default() },
             Settings { audio_retention_days: MAX_AUDIO_RETENTION_DAYS, ..Default::default() },
             Settings { stt_provider: "groq".into(), stt_model: "whisper-large-v3-turbo".into(), ..Default::default() },
-            Settings { llm_provider: "openai".into(), llm_model: "modèle-saisi-à-la-main".into(), ..Default::default() },
+            Settings {
+                llm_provider: "openai".into(),
+                llm_model: "modèle-saisi-à-la-main".into(),
+                ..Default::default()
+            },
             Settings { max_recording_ms: MAX_RECORDING_MS_CAP, ..Default::default() },
             Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS, ..Default::default() },
             Settings { restore_delay_ms: 0, ..Default::default() },

@@ -41,10 +41,18 @@ pub fn classify(f: &UiaFacts) -> FocusState {
     }
     match f.control_type {
         Some(EDIT) => {
-            if f.value_read_only == Some(true) { FocusState::NotEditable } else { FocusState::Editable }
+            if f.value_read_only == Some(true) {
+                FocusState::NotEditable
+            } else {
+                FocusState::Editable
+            }
         }
         Some(DOCUMENT) | Some(COMBO_BOX) => {
-            if f.value_read_only == Some(false) { FocusState::Editable } else { FocusState::Unknown }
+            if f.value_read_only == Some(false) {
+                FocusState::Editable
+            } else {
+                FocusState::Unknown
+            }
         }
         Some(ct) if NAVIGATION.contains(&ct) => FocusState::NotEditable,
         _ => FocusState::Unknown,
@@ -62,8 +70,21 @@ pub struct AxFacts {
 
 const AX_TEXT_ROLES: &[&str] = &["AXTextField", "AXTextArea", "AXComboBox"];
 const AX_NAVIGATION: &[&str] = &[
-    "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXMenuItem", "AXList", "AXRow",
-    "AXCell", "AXTable", "AXOutline", "AXTabGroup", "AXLink", "AXImage", "AXSlider",
+    "AXButton",
+    "AXCheckBox",
+    "AXRadioButton",
+    "AXPopUpButton",
+    "AXMenuButton",
+    "AXMenuItem",
+    "AXList",
+    "AXRow",
+    "AXCell",
+    "AXTable",
+    "AXOutline",
+    "AXTabGroup",
+    "AXLink",
+    "AXImage",
+    "AXSlider",
 ];
 pub const AX_SECURE_TEXT_FIELD: &str = "AXSecureTextField";
 

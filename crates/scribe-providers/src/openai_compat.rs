@@ -79,7 +79,8 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn client(server: &MockServer) -> OpenAiCompatTranscriber {
-        OpenAiCompatTranscriber::new(format!("{}/v1/", server.uri()), "k", "gpt-4o-transcribe", Duration::from_secs(5)).unwrap()
+        OpenAiCompatTranscriber::new(format!("{}/v1/", server.uri()), "k", "gpt-4o-transcribe", Duration::from_secs(5))
+            .unwrap()
     }
 
     #[tokio::test]
@@ -117,7 +118,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(401)).up_to_n_times(1).mount(&server).await;
         assert_eq!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Auth));
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(503).set_body_string("down")).mount(&server).await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("down"))
+            .mount(&server)
+            .await;
         assert_eq!(
             client(&server).transcribe(b"x", &[]).await,
             Err(ProviderError::Http { status: 503, body: "down".into() })
@@ -127,10 +131,12 @@ mod tests {
     #[tokio::test]
     async fn malformed_json_is_reported() {
         let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_string("nope")).mount(&server).await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("nope"))
+            .mount(&server)
+            .await;
         assert!(matches!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Malformed(_))));
     }
-
 
     #[tokio::test]
     async fn name_is_the_model_and_a_slow_server_times_out() {
@@ -139,7 +145,8 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
             .mount(&server)
             .await;
-        let t = OpenAiCompatTranscriber::new(server.uri(), "k", "whisper-large-v3", Duration::from_millis(100)).unwrap();
+        let t =
+            OpenAiCompatTranscriber::new(server.uri(), "k", "whisper-large-v3", Duration::from_millis(100)).unwrap();
         assert_eq!(t.name(), "whisper-large-v3");
         assert_eq!(t.transcribe(b"RIFF", &[]).await, Err(ProviderError::Timeout));
     }

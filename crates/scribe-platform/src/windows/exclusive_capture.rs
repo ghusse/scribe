@@ -90,7 +90,11 @@ impl ExclusiveClient for Client {
     fn supports(&self, format: &PcmFormat) -> Result<(), (i32, String)> {
         let wave = extensible(format);
         let code = unsafe { self.audio.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &wave.Format, None) };
-        if code == S_OK { Ok(()) } else { Err((code.0, code.message())) }
+        if code == S_OK {
+            Ok(())
+        } else {
+            Err((code.0, code.message()))
+        }
     }
 
     fn period(&self) -> Result<i64, String> {

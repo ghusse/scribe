@@ -95,18 +95,39 @@ mod tests {
     }
 
     fn settings(stt: &str, llm: &str, model: &str, level: Level) -> Settings {
-        Settings { stt_provider: stt.into(), stt_model: "whisper-x".into(), llm_provider: llm.into(), llm_model: model.into(), level, ..Default::default() }
+        Settings {
+            stt_provider: stt.into(),
+            stt_model: "whisper-x".into(),
+            llm_provider: llm.into(),
+            llm_model: model.into(),
+            level,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn warms_up_the_transcription_host_then_the_correction_host() {
         let openai = "https://api.openai.com/v1";
         let anthropic = "https://api.anthropic.com";
-        assert_eq!(warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted)), vec![openai, anthropic]);
-        assert_eq!(warm_up_urls(&settings("openai", "openai", "gpt-6-astra", Level::Clean)), vec![openai], "one host, once");
-        assert_eq!(warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Raw)), vec![openai], "no correction");
+        assert_eq!(
+            warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted)),
+            vec![openai, anthropic]
+        );
+        assert_eq!(
+            warm_up_urls(&settings("openai", "openai", "gpt-6-astra", Level::Clean)),
+            vec![openai],
+            "one host, once"
+        );
+        assert_eq!(
+            warm_up_urls(&settings("openai", "anthropic", "claude-opus-5-5", Level::Raw)),
+            vec![openai],
+            "no correction"
+        );
         assert_eq!(warm_up_urls(&settings("nope", "anthropic", "claude-opus-5-5", Level::Formatted)), vec![anthropic]);
-        assert!(warm_up_urls(&settings("anthropic", "nope", "m", Level::Formatted)).is_empty(), "Anthropic has no transcription");
+        assert!(
+            warm_up_urls(&settings("anthropic", "nope", "m", Level::Formatted)).is_empty(),
+            "Anthropic has no transcription"
+        );
         warm_up(&settings("nope", "nope", "m", Level::Formatted)); // nothing to open
     }
 
@@ -134,9 +155,11 @@ mod tests {
 
     #[test]
     fn builds_the_api_of_the_llm_provider() {
-        let c = build_corrector(&settings("openai", "anthropic", "claude-haiku-4-5", Level::Formatted), Some("sk".into()));
+        let c =
+            build_corrector(&settings("openai", "anthropic", "claude-haiku-4-5", Level::Formatted), Some("sk".into()));
         assert_eq!(c.name(), "claude-haiku-4-5");
-        let c = build_corrector(&settings("openai", "mistral", "mistral-small-latest", Level::Clean), Some("sk".into()));
+        let c =
+            build_corrector(&settings("openai", "mistral", "mistral-small-latest", Level::Clean), Some("sk".into()));
         assert_eq!(c.name(), "mistral-small-latest");
     }
 
@@ -156,7 +179,8 @@ mod tests {
     #[test]
     fn transcription_needs_a_known_provider_and_its_key() {
         let store = MemorySecretStore::with(&[("openai", "sk-o"), ("anthropic", "sk-a")]);
-        let err = build(&settings("anthropic", "anthropic", "claude-opus-5-5", Level::Formatted), &store).err().unwrap();
+        let err =
+            build(&settings("anthropic", "anthropic", "claude-opus-5-5", Level::Formatted), &store).err().unwrap();
         assert_eq!(err, ProviderError::Config("fournisseur de transcription inconnu : anthropic".into()));
         let err = build(&settings("groq", "anthropic", "claude-opus-5-5", Level::Formatted), &store).err().unwrap();
         assert_eq!(err, ProviderError::Config("clé API manquante pour « Groq »".into()));

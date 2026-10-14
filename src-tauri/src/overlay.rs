@@ -18,9 +18,17 @@ pub enum ToastLevel {
 pub enum OverlayEvent {
     Idle,
     /// `warning`: shown under the pill for the whole recording (e.g. the microphone could not be kept exclusive).
-    Recording { locked: bool, warning: Option<String> },
+    Recording {
+        locked: bool,
+        warning: Option<String>,
+    },
     Processing,
-    Toast { level: ToastLevel, message: String, preview: Option<String>, dictation_id: Option<i64> },
+    Toast {
+        level: ToastLevel,
+        message: String,
+        preview: Option<String>,
+        dictation_id: Option<i64>,
+    },
 }
 
 /// The overlay window: delivers events to its webview and shows/hides it without taking focus.
@@ -75,7 +83,13 @@ impl Overlay {
         }
     }
 
-    pub fn toast(&self, level: ToastLevel, message: impl Into<String>, preview: Option<String>, dictation_id: Option<i64>) {
+    pub fn toast(
+        &self,
+        level: ToastLevel,
+        message: impl Into<String>,
+        preview: Option<String>,
+        dictation_id: Option<i64>,
+    ) {
         self.emit(OverlayEvent::Toast { level, message: message.into(), preview, dictation_id });
     }
 
@@ -91,7 +105,13 @@ impl Overlay {
 }
 
 /// Bottom-centre of the monitor, `margin_px` (logical) above its bottom edge, in physical pixels.
-pub fn overlay_position(monitor_pos: (i32, i32), monitor_size: (u32, u32), window_size: (u32, u32), scale: f64, margin_px: f64) -> (i32, i32) {
+pub fn overlay_position(
+    monitor_pos: (i32, i32),
+    monitor_size: (u32, u32),
+    window_size: (u32, u32),
+    scale: f64,
+    margin_px: f64,
+) -> (i32, i32) {
     let margin = (margin_px * scale) as i32;
     let x = monitor_pos.0 + (monitor_size.0 as i32 - window_size.0 as i32) / 2;
     let y = monitor_pos.1 + monitor_size.1 as i32 - window_size.1 as i32 - margin;
@@ -175,7 +195,12 @@ mod tests {
         assert!(w.visible());
         assert_eq!(
             w.last_event(),
-            Some(OverlayEvent::Toast { level: ToastLevel::Copied, message: "copié".into(), preview: Some("texte".into()), dictation_id: Some(4) })
+            Some(OverlayEvent::Toast {
+                level: ToastLevel::Copied,
+                message: "copié".into(),
+                preview: Some("texte".into()),
+                dictation_id: Some(4)
+            })
         );
         assert_eq!(w.calls.lock().unwrap()[0], Call::Send(OverlayEvent::Recording { locked: false, warning: None }));
     }
@@ -193,7 +218,11 @@ mod tests {
 
     #[test]
     fn late_dismiss_does_not_hide_recording_or_processing() {
-        for ev in [OverlayEvent::Recording { locked: false, warning: None }, OverlayEvent::Recording { locked: true, warning: None }, OverlayEvent::Processing] {
+        for ev in [
+            OverlayEvent::Recording { locked: false, warning: None },
+            OverlayEvent::Recording { locked: true, warning: None },
+            OverlayEvent::Processing,
+        ] {
             let (w, o) = overlay();
             o.emit(ev);
             o.dismiss();
@@ -222,17 +251,28 @@ mod tests {
         assert!(w.visible(), "{:?}", w.calls.lock().unwrap());
         let calls = w.calls.lock().unwrap();
         let n = calls.len();
-        assert_eq!(calls[n - 3..], [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false, warning: None }), Call::Show]);
+        assert_eq!(
+            calls[n - 3..],
+            [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false, warning: None }), Call::Show]
+        );
     }
 
     #[test]
     fn events_serialize_for_the_overlay_webview() {
-        let ev = OverlayEvent::Toast { level: ToastLevel::Uncertain, message: "m".into(), preview: None, dictation_id: Some(2) };
+        let ev = OverlayEvent::Toast {
+            level: ToastLevel::Uncertain,
+            message: "m".into(),
+            preview: None,
+            dictation_id: Some(2),
+        };
         assert_eq!(
             serde_json::to_value(&ev).unwrap(),
             serde_json::json!({"kind": "toast", "level": "uncertain", "message": "m", "preview": null, "dictation_id": 2})
         );
-        assert_eq!(serde_json::to_value(OverlayEvent::Recording { locked: true, warning: None }).unwrap(), serde_json::json!({"kind": "recording", "locked": true, "warning": null}));
+        assert_eq!(
+            serde_json::to_value(OverlayEvent::Recording { locked: true, warning: None }).unwrap(),
+            serde_json::json!({"kind": "recording", "locked": true, "warning": null})
+        );
     }
 
     #[test]

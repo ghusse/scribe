@@ -1,15 +1,15 @@
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use scribe_core::chord::{ChordRecorder, Recorded};
 use scribe_core::focus::FocusDetector;
 use scribe_core::insert::{Clipboard, FieldReader, KeySender};
+use scribe_core::permissions::SystemPermissions;
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
-use scribe_core::permissions::SystemPermissions;
 use scribe_platform::{HookConfig, RawKey};
 
 use crate::audio_mute::AudioMute;
@@ -261,7 +261,10 @@ mod tests {
         let kc = kc();
         let (_, rx) = kc.begin();
         assert!(!kc.offer(key(0xA3, false)), "release of the trigger held when the capture began");
-        assert!(!kc.offer(RawKey { vk: 0x0D, down: true, repeat: true, t_ms: 0 }), "auto-repeat of the Entrée that clicked");
+        assert!(
+            !kc.offer(RawKey { vk: 0x0D, down: true, repeat: true, t_ms: 0 }),
+            "auto-repeat of the Entrée that clicked"
+        );
         assert!(kc.is_pending());
         assert!(kc.offer(key(0x77, true)));
         assert!(kc.offer(RawKey { vk: 0x77, down: true, repeat: true, t_ms: 0 }));

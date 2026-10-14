@@ -7,7 +7,8 @@ use crate::testing::{editable, Fixture, UiCall};
 
 fn speech(ms: u32) -> AudioClip {
     let n = (TARGET_RATE as u64 * ms as u64 / 1000) as usize;
-    let samples: Vec<f32> = (0..n).map(|i| 0.5 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / TARGET_RATE as f32).sin()).collect();
+    let samples: Vec<f32> =
+        (0..n).map(|i| 0.5 * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / TARGET_RATE as f32).sin()).collect();
     AudioClip { samples: audio::to_i16(&samples), sample_rate: TARGET_RATE }
 }
 
@@ -72,13 +73,19 @@ fn feedback_for_each_insertion_result() {
         feedback(InsertResult::Pasted, Some("délai"), "t", id),
         toast(ToastLevel::Info, "Inséré sans correction (délai)", None, id)
     );
-    assert_eq!(feedback(InsertResult::PastedUncertain, None, "t", id), toast(ToastLevel::Uncertain, "Texte inséré ?", Some("t"), id));
+    assert_eq!(
+        feedback(InsertResult::PastedUncertain, None, "t", id),
+        toast(ToastLevel::Uncertain, "Texte inséré ?", Some("t"), id)
+    );
     assert_eq!(
         feedback(InsertResult::PastedUncertain, Some("délai"), "t", id),
         toast(ToastLevel::Uncertain, "Texte inséré ? (non corrigé : délai)", Some("t"), id)
     );
     for r in [InsertResult::ClipboardOnly, InsertResult::PasteFailed] {
-        assert_eq!(feedback(r, None, "t", None), toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("t"), None));
+        assert_eq!(
+            feedback(r, None, "t", None),
+            toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("t"), None)
+        );
     }
     assert_eq!(
         feedback(InsertResult::NotPasted, Some("x"), "t", id),
@@ -86,7 +93,12 @@ fn feedback_for_each_insertion_result() {
     );
     assert_eq!(
         feedback(InsertResult::ClipboardFailed, Some("x"), "t", id),
-        toast(ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique (non corrigé : x)", Some("t"), id)
+        toast(
+            ToastLevel::Error,
+            "Presse-papier indisponible : texte dans l'historique (non corrigé : x)",
+            Some("t"),
+            id
+        )
     );
 }
 
@@ -94,12 +106,23 @@ fn feedback_for_each_insertion_result() {
 fn failure_feedback_points_to_the_history() {
     assert_eq!(
         failure_feedback(&ProviderError::Auth, Some(9)),
-        toast(ToastLevel::Error, "Échec de la transcription : clé API refusée. Réessayez depuis l'historique.", None, Some(9))
+        toast(
+            ToastLevel::Error,
+            "Échec de la transcription : clé API refusée. Réessayez depuis l'historique.",
+            None,
+            Some(9)
+        )
     );
 }
 
 fn meta() -> RecordMeta {
-    RecordMeta { created_at: "2026-10-05T10:00:00.000Z".into(), mode: Mode::Hold, app_name: Some("Word".into()), audio_path: Some("a.wav".into()), duration_ms: 1_234 }
+    RecordMeta {
+        created_at: "2026-10-05T10:00:00.000Z".into(),
+        mode: Mode::Hold,
+        app_name: Some("Word".into()),
+        audio_path: Some("a.wav".into()),
+        duration_ms: 1_234,
+    }
 }
 
 #[test]
@@ -110,13 +133,22 @@ fn build_record_for_a_failed_transcription() {
     assert_eq!(r.error.as_deref(), Some("délai dépassé"));
     assert_eq!((r.raw_text, r.final_text, r.corrector), (None, None, None));
     assert_eq!(r.transcriber.as_deref(), Some("gpt-transcribe"), "the configured model");
-    assert_eq!((r.created_at.as_str(), r.mode, r.app_name.as_deref(), r.audio_path.as_deref(), r.duration_ms), ("2026-10-05T10:00:00.000Z", Mode::Hold, Some("Word"), Some("a.wav"), 1_234));
+    assert_eq!(
+        (r.created_at.as_str(), r.mode, r.app_name.as_deref(), r.audio_path.as_deref(), r.duration_ms),
+        ("2026-10-05T10:00:00.000Z", Mode::Hold, Some("Word"), Some("a.wav"), 1_234)
+    );
     assert_eq!(r.level, Level::Formatted);
 }
 
 #[test]
 fn build_record_for_a_delivered_dictation() {
-    let out = PipelineOutput { raw: "r".into(), final_text: "F".into(), stt_ms: 10, llm_ms: Some(20), correction_error: Some("e".into()) };
+    let out = PipelineOutput {
+        raw: "r".into(),
+        final_text: "F".into(),
+        stt_ms: 10,
+        llm_ms: Some(20),
+        correction_error: Some("e".into()),
+    };
     let s = Settings::default();
     let done = |inserted| Delivery::Done { out: &out, transcriber: "stt".into(), corrector: "llm".into(), inserted };
     let r = build_record(&meta(), &s, done(InsertResult::PastedUncertain));
@@ -127,7 +159,8 @@ fn build_record_for_a_delivered_dictation() {
     // What the pipeline returns at the raw level or for a short dictation: the corrector never ran.
     let uncorrected = PipelineOutput { llm_ms: None, correction_error: None, ..out.clone() };
     let raw = Settings { level: Level::Raw, ..Default::default() };
-    let done = |inserted| Delivery::Done { out: &uncorrected, transcriber: "stt".into(), corrector: "llm".into(), inserted };
+    let done =
+        |inserted| Delivery::Done { out: &uncorrected, transcriber: "stt".into(), corrector: "llm".into(), inserted };
     let r = build_record(&meta(), &raw, done(InsertResult::ClipboardFailed));
     assert_eq!(r.corrector, None, "no corrector at the raw level");
     assert_eq!(r.outcome, Outcome::Error);
@@ -189,7 +222,10 @@ fn provider_setup_failure_keeps_the_audio_for_a_retry() {
     let audio = row.audio_path.clone().expect("audio kept");
     assert!(std::path::Path::new(&audio).exists());
     assert_eq!(f.wav_files().len(), 1);
-    assert_eq!(f.window.last_event(), Some(failure_feedback(&ProviderError::Config("clé API manquante pour « OpenAI »".into()), Some(row.id))));
+    assert_eq!(
+        f.window.last_event(),
+        Some(failure_feedback(&ProviderError::Config("clé API manquante pour « OpenAI »".into()), Some(row.id)))
+    );
     assert_eq!(f.ui.calls(), vec![UiCall::HistoryChanged]);
 }
 
@@ -199,7 +235,10 @@ fn transcription_failure_is_saved_without_text() {
     f.plan(|p| p.stt = Err(ProviderError::Auth));
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!((row.outcome, row.error.as_deref(), row.raw_text.as_deref()), (Outcome::Error, Some("clé API refusée"), None));
+    assert_eq!(
+        (row.outcome, row.error.as_deref(), row.raw_text.as_deref()),
+        (Outcome::Error, Some("clé API refusée"), None)
+    );
     assert!(row.audio_path.is_some());
     assert_eq!(row.mode, "locked");
     assert_eq!(row.app_name.as_deref(), Some("Notepad"));
@@ -213,7 +252,10 @@ fn pasted_dictation_goes_idle_and_is_recorded() {
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Pasted);
-    assert_eq!((row.raw_text.as_deref(), row.final_text.as_deref()), (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?")));
+    assert_eq!(
+        (row.raw_text.as_deref(), row.final_text.as_deref()),
+        (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?"))
+    );
     assert_eq!((row.transcriber.as_deref(), row.corrector.as_deref()), (Some("fake-stt"), Some("fake-llm")));
     assert!(row.llm_ms.is_some() && row.stt_ms.is_some());
     assert_eq!(row.error, None);
@@ -242,7 +284,10 @@ fn pasted_without_correction_says_so() {
     let row = only_row(&f);
     assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("bonjour scribe comment ça va")));
     assert_eq!(row.error.as_deref(), Some("clé API refusée"));
-    assert_eq!(f.window.last_event(), Some(toast(ToastLevel::Info, "Inséré sans correction (clé API refusée)", None, Some(row.id))));
+    assert_eq!(
+        f.window.last_event(),
+        Some(toast(ToastLevel::Info, "Inséré sans correction (clé API refusée)", None, Some(row.id)))
+    );
 }
 
 #[test]
@@ -255,7 +300,12 @@ fn unknown_focus_pastes_with_a_doubt() {
     assert_eq!(row.outcome, Outcome::PastedUncertain);
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Uncertain, "Texte inséré ? (non corrigé : le modèle a refusé la requête)", Some("bonjour scribe comment ça va"), Some(row.id)))
+        Some(toast(
+            ToastLevel::Uncertain,
+            "Texte inséré ? (non corrigé : le modèle a refusé la requête)",
+            Some("bonjour scribe comment ça va"),
+            Some(row.id)
+        ))
     );
 }
 
@@ -274,7 +324,12 @@ fn not_editable_focus_or_failed_paste_copies_the_text() {
         assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"));
         assert_eq!(
             f.window.last_event(),
-            Some(toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
+            Some(toast(
+                ToastLevel::Copied,
+                "Texte copié dans le presse-papier",
+                Some("Bonjour Scribe, comment ça va ?"),
+                Some(row.id)
+            ))
         );
     }
 }
@@ -299,10 +354,19 @@ fn a_paste_the_field_did_not_receive_leaves_the_text_to_paste_by_hand() {
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Clipboard);
     assert_eq!(*f.keys.pastes.lock().unwrap(), 1, "Ctrl+V was sent");
-    assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"), "not restored: ready for Ctrl+V");
+    assert_eq!(
+        f.clipboard.text().as_deref(),
+        Some("Bonjour Scribe, comment ça va ?"),
+        "not restored: ready for Ctrl+V"
+    );
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
+        Some(toast(
+            ToastLevel::Copied,
+            "Non inséré : texte copié, collez-le avec Ctrl+V",
+            Some("Bonjour Scribe, comment ça va ?"),
+            Some(row.id)
+        ))
     );
 }
 
@@ -315,7 +379,12 @@ fn unavailable_clipboard_keeps_the_text_in_the_history() {
     assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe, comment ça va ?")));
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Error, "Presse-papier indisponible : texte dans l'historique", Some("Bonjour Scribe, comment ça va ?"), Some(row.id)))
+        Some(toast(
+            ToastLevel::Error,
+            "Presse-papier indisponible : texte dans l'historique",
+            Some("Bonjour Scribe, comment ça va ?"),
+            Some(row.id)
+        ))
     );
 }
 
@@ -324,7 +393,10 @@ fn raw_level_records_no_corrector() {
     let f = Fixture::with_settings(Settings { level: Level::Raw, restore_delay_ms: 0, ..Default::default() });
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!((row.final_text.as_deref(), row.corrector, row.llm_ms), (Some("bonjour scribe comment ça va"), None, None));
+    assert_eq!(
+        (row.final_text.as_deref(), row.corrector, row.llm_ms),
+        (Some("bonjour scribe comment ça va"), None, None)
+    );
     assert_eq!(row.level, Level::Raw);
 }
 
@@ -381,7 +453,10 @@ fn retranscribing_a_failed_dictation_copies_the_new_text() {
     let id = stored(&f, Outcome::Error, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
-    assert_eq!((d.raw_text.as_deref(), d.final_text.as_deref()), (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?")));
+    assert_eq!(
+        (d.raw_text.as_deref(), d.final_text.as_deref()),
+        (Some("bonjour scribe comment ça va"), Some("Bonjour Scribe, comment ça va ?"))
+    );
     assert_eq!((d.transcriber.as_deref(), d.corrector.as_deref()), (Some("fake-stt"), Some("fake-llm")));
     assert_eq!((d.outcome, d.error), (Outcome::Clipboard, None));
     assert_eq!(f.clipboard.text().as_deref(), Some("Bonjour Scribe, comment ça va ?"));
@@ -405,7 +480,10 @@ fn retranscribing_a_delivered_dictation_keeps_its_outcome_and_clipboard() {
     let id = stored(&f, Outcome::PastedUncertain, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
-    assert_eq!((d.outcome, d.final_text.as_deref(), d.corrector), (Outcome::PastedUncertain, Some("nouveau texte"), None));
+    assert_eq!(
+        (d.outcome, d.final_text.as_deref(), d.corrector),
+        (Outcome::PastedUncertain, Some("nouveau texte"), None)
+    );
     assert_eq!(f.clipboard.text(), None);
 }
 

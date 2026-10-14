@@ -91,7 +91,10 @@ fn glossary_commands_round_trip() {
         update_term(s.clone(), id, "Scribe".into(), vec!["scribes".into()], None).unwrap();
         let terms = list_terms(s.clone()).unwrap();
         assert_eq!(terms.len(), 1);
-        assert_eq!((terms[0].variants.clone(), terms[0].note.clone(), terms[0].source), (vec!["scribes".to_string()], None, TermSource::Manual));
+        assert_eq!(
+            (terms[0].variants.clone(), terms[0].note.clone(), terms[0].source),
+            (vec!["scribes".to_string()], None, TermSource::Manual)
+        );
         delete_term(s.clone(), id).unwrap();
         assert!(list_terms(s.clone()).unwrap().is_empty());
         assert!(add_term(s, "  ".into(), vec![], None).is_err(), "blank term rejected by the store");
@@ -228,7 +231,10 @@ fn permissions_are_read_requested_and_opened_in_the_settings() {
     let f = Fixture::new();
     let states = |v: Vec<PermissionStatus>| v.into_iter().map(|s| (s.permission, s.state)).collect::<Vec<_>>();
     with_state(&f, |s| {
-        assert_eq!(states(permissions(s.clone())), [(Permission::Accessibility, NotDetermined), (Permission::Microphone, NotDetermined)]);
+        assert_eq!(
+            states(permissions(s.clone())),
+            [(Permission::Accessibility, NotDetermined), (Permission::Microphone, NotDetermined)]
+        );
         assert_eq!(
             states(request_permission(s.clone(), Permission::Microphone)),
             [(Permission::Accessibility, NotDetermined), (Permission::Microphone, Granted)],

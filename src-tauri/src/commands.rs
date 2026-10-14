@@ -70,7 +70,13 @@ pub fn add_term(svc: Svc<'_>, term: String, variants: Vec<String>, note: Option<
 }
 
 #[tauri::command]
-pub fn update_term(svc: Svc<'_>, id: i64, term: String, variants: Vec<String>, note: Option<String>) -> Result<(), String> {
+pub fn update_term(
+    svc: Svc<'_>,
+    id: i64,
+    term: String,
+    variants: Vec<String>,
+    note: Option<String>,
+) -> Result<(), String> {
     svc.db.lock().unwrap().update_term(id, &term, &variants, note.as_deref()).map_err(err)
 }
 
@@ -97,7 +103,10 @@ pub fn save_settings(svc: Svc<'_>, settings: Settings) -> Result<(), String> {
 
 #[tauri::command]
 pub fn key_status(svc: Svc<'_>) -> HashMap<String, bool> {
-    catalog::PROVIDERS.iter().map(|p| (p.id.to_string(), secrets::get_key(svc.secrets.as_ref(), p.id).is_some())).collect()
+    catalog::PROVIDERS
+        .iter()
+        .map(|p| (p.id.to_string(), secrets::get_key(svc.secrets.as_ref(), p.id).is_some()))
+        .collect()
 }
 
 #[tauri::command]
@@ -129,7 +138,10 @@ pub async fn test_providers(svc: Svc<'_>) -> Result<ProviderTest, String> {
     let llm_result = if settings.level == Level::Raw {
         None
     } else {
-        let p = CorrectionPrompt { system: "Réponds <output>ok</output>.".into(), user: "<transcript>test</transcript>".into() };
+        let p = CorrectionPrompt {
+            system: "Réponds <output>ok</output>.".into(),
+            user: "<transcript>test</transcript>".into(),
+        };
         let start = Instant::now();
         Some(llm.correct(&p).await.map(|_| elapsed_ms(start)).map_err(err))
     };
@@ -189,7 +201,8 @@ pub async fn check_update(svc: Svc<'_>) -> Result<UpdateStatus, String> {
 #[tauri::command]
 pub async fn install_update(svc: Svc<'_>) -> Result<(), String> {
     let audio = svc.audio_mute.clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || audio.restore_before_exit(audio_mute::EXIT_RESTORE_TIMEOUT)).await;
+    let _ =
+        tauri::async_runtime::spawn_blocking(move || audio.restore_before_exit(audio_mute::EXIT_RESTORE_TIMEOUT)).await;
     svc.updater.install().await
 }
 

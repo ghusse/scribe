@@ -31,7 +31,8 @@ fn string_attr(element: &AXUIElement, name: &'static str) -> Option<String> {
 
 fn value_settable(element: &AXUIElement) -> Option<bool> {
     let mut settable: u8 = 0;
-    let err = unsafe { element.is_attribute_settable(&CFString::from_static_str("AXValue"), NonNull::from(&mut settable)) };
+    let err =
+        unsafe { element.is_attribute_settable(&CFString::from_static_str("AXValue"), NonNull::from(&mut settable)) };
     (err == AXError::Success).then_some(settable != 0)
 }
 
@@ -69,7 +70,9 @@ pub struct AxFocusDetector;
 
 impl FocusDetector for AxFocusDetector {
     fn snapshot(&self) -> FocusSnapshot {
-        let Some(app) = focused_app() else { return FocusSnapshot::unknown() };
+        let Some(app) = focused_app() else {
+            return FocusSnapshot::unknown();
+        };
         let pid = pid(&app);
         let facts = element_attr(&app, "AXFocusedUIElement").map(|el| AxFacts {
             role: string_attr(&el, "AXRole").unwrap_or_default(),

@@ -120,7 +120,8 @@ mod tests {
         let default = CoreAudioHog.default_input().unwrap();
         let inputs: Vec<u32> = CoreAudioHog.inputs().unwrap();
         let owners = || inputs.iter().map(|d| (*d, CoreAudioHog.owner(*d))).collect::<Vec<_>>();
-        let physical = |d: &u32| ![*b"grup", *b"virt"].map(u32::from_be_bytes).contains(&CoreAudioHog.transport(*d).unwrap());
+        let physical =
+            |d: &u32| ![*b"grup", *b"virt"].map(u32::from_be_bytes).contains(&CoreAudioHog.transport(*d).unwrap());
         assert!(owners().iter().all(|(_, o)| *o == Ok(-1)), "{:?}", owners());
         let h = start_recording(RecordOptions { exclusive_microphone: true }, Arc::new(|_| {})).unwrap();
         let ours = Ok(std::process::id() as i32);
