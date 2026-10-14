@@ -2,33 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::gesture::Mode;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Level {
-    Raw,
-    Clean,
-    #[default]
-    Formatted,
-}
-
-impl Level {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Level::Raw => "raw",
-            Level::Clean => "clean",
-            Level::Formatted => "formatted",
-        }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "raw" => Some(Level::Raw),
-            "clean" => Some(Level::Clean),
-            "formatted" => Some(Level::Formatted),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
@@ -107,7 +80,10 @@ pub struct Dictation {
     pub raw_text: Option<String>,
     pub final_text: Option<String>,
     pub edited_text: Option<String>,
-    pub level: Level,
+    /// Id of the style whose task ran; None when correction was off.
+    pub style: Option<String>,
+    /// Byte offset of the body in `raw_text` when a style keyword was detected.
+    pub body_start: Option<i64>,
     pub transcriber: Option<String>,
     pub corrector: Option<String>,
     pub stt_ms: Option<i64>,
@@ -133,7 +109,10 @@ pub struct NewDictation {
     pub duration_ms: i64,
     pub raw_text: Option<String>,
     pub final_text: Option<String>,
-    pub level: Level,
+    /// Id of the style whose task ran; None when correction was off.
+    pub style: Option<String>,
+    /// Byte offset of the body in `raw_text` when a style keyword was detected.
+    pub body_start: Option<i64>,
     pub transcriber: Option<String>,
     pub corrector: Option<String>,
     pub stt_ms: Option<i64>,
@@ -146,6 +125,10 @@ pub struct NewDictation {
 pub struct TranscriptionUpdate {
     pub raw_text: Option<String>,
     pub final_text: Option<String>,
+    /// Id of the style whose task ran; None when correction was off.
+    pub style: Option<String>,
+    /// Byte offset of the body in `raw_text` when a style keyword was detected.
+    pub body_start: Option<i64>,
     pub transcriber: Option<String>,
     pub corrector: Option<String>,
     pub stt_ms: Option<i64>,
@@ -169,14 +152,6 @@ mod tests {
         }
         let names: std::collections::HashSet<_> = all.iter().map(as_str).collect();
         assert_eq!(names.len(), all.len(), "names are unique");
-    }
-
-    #[test]
-    fn level_roundtrips_and_defaults_to_formatted() {
-        assert_roundtrip(&[Level::Raw, Level::Clean, Level::Formatted], Level::as_str, Level::parse);
-        assert_eq!(Level::parse("Formatted"), None);
-        assert_eq!(Level::parse(""), None);
-        assert_eq!(Level::default(), Level::Formatted);
     }
 
     #[test]
@@ -212,7 +187,8 @@ mod tests {
             raw_text: Some("brut".into()),
             final_text: Some("corrigé".into()),
             edited_text: Some("édité".into()),
-            level: Level::Formatted,
+            style: Some("default".into()),
+            body_start: None,
             transcriber: None,
             corrector: None,
             stt_ms: None,

@@ -10,7 +10,7 @@ import styles from "./History.module.css";
 
 const dictation = (id: number, over: Partial<Dictation> = {}): Dictation => ({
   id, created_at: "2026-10-05T10:00:00Z", mode: "hold", app_name: "Code", audio_path: `a${id}.wav`, duration_ms: 4200,
-  raw_text: `brut ${id}`, final_text: `final ${id}`, edited_text: null, level: "formatted", transcriber: "openai/whisper",
+  raw_text: `brut ${id}`, final_text: `final ${id}`, edited_text: null, style: "default", body_start: null, transcriber: "openai/whisper",
   corrector: "anthropic/claude", stt_ms: 800, llm_ms: 600, outcome: "pasted", error: null, ...over,
 });
 

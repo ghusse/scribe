@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { lang } from "./i18n";
-import { effortLabel, keysHelp, languageOptions, levelOptions } from "./settingsCopy";
+import { effortLabel, keysHelp, languageOptions } from "./settingsCopy";
 
 describe("effortLabel", () => {
   it("translates the known levels and keeps unknown ones", () => {
@@ -10,15 +10,6 @@ describe("effortLabel", () => {
   it("follows the UI language", () => {
     lang.value = "en";
     expect(effortLabel("low")).toBe("Low (fast, recommended)");
-  });
-});
-
-describe("levelOptions", () => {
-  it("covers every level once, labelled in the UI language", () => {
-    expect(levelOptions().map((o) => o.value)).toEqual(["raw", "clean", "formatted"]);
-    expect(levelOptions()[0].label).toBe("Aucune (texte brut)");
-    lang.value = "en";
-    expect(levelOptions()[0].label).toBe("None (raw text)");
   });
 });
 

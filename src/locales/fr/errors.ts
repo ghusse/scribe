@@ -32,6 +32,16 @@ export const errors: typeof En = {
     correctionTimeoutTooLong: "le délai de correction est trop élevé",
     unknownProvider: (role, id) => `fournisseur de ${role} inconnu : ${id}`,
     modelRequired: "choisissez un modèle de transcription et un modèle de correction",
+    defaultStyleMissing: "le style par défaut est obligatoire, et chaque autre style a besoin d'un mot-clé",
+    duplicateStyleId: "deux styles ont le même identifiant",
+    tooManyStyles: (max) => `${max} styles au maximum`,
+    tooManyAliases: (style, max) => `${style} : ${max} autres formes entendues au maximum`,
+    styleNameRequired: (style) => `${style} : donnez un nom au style`,
+    triggerEmpty: (style) => `${style} : un mot-clé ou une forme entendue doit contenir au moins une lettre ou un chiffre`,
+    duplicateTrigger: (trigger, style) =>
+      style ? `${style} : « ${trigger} » est déjà utilisé par un autre style` : `« ${trigger} » est utilisé par deux styles`,
+    taskEmpty: (style) => `${style} : rédigez ses instructions`,
+    taskTooLong: (style, max) => `${style} : instructions de plus de ${max} caractères`,
   },
   app: {
     dictationNotFound: "dictée introuvable",

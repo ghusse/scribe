@@ -1,4 +1,23 @@
-import type { Provider, Settings } from "../src/lib/api";
+import type { PresetView, Provider, Settings, Style, StyleCatalog } from "../src/lib/api";
+
+const builtin = (id: Style["id"], keyword: string | null, aliases: string[] = []): Style => ({
+  id, preset: id as Style["preset"], name: null, keyword, aliases, custom_task: null,
+});
+
+/** `style::catalog()`. */
+export const STYLES: Style[] = [builtin("default", null), builtin("clean", "clean", ["propre"]), builtin("slack", "slack"), builtin("mail", "mail", ["email", "e-mail", "courriel"])];
+
+/** `style_catalog().presets` in French (short tasks). */
+export const PRESETS: PresetView[] = [
+  { preset: "default", name: "Par défaut", task: "- Corrige et mets en forme." },
+  { preset: "clean", name: "Propre", task: "- Corrige seulement." },
+  { preset: "slack", name: "Slack", task: "- Rédige un message Slack." },
+  { preset: "mail", name: "Mail", task: "- Mets en forme d'e-mail." },
+];
+
+export function styleCatalog(over: Partial<StyleCatalog> = {}): StyleCatalog {
+  return { presets: PRESETS, styles: PRESETS.map((p) => ({ id: p.preset, name: p.name })), correction_enabled: true, ...over };
+}
 
 /** Backend defaults (settings.rs) with OpenAI transcription and Anthropic correction. */
 export function settings(over: Partial<Settings> = {}): Settings {
@@ -7,7 +26,9 @@ export function settings(over: Partial<Settings> = {}): Settings {
     trigger_keys: [0xa5],
     lock_vk: 0x20,
     gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
-    level: "formatted",
+    correction_enabled: true,
+    styles: STYLES.map((st) => structuredClone(st)),
+    offered_builtins: STYLES.map((st) => st.id),
     stt_provider: "openai",
     stt_model: "gpt-4o-transcribe",
     llm_provider: "anthropic",

@@ -19,8 +19,9 @@ names you taught it.
   and a toast tells you so.
 - **Quick to trigger.** Hold Right Ctrl (Right Cmd on a Mac) to speak, or double-tap it to dictate hands-free. The
   shortcut can be changed to any combination you like.
-- **Text you don't need to fix.** Three correction levels: raw text, clean-up (punctuation, hesitations,
-  vocabulary), or clean-up + formatting suited to the application (an email is not written like a Slack message).
+- **Text you don't need to fix.** The AI cleans up punctuation, hesitations and vocabulary, and formats the text.
+  Start with a keyword ("Slack, …", "Mail, …") to apply a style: an email is not written like a Slack message.
+  Styles are yours to edit or create.
 - **Your vocabulary.** The Vocabulaire (vocabulary) tab teaches Scribe the names and jargon of your field
   ("Kubernetes", not "cube ernetes").
 - **Nothing gets lost.** The history keeps every dictation; network error? « Retranscrire » runs it again from the
@@ -83,8 +84,8 @@ Scribe lives in the menu bar, with no Dock icon.
 Scribe uses two AI services, with your own keys:
 
 - **Transcription** (voice to text): OpenAI, Mistral or Groq;
-- **Correction** (text to clean text): OpenAI, Anthropic, Mistral or Groq. Optional: the « Aucune (texte brut) »
-  (none, raw text) level skips it.
+- **Correction** (text to clean text): OpenAI, Anthropic, Mistral or Groq. Optional: unchecking « Corriger et mettre
+  en forme avec l'IA » (correct and format with AI) skips it.
 
 One key is enough to get started: OpenAI, Mistral and Groq do both.
 

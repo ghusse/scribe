@@ -1,12 +1,7 @@
 //! The UI language: the user's choice, else the system's (same rule as `pickLanguage` in src/lib/i18n.ts).
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Language {
-    En,
-    Fr,
-}
+pub use scribe_core::lang::Language;
 
 /// The language setting: `System` follows the OS.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,8 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn languages_serialize_as_lowercase_codes() {
-        assert_eq!(serde_json::to_value(Language::Fr).unwrap(), serde_json::json!("fr"));
+    fn language_preferences_serialize_as_lowercase_codes() {
         assert_eq!(serde_json::to_value(LanguagePref::System).unwrap(), serde_json::json!("system"));
         assert_eq!(serde_json::from_str::<LanguagePref>("\"en\"").unwrap(), LanguagePref::En);
     }

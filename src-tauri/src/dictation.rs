@@ -7,7 +7,7 @@ use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::Mode;
 use scribe_core::insert::{self, InsertResult};
 use scribe_core::model::{NewDictation, Outcome, TranscriptionUpdate};
-use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError};
+use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError, StyleInputs};
 use scribe_core::prompt;
 use scribe_core::storage::Db;
 
@@ -102,7 +102,8 @@ pub fn build_record(meta: &RecordMeta, settings: &Settings, delivery: Delivery<'
         duration_ms: meta.duration_ms as i64,
         raw_text: None,
         final_text: None,
-        level: settings.level,
+        style: None,
+        body_start: None,
         transcriber: Some(settings.stt_model.clone()),
         corrector: None,
         stt_ms: None,
@@ -115,8 +116,10 @@ pub fn build_record(meta: &RecordMeta, settings: &Settings, delivery: Delivery<'
         Delivery::Done { out, transcriber, corrector, inserted } => {
             record.raw_text = Some(out.raw.clone());
             record.final_text = Some(out.final_text.clone());
+            record.style = out.style.clone();
+            record.body_start = out.body_start.map(|v| v as i64);
             record.transcriber = Some(transcriber);
-            // Raw level and short dictations never reach the corrector (`pipeline::run`).
+            // Correction off and short dictations never reach the corrector (`pipeline::run`).
             record.corrector = out.llm_ms.and(corrector);
             record.stt_ms = Some(out.stt_ms as i64);
             record.llm_ms = out.llm_ms.map(|v| v as i64);
@@ -171,17 +174,16 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
         audio_path,
         duration_ms: duration,
     };
+    let inputs = StyleInputs {
+        styles: &settings.styles,
+        language: svc.language(),
+        terms: &terms,
+        app_name: meta.app_name.as_deref(),
+    };
     let result = match svc.build_providers(&settings) {
-        Ok((stt, llm)) => pipeline::run(
-            &settings.pipeline_config(),
-            &wav,
-            &terms,
-            meta.app_name.as_deref(),
-            stt.as_ref(),
-            llm.as_ref(),
-        )
-        .await
-        .map(|out| (out, stt.name(), llm.name())),
+        Ok((stt, llm)) => pipeline::run(&settings.pipeline_config(), &wav, &inputs, stt.as_ref(), llm.as_ref())
+            .await
+            .map(|out| (out, stt.name(), llm.name())),
         Err(e) => Err(PipelineError::Transcription(e)),
     };
 
@@ -224,15 +226,13 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), AppError> {
     let path = dictation.audio_path.ok_or(AppError::AudioPurged)?;
     let wav = std::fs::read(&path).map_err(|e| AppError::system(format!("cannot read the audio: {e}")))?;
     let (stt, llm) = svc.build_providers(&settings)?;
-    let out = pipeline::run(
-        &settings.pipeline_config(),
-        &wav,
-        &terms,
-        dictation.app_name.as_deref(),
-        stt.as_ref(),
-        llm.as_ref(),
-    )
-    .await?;
+    let inputs = StyleInputs {
+        styles: &settings.styles,
+        language: svc.language(),
+        terms: &terms,
+        app_name: dictation.app_name.as_deref(),
+    };
+    let out = pipeline::run(&settings.pipeline_config(), &wav, &inputs, stt.as_ref(), llm.as_ref()).await?;
     // A failed dictation was never delivered: hand the new text over through the clipboard, and
     // only record « Clipboard » when that copy actually happened.
     let outcome = if dictation.outcome == Outcome::Error {
@@ -249,6 +249,8 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), AppError> {
     let update = TranscriptionUpdate {
         raw_text: Some(out.raw),
         final_text: Some(out.final_text),
+        style: out.style,
+        body_start: out.body_start.map(|v| v as i64),
         transcriber: Some(stt.name()),
         corrector: out.llm_ms.and_then(|_| llm.name()),
         stt_ms: Some(out.stt_ms as i64),

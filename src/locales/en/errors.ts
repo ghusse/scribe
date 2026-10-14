@@ -32,6 +32,16 @@ export const errors = {
     correctionTimeoutTooLong: "the correction delay is too long",
     unknownProvider: (role: ProviderRole, id: string) => `unknown ${role} provider: ${id}`,
     modelRequired: "choose a transcription model and a correction model",
+    defaultStyleMissing: "the default style is required, and every other style needs a keyword",
+    duplicateStyleId: "two styles have the same id",
+    tooManyStyles: (max: number) => `at most ${max} styles`,
+    tooManyAliases: (style: string, max: number) => `${style}: at most ${max} other spoken forms`,
+    styleNameRequired: (style: string) => `${style}: give the style a name`,
+    triggerEmpty: (style: string) => `${style}: a keyword or spoken form needs at least one letter or digit`,
+    duplicateTrigger: (trigger: string, style: string | null) =>
+      style ? `${style}: "${trigger}" is already used by another style` : `"${trigger}" is used by two styles`,
+    taskEmpty: (style: string) => `${style}: write its instructions`,
+    taskTooLong: (style: string, max: number) => `${style}: instructions longer than ${max} characters`,
   },
   app: {
     dictationNotFound: "dictation not found",

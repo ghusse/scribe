@@ -61,6 +61,13 @@ pub trait OverlayWindow: Send + Sync {
     fn hide(&self);
 }
 
+/// A style as the overlay and the style pickers show it: its id and its name in the UI language.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct StyleBadge {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Idle,

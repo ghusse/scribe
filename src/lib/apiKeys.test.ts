@@ -5,12 +5,12 @@ import { canSaveKey, keyPlaceholder, keyState, keyStateLabel, keyUsage, listPart
 
 const p = (id: string, label: string): Provider => ({ id, label, base_url: "", stt_models: [], llm_api: null, llm_models: [] });
 const providers = [p("openai", "OpenAI"), p("anthropic", "Anthropic"), p("mistral", "Mistral")];
-const s = { stt_provider: "openai", llm_provider: "anthropic", level: "formatted" as const };
+const s = { stt_provider: "openai", llm_provider: "anthropic", correction_enabled: true };
 
 describe("keyUsage", () => {
-  it("needs the transcription key always and the correction key unless raw", () => {
+  it("needs the transcription key always and the correction key when correction is on", () => {
     expect(keyUsage(s)).toEqual({ openai: ["transcription"], anthropic: ["correction"] });
-    expect(keyUsage({ ...s, level: "raw" })).toEqual({ openai: ["transcription"] });
+    expect(keyUsage({ ...s, correction_enabled: false })).toEqual({ openai: ["transcription"] });
   });
   it("merges the roles of a provider used for both", () => {
     expect(keyUsage({ ...s, llm_provider: "openai" })).toEqual({ openai: ["transcription", "correction"] });
@@ -24,7 +24,7 @@ describe("missingKeys / keyState", () => {
       { provider: "anthropic", roles: ["correction"] },
     ]);
     expect(missingKeys(s, { openai: true, anthropic: false })).toEqual([{ provider: "anthropic", roles: ["correction"] }]);
-    expect(missingKeys({ ...s, level: "raw" }, { openai: true })).toEqual([]);
+    expect(missingKeys({ ...s, correction_enabled: false }, { openai: true })).toEqual([]);
   });
   it("classifies each provider", () => {
     const st = { openai: true, anthropic: false, mistral: false };
@@ -86,17 +86,17 @@ describe("lists", () => {
 
 describe("splitProviders", () => {
   it("puts the providers in use first, in usage order", () => {
-    const r = splitProviders(providers, keyUsage({ stt_provider: "mistral", llm_provider: "openai", level: "clean" }));
+    const r = splitProviders(providers, keyUsage({ stt_provider: "mistral", llm_provider: "openai", correction_enabled: true }));
     expect(r.used.map((x) => x.id)).toEqual(["mistral", "openai"]);
     expect(r.others.map((x) => x.id)).toEqual(["anthropic"]);
   });
   it("counts a provider used for both once", () => {
-    const r = splitProviders(providers, keyUsage({ stt_provider: "openai", llm_provider: "openai", level: "clean" }));
+    const r = splitProviders(providers, keyUsage({ stt_provider: "openai", llm_provider: "openai", correction_enabled: true }));
     expect(r.used.map((x) => x.id)).toEqual(["openai"]);
     expect(r.others.map((x) => x.id)).toEqual(["anthropic", "mistral"]);
   });
-  it("drops the correction provider in raw mode", () => {
-    expect(splitProviders(providers, keyUsage({ ...s, level: "raw" })).used.map((x) => x.id)).toEqual(["openai"]);
+  it("drops the correction provider when correction is off", () => {
+    expect(splitProviders(providers, keyUsage({ ...s, correction_enabled: false })).used.map((x) => x.id)).toEqual(["openai"]);
   });
 });
 
@@ -121,22 +121,22 @@ describe("setup banner and warnings", () => {
 
 // Same cases as needs_setup_follows_the_key_usage_rule in src-tauri/src/bootstrap.rs: the two rules must not diverge.
 describe("needsSetup (parity with bootstrap::needs_setup)", () => {
-  const settings = (stt: string, llm: string, level: "raw" | "clean" | "formatted") => ({ stt_provider: stt, llm_provider: llm, level });
+  const settings = (stt: string, llm: string, correction_enabled: boolean) => ({ stt_provider: stt, llm_provider: llm, correction_enabled });
   const keys = (stored: string[]) => Object.fromEntries(stored.map((k) => [k, true]));
   const cases: [string, ReturnType<typeof settings>, string[], boolean][] = [
-    ["no key at all", settings("openai", "anthropic", "formatted"), [], true],
-    ["correction key missing", settings("openai", "anthropic", "formatted"), ["openai"], true],
-    ["transcription key missing", settings("openai", "anthropic", "formatted"), ["anthropic"], true],
-    ["both stored", settings("openai", "anthropic", "formatted"), ["openai", "anthropic"], false],
-    ["raw: no correction key needed", settings("openai", "anthropic", "raw"), ["openai"], false],
-    ["raw: transcription key still needed", settings("openai", "anthropic", "raw"), ["anthropic"], true],
-    ["one provider for both roles", settings("openai", "openai", "formatted"), ["openai"], false],
+    ["no key at all", settings("openai", "anthropic", true), [], true],
+    ["correction key missing", settings("openai", "anthropic", true), ["openai"], true],
+    ["transcription key missing", settings("openai", "anthropic", true), ["anthropic"], true],
+    ["both stored", settings("openai", "anthropic", true), ["openai", "anthropic"], false],
+    ["correction off: no correction key needed", settings("openai", "anthropic", false), ["openai"], false],
+    ["correction off: transcription key still needed", settings("openai", "anthropic", false), ["anthropic"], true],
+    ["one provider for both roles", settings("openai", "openai", true), ["openai"], false],
   ];
   it.each(cases)("%s", (_name, st, stored, expected) => {
     expect(needsSetup(st, keys(stored))).toBe(expected);
   });
 
   it("a key marked false is not stored", () => {
-    expect(needsSetup(settings("openai", "openai", "clean"), { openai: false })).toBe(true);
+    expect(needsSetup(settings("openai", "openai", true), { openai: false })).toBe(true);
   });
 });

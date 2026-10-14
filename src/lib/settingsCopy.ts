@@ -1,17 +1,10 @@
-import type { Language, LanguagePref, Level } from "./api";
+import type { Language, LanguagePref } from "./api";
 import { t } from "./i18n";
 import { OS, type Os } from "./platform";
 
 /** « Réflexion du modèle » choices; the values sent to the backend stay low / medium / high. */
 export function effortLabel(effort: string): string {
   return (t.value.settings.models.efforts as Record<string, string>)[effort] ?? effort;
-}
-
-const LEVELS: Level[] = ["raw", "clean", "formatted"];
-
-/** « Niveau de correction » choices, in display order. */
-export function levelOptions(): { value: Level; label: string }[] {
-  return LEVELS.map((value) => ({ value, label: t.value.settings.correction.levels[value] }));
 }
 
 /** Each language in its own name, whatever the UI language. */

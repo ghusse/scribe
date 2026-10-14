@@ -4,7 +4,7 @@ use std::path::Path;
 use turso::params::IntoParams;
 use turso::{Builder, Connection, Database, Row};
 
-use crate::model::{Dictation, Level, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
+use crate::model::{Dictation, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -72,8 +72,14 @@ CREATE TABLE bench_runs (
 /// v2: the history search matches `search_text`, filled in Rust (see [`search_text`]).
 const SCHEMA_V2: &str = "ALTER TABLE dictations ADD COLUMN search_text TEXT NOT NULL DEFAULT '';";
 
+/// v3: the correction level becomes the style that ran (`raw` → none, `formatted` → the default style).
+const SCHEMA_V3: &str = "ALTER TABLE dictations ADD COLUMN style TEXT;
+ALTER TABLE dictations ADD COLUMN body_start INTEGER;
+UPDATE dictations SET style = CASE level WHEN 'clean' THEN 'clean' WHEN 'formatted' THEN 'default' END;
+ALTER TABLE dictations DROP COLUMN level;";
+
 const DICTATION_COLS: &str = "id, created_at, mode, app_name, audio_path, duration_ms, raw_text, final_text, \
-     edited_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error";
+     edited_text, style, transcriber, corrector, stt_ms, llm_ms, outcome, error, body_start";
 
 /// Turso's API is async but its local I/O completes without a runtime: the storage stays synchronous
 /// for its callers (behind `Mutex<Db>`) by driving each call to completion here.
@@ -94,7 +100,6 @@ pub struct Db {
 }
 
 fn row_to_dictation(r: &Row) -> turso::Result<Dictation> {
-    let level: String = r.get(9)?;
     let outcome: String = r.get(14)?;
     Ok(Dictation {
         id: r.get(0)?,
@@ -106,7 +111,8 @@ fn row_to_dictation(r: &Row) -> turso::Result<Dictation> {
         raw_text: r.get(6)?,
         final_text: r.get(7)?,
         edited_text: r.get(8)?,
-        level: Level::parse(&level).unwrap_or(Level::Raw),
+        style: r.get(9)?,
+        body_start: r.get(16)?,
         transcriber: r.get(10)?,
         corrector: r.get(11)?,
         stt_ms: r.get(12)?,
@@ -251,6 +257,12 @@ impl Db {
                 Ok(conn.execute_batch("PRAGMA user_version = 2;").await?)
             }))?;
         }
+        if version < 3 {
+            block(transaction(conn, async {
+                conn.execute_batch(SCHEMA_V3).await?;
+                Ok(conn.execute_batch("PRAGMA user_version = 3;").await?)
+            }))?;
+        }
         Ok(())
     }
 
@@ -258,9 +270,10 @@ impl Db {
         let search = search_text(d.raw_text.as_deref(), d.final_text.as_deref(), None);
         self.execute(
             "INSERT INTO dictations (created_at, mode, app_name, app_bundle_id, audio_path, duration_ms, raw_text, \
-             final_text, level, transcriber, corrector, stt_ms, llm_ms, outcome, error, search_text) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-            (
+             final_text, style, body_start, transcriber, corrector, stt_ms, llm_ms, outcome, error, search_text) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            // More than the 16 values a tuple of params can hold.
+            turso::params![
                 d.created_at.as_str(),
                 d.mode.as_str(),
                 d.app_name.clone(),
@@ -269,7 +282,8 @@ impl Db {
                 d.duration_ms,
                 d.raw_text.clone(),
                 d.final_text.clone(),
-                d.level.as_str(),
+                d.style.clone(),
+                d.body_start,
                 d.transcriber.clone(),
                 d.corrector.clone(),
                 d.stt_ms,
@@ -277,7 +291,7 @@ impl Db {
                 d.outcome.as_str(),
                 d.error.clone(),
                 search,
-            ),
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -320,10 +334,21 @@ impl Db {
         let search = search_text(u.raw_text.as_deref(), u.final_text.as_deref(), None);
         self.execute(
             "UPDATE dictations SET raw_text = ?2, final_text = ?3, edited_text = NULL, transcriber = ?4, corrector = ?5, \
-             stt_ms = ?6, llm_ms = ?7, outcome = ?8, error = ?9, search_text = ?10 WHERE id = ?1",
+             stt_ms = ?6, llm_ms = ?7, outcome = ?8, error = ?9, search_text = ?10, style = ?11, body_start = ?12 \
+             WHERE id = ?1",
             (
-                id, u.raw_text.clone(), u.final_text.clone(), u.transcriber.clone(), u.corrector.clone(), u.stt_ms,
-                u.llm_ms, u.outcome.as_str(), u.error.clone(), search,
+                id,
+                u.raw_text.clone(),
+                u.final_text.clone(),
+                u.transcriber.clone(),
+                u.corrector.clone(),
+                u.stt_ms,
+                u.llm_ms,
+                u.outcome.as_str(),
+                u.error.clone(),
+                search,
+                u.style.clone(),
+                u.body_start,
             ),
         )?;
         Ok(())
@@ -440,7 +465,8 @@ mod tests {
             duration_ms: 1200,
             raw_text: Some(format!("{final_text} brut")),
             final_text: Some(final_text.into()),
-            level: Level::Formatted,
+            style: Some("default".into()),
+            body_start: None,
             transcriber: Some("gpt-4o-transcribe".into()),
             corrector: Some("claude-opus-5-5".into()),
             stt_ms: Some(800),
@@ -509,6 +535,8 @@ mod tests {
             &TranscriptionUpdate {
                 raw_text: Some("Été brut".into()),
                 final_text: Some("Été".into()),
+                style: None,
+                body_start: None,
                 transcriber: None,
                 corrector: None,
                 stt_ms: None,
@@ -535,7 +563,7 @@ mod tests {
         std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/v1-rusqlite.db"), &path).unwrap();
         for _ in 0..2 {
             let db = Db::open(&path).unwrap();
-            assert_eq!(db.first("PRAGMA user_version", (), |r| r.get::<i64>(0)).unwrap(), Some(2));
+            assert_eq!(db.first("PRAGMA user_version", (), |r| r.get::<i64>(0)).unwrap(), Some(3));
             let all = db.list_dictations(None, 10, 0).unwrap();
             assert_eq!(all.len(), 1);
             assert_eq!(
@@ -551,6 +579,73 @@ mod tests {
                 ("Kubernetes", vec!["cube ernetes".to_string()])
             );
         }
+    }
+
+    fn columns(path: &Path) -> Vec<String> {
+        block(async {
+            let db = Builder::new_local(path.to_str().unwrap()).build().await.unwrap();
+            let conn = db.connect().unwrap();
+            all(&conn, "SELECT name FROM pragma_table_info('dictations')", (), |r| r.get::<String>(0)).await.unwrap()
+        })
+    }
+
+    #[test]
+    fn v2_levels_become_styles_and_the_level_column_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scribe.db");
+        let mut v2 = String::from(SCHEMA_V1);
+        v2.push_str(SCHEMA_V2);
+        for (level, text) in [("raw", "brut"), ("clean", "propre"), ("formatted", "formaté")] {
+            v2.push_str(&format!(
+                "INSERT INTO dictations (created_at, mode, duration_ms, raw_text, final_text, level, outcome, \
+                 search_text) VALUES ('2026-10-05T10:00:00.000Z', 'hold', 1000, '{text} r', '{text}', '{level}', \
+                 'pasted', '{text}');"
+            ));
+        }
+        v2.push_str("PRAGMA user_version = 2;");
+        raw_sql(&path, &v2);
+        assert!(columns(&path).contains(&"level".to_string()));
+
+        for _ in 0..2 {
+            let db = Db::open(&path).unwrap();
+            assert_eq!(db.first("PRAGMA user_version", (), |r| r.get::<i64>(0)).unwrap(), Some(3));
+            let rows: Vec<_> = db
+                .list_dictations(None, 10, 0)
+                .unwrap()
+                .into_iter()
+                .rev()
+                .map(|d| (d.final_text.unwrap(), d.raw_text.unwrap(), d.style, d.body_start, d.outcome))
+                .collect();
+            assert_eq!(
+                rows,
+                [
+                    ("brut".into(), "brut r".into(), None, None, Outcome::Pasted),
+                    ("propre".into(), "propre r".into(), Some("clean".into()), None, Outcome::Pasted),
+                    ("formaté".into(), "formaté r".into(), Some("default".into()), None, Outcome::Pasted),
+                ]
+            );
+            assert_eq!(db.list_dictations(Some("formaté"), 10, 0).unwrap().len(), 1, "search_text kept");
+        }
+        let cols = columns(&path);
+        assert!(!cols.contains(&"level".to_string()));
+        assert!(cols.contains(&"style".to_string()) && cols.contains(&"body_start".to_string()));
+    }
+
+    #[test]
+    fn style_and_body_start_round_trip() {
+        let db = Db::open_in_memory().unwrap();
+        let mut nd = new_dictation("2026-10-05T10:00:00.000Z", "Salut", None);
+        nd.raw_text = Some("Slack, salut".into());
+        nd.style = Some("slack".into());
+        nd.body_start = Some(7);
+        let id = db.insert_dictation(&nd).unwrap();
+        let d = db.get_dictation(id).unwrap().unwrap();
+        assert_eq!((d.style.as_deref(), d.body_start), (Some("slack"), Some(7)));
+        nd.style = None;
+        nd.body_start = None;
+        let id = db.insert_dictation(&nd).unwrap();
+        let d = db.get_dictation(id).unwrap().unwrap();
+        assert_eq!((d.style, d.body_start), (None, None));
     }
 
     #[test]
@@ -613,6 +708,8 @@ mod tests {
             &TranscriptionUpdate {
                 raw_text: Some("brut".into()),
                 final_text: Some("X".into()),
+                style: None,
+                body_start: None,
                 transcriber: None,
                 corrector: None,
                 stt_ms: None,
@@ -653,6 +750,8 @@ mod tests {
             &TranscriptionUpdate {
                 raw_text: Some("brut".into()),
                 final_text: Some("Final.".into()),
+                style: Some("slack".into()),
+                body_start: Some(7),
                 transcriber: Some("t".into()),
                 corrector: Some("c".into()),
                 stt_ms: Some(1),
@@ -664,6 +763,7 @@ mod tests {
         .unwrap();
         let d = db.get_dictation(id).unwrap().unwrap();
         assert_eq!((d.final_text.as_deref(), d.outcome, d.error), (Some("Final."), Outcome::Clipboard, None));
+        assert_eq!((d.style.as_deref(), d.body_start), (Some("slack"), Some(7)));
     }
 
     #[test]

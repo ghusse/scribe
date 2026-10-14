@@ -4,7 +4,7 @@ import type { Settings as SettingsT } from "../lib/api";
 import type { SaveState } from "../lib/autosave";
 import { lang, t } from "../lib/i18n";
 import { calls, commands, invoke, resetTauri } from "../../tests/tauri";
-import { PROVIDERS, settings } from "../../tests/fixtures";
+import { PRESETS, PROVIDERS, settings, styleCatalog } from "../../tests/fixtures";
 import { advanceTimers } from "../../tests/timers";
 import Settings from "./Settings";
 import styles from "./Settings.module.css";
@@ -29,6 +29,7 @@ beforeEach(() => {
     capture_key: () => null,
     cancel_capture: () => undefined,
     get_autostart: () => false,
+    style_catalog: () => styleCatalog(),
   });
 });
 
@@ -36,7 +37,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-type Pane = "Général" | "Dictée" | "Modèles" | "Avancé";
+type Pane = "Général" | "Dictée" | "Styles" | "Modèles" | "Avancé";
 
 /** The settings navigation (one button per category). */
 const nav = () => screen.getByRole("navigation", { name: t.value.settings.nav.label });
@@ -190,13 +191,13 @@ describe("Settings: autosave", () => {
     await setup();
     await fireEvent.click(screen.getByLabelText(/Double-tap/));
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
-    await fireEvent.change(select(/Niveau de correction/), { target: { value: "clean" } });
+    await fireEvent.click(screen.getByLabelText(/Corriger et mettre en forme/));
     await advanceTimers(600); // the debounce fires while the first save is in flight
     expect(saves()).toHaveLength(1);
     commands({ save_settings: () => undefined });
     finish();
     await waitFor(() => expect(saves()).toHaveLength(2));
-    expect(lastSave().level).toBe("clean");
+    expect(lastSave().correction_enabled).toBe(false);
     expect(lastSave().gesture.double_tap_enabled).toBe(false);
   });
 
@@ -255,13 +256,13 @@ describe("Settings: providers and models", () => {
     expect(lastSave().llm_effort).toBe("high");
   });
 
-  it("raw level: correction disabled, its key not required, the test is transcription only", async () => {
+  it("correction off: its fields disabled, its key not required, the test is transcription only", async () => {
     stored = { openai: true };
     await setup("Modèles");
     expect(screen.getByRole("note").textContent).toMatch(/Anthropic.*\(correction\)/);
-    await fireEvent.change(select(/Niveau de correction/), { target: { value: "raw" } });
-    expect(screen.getByText("Correction désactivée en mode brut")).toBeTruthy();
-    expect((document.querySelector("fieldset") as HTMLFieldSetElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByLabelText(/Corriger et mettre en forme/));
+    expect(screen.getByText("Correction désactivée (réglages de Dictée)")).toBeTruthy();
+    expect((document.querySelector(`fieldset.${styles.fieldset}`) as HTMLFieldSetElement).disabled).toBe(true);
     expect(screen.queryByRole("note")).toBeNull();
     expect(screen.queryByText(/Aucune clé Anthropic/)).toBeNull();
     expect(screen.getByRole("button", { name: "Tester la transcription" })).toBeTruthy();
@@ -411,11 +412,11 @@ describe("Settings: provider test", () => {
     expect(document.querySelectorAll(`.${styles.testResult} p.${styles.ok}, .${styles.testResult} p.${styles.fail}`)).toHaveLength(2);
   });
 
-  it("a raw-level test says correction is not used", async () => {
-    commands({ get_settings: () => settings({ level: "raw" }), test_providers: () => ({ stt: { Ok: 10 }, llm: null }) });
+  it("with correction off, the test says correction is not used", async () => {
+    commands({ get_settings: () => settings({ correction_enabled: false }), test_providers: () => ({ stt: { Ok: 10 }, llm: null }) });
     await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: "Tester la transcription" }));
-    expect(await screen.findByText(/non utilisée \(niveau brut\)/)).toBeTruthy();
+    expect(await screen.findByText(/non utilisée \(correction désactivée\)/)).toBeTruthy();
   });
 
   it("saves pending edits before testing", async () => {
@@ -465,7 +466,7 @@ describe("Settings: provider test", () => {
     await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     await screen.findByText(/✓ fonctionne \(412 ms\)/);
-    await fireEvent.change(select(/Niveau de correction/), { target: { value: "clean" } });
+    await fireEvent.click(screen.getByLabelText(/Corriger et mettre en forme/));
     expect(screen.queryByText(/✓ fonctionne/)).toBeNull();
   });
 
@@ -778,7 +779,7 @@ describe("Settings: language", () => {
     stored = { openai: true };
     render(<Settings />);
     expect(await screen.findByRole("heading", { name: "Models" })).toBeTruthy();
-    expect(within(nav()).getAllByRole("button").map((b) => b.textContent)).toEqual(["General", "Dictation", "Models", "Advanced"]);
+    expect(within(nav()).getAllByRole("button").map((b) => b.textContent)).toEqual(["General", "Dictation", "Styles", "Models", "Advanced"]);
     expect(within(nav()).getByRole("img", { name: "(needs attention)" })).toBeTruthy();
     expect(screen.getByRole("note").textContent!.replace(/\s+/g, " ")).toBe("To get started, add an API key for Anthropic (correction).");
     expect(screen.getByText("⚠ No Anthropic key: correction will fail.")).toBeTruthy();
@@ -821,5 +822,43 @@ describe("Settings: command errors", () => {
     await fireEvent.input(screen.getByLabelText("Clé OpenAI"), { target: { value: "sk" } });
     await fireEvent.submit(keyForm("OpenAI"));
     expect(await within(keyForm("OpenAI")).findByText("coffre indisponible")).toBeTruthy();
+  });
+});
+
+describe("Settings: styles", () => {
+  const card = (name: string) => screen.getByRole("region", { name });
+
+  it("autosaves a style edit with the other settings", async () => {
+    await setup("Styles");
+    await fireEvent.change(within(card("Slack")).getByLabelText("Mot-clé"), { target: { value: "message" } });
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+    expect(lastSave().styles[2].keyword).toBe("message");
+    expect(lastSave().offered_builtins).toEqual(["default", "clean", "slack", "mail"]);
+  });
+
+  it("a refused save names the style it is about", async () => {
+    commands({ save_settings: () => Promise.reject({ code: "invalid_settings", error: { code: "duplicate_trigger", trigger: "slack" } }) });
+    await setup("Styles");
+    await fireEvent.click(screen.getByRole("button", { name: "Ajouter un style" }));
+    const added = screen.getAllByRole("region").at(-1)!;
+    await fireEvent.change(within(added).getByLabelText("Nom"), { target: { value: "Équipe" } });
+    await fireEvent.change(within(added).getByLabelText("Mot-clé"), { target: { value: "slack" } });
+    await waitFor(() => expect(alertText()).toContain("Équipe : « slack » est déjà utilisé par un autre style"), SAVE_WAIT);
+  });
+
+  it("fetches the presets again when the UI language changes", async () => {
+    await setup("Styles");
+    await waitFor(() => expect(calls("style_catalog")).toHaveLength(1));
+    commands({ style_catalog: () => styleCatalog({ presets: PRESETS.map((p) => ({ ...p, name: `${p.name} (en)` })) }) });
+    lang.value = "en";
+    expect(await screen.findByRole("heading", { name: "Slack (en)" })).toBeTruthy();
+    expect(calls("style_catalog")).toHaveLength(2);
+  });
+
+  it("works without the catalog", async () => {
+    commands({ style_catalog: () => Promise.reject("down") });
+    await setup("Styles");
+    await waitFor(() => expect(calls("style_catalog")).toHaveLength(1));
+    expect(within(card("slack")).getByLabelText("Mot-clé")).toBeTruthy();
   });
 });

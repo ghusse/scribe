@@ -80,6 +80,8 @@ pub trait LaunchAtLogin: Send + Sync {
 pub type Providers = (Box<dyn Transcriber>, Box<dyn Corrector>);
 /// Builds the transcriber and corrector for the current settings (`providers::build` in the app).
 pub type ProviderFactory = Box<dyn Fn(&Settings, &dyn SecretStore) -> Result<Providers, ProviderError> + Send + Sync>;
+/// Builds the corrector alone, without reading the transcription key (`providers::build_corrector` in the app).
+pub type CorrectorFactory = Box<dyn Fn(&Settings, &dyn SecretStore) -> Box<dyn Corrector> + Send + Sync>;
 /// Opens the connections to the providers of these settings without waiting (`providers::warm_up` in the app).
 pub type WarmUp = Box<dyn Fn(&Settings) + Send + Sync>;
 
@@ -100,6 +102,7 @@ pub struct Services {
     pub audio_mute: AudioMute,
     pub secrets: Arc<dyn SecretStore>,
     pub providers: ProviderFactory,
+    pub corrector: CorrectorFactory,
     /// Called when a recording starts, so the requests sent once it stops find their connections open.
     pub warm_up: WarmUp,
     pub overlay: Overlay,
@@ -116,6 +119,10 @@ pub struct Services {
 impl Services {
     pub fn build_providers(&self, settings: &Settings) -> Result<Providers, ProviderError> {
         (self.providers)(settings, self.secrets.as_ref())
+    }
+
+    pub fn build_corrector(&self, settings: &Settings) -> Box<dyn Corrector> {
+        (self.corrector)(settings, self.secrets.as_ref())
     }
 
     /// The language the UI must use: the saved choice, else the system's.

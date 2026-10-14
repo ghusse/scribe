@@ -10,7 +10,8 @@ beforeEach(() => {
 
 describe("api", () => {
   // Command names and argument names must match the #[tauri::command] signatures in src-tauri.
-  const settings = { level: "raw" } as Settings;
+  const settings = { correction_enabled: false } as Settings;
+  const request = { name: "Slack", keyword: "slack", draft: "- court", instructions: "plus court" };
   const table: [string, () => Promise<unknown>, string, Record<string, unknown> | undefined][] = [
     ["listDictations defaults", () => api.listDictations(null), "list_dictations", { query: null, limit: 50, offset: 0 }],
     ["listDictations page", () => api.listDictations("abc", 10, 20), "list_dictations", { query: "abc", limit: 10, offset: 20 }],
@@ -38,6 +39,9 @@ describe("api", () => {
     ["requestPermission", () => api.requestPermission("microphone"), "request_permission", { permission: "microphone" }],
     ["openPermissionSettings", () => api.openPermissionSettings("accessibility"), "open_permission_settings", { permission: "accessibility" }],
     ["language", () => api.language(), "language", undefined],
+    ["styleCatalog", () => api.styleCatalog(), "style_catalog", undefined],
+    ["restoreBuiltinStyles", () => api.restoreBuiltinStyles([]), "restore_builtin_styles", { styles: [] }],
+    ["improveStyle", () => api.improveStyle(request), "improve_style", { request }],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
   ];

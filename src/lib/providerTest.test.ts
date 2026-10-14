@@ -16,8 +16,8 @@ describe("testLine", () => {
       raw: "HTTP 400: bad model",
     });
   });
-  it("marks the correction unused in raw mode", () => {
-    expect(testLine("Correction", "Anthropic", "x", null)).toEqual({ ok: true, title: "Correction", text: "— non utilisée (niveau brut)", raw: null });
+  it("marks the correction unused when it is off", () => {
+    expect(testLine("Correction", "Anthropic", "x", null)).toEqual({ ok: true, title: "Correction", text: "— non utilisée (correction désactivée)", raw: null });
   });
   it("follows the UI language", () => {
     lang.value = "en";

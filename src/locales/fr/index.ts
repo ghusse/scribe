@@ -6,5 +6,6 @@ import { history } from "./history";
 import { overlay } from "./overlay";
 import { permissions } from "./permissions";
 import { settings } from "./settings";
+import { styles } from "./styles";
 
-export const fr: Messages = { app, errors, glossary, history, overlay, permissions, settings };
+export const fr: Messages = { app, errors, glossary, history, overlay, permissions, settings, styles };

@@ -23,10 +23,10 @@ describe("needsAttention", () => {
 });
 
 describe("testSignature", () => {
-  const base = { stt_provider: "openai", stt_model: "m", llm_provider: "anthropic", llm_model: "c", llm_effort: "low", level: "clean" as const };
+  const base = { stt_provider: "openai", stt_model: "m", llm_provider: "anthropic", llm_model: "c", llm_effort: "low", correction_enabled: true };
   it("changes with anything the provider test depends on", () => {
     for (const k of Object.keys(base) as (keyof typeof base)[]) {
-      expect(testSignature({ ...base, [k]: k === "level" ? "raw" : "x" })).not.toBe(testSignature(base));
+      expect(testSignature({ ...base, [k]: k === "correction_enabled" ? false : "x" })).not.toBe(testSignature(base));
     }
   });
   it("ignores unrelated settings", () => {
