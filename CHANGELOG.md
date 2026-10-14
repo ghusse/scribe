@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0](https://github.com/ghusse/scribe/compare/v0.4.2...v0.5.0) (2026-10-14)
+
+### Features
+
+* English UI with language choice, reorganised settings ([#25](https://github.com/ghusse/scribe/issues/25)) ([6de60d7](https://github.com/ghusse/scribe/commit/6de60d71bdfc7fcffff4c6f26433ca255f1e73b7))
+
 ## [0.4.2](https://github.com/ghusse/scribe/compare/v0.4.1...v0.4.2) (2026-10-14)
 
 ### Corrections
