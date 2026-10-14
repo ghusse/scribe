@@ -112,6 +112,10 @@ pub fn show_overlay(_raw_hwnd: isize) {}
 
 pub fn hide_overlay(_raw_hwnd: isize) {}
 
+pub fn on_overlay_pointer(_f: Box<dyn Fn(crate::overlay_pointer::PointerState) + Send + Sync>) {}
+
+pub fn set_overlay_hit_areas(_areas: crate::overlay_pointer::OverlayAreas) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +175,7 @@ mod tests {
         prepare_overlay(1);
         show_overlay(1);
         hide_overlay(1);
+        on_overlay_pointer(Box::new(|_| {}));
+        set_overlay_hit_areas(crate::overlay_pointer::OverlayAreas::default());
     }
 }

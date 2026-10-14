@@ -3,6 +3,7 @@
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .nav button { border: 0; background: transparent; text-align: left; padding: 6px 10px; font-size: 14px; white-space: nowrap; }
 .nav button[aria-current="page"] { background: color-mix(in srgb, var(--accent) 14%, var(--card)); font-weight: 600; }
+.nav button:hover:not([aria-current="page"]) { background: color-mix(in srgb, var(--text) 7%, transparent); }
 .dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: middle; }
 /* Rows follow the pane width, not the window's: the side navigation takes part of it. */
 .pane { container-type: inline-size; }

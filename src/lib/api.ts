@@ -190,6 +190,8 @@ export type AppError =
 
 /** What a toast says; mirror of `overlay::Notice`. `correction`: why the text was not corrected. */
 export type Notice =
+  /** Clean paste of a dictation with a keyword style: hosts its badge. */
+  | { code: "pasted" }
   | { code: "pasted_without_correction"; correction: ProviderError }
   | { code: "pasted_uncertain"; correction: ProviderError | null }
   | { code: "copied"; correction: ProviderError | null }
@@ -208,11 +210,19 @@ export type Notice =
 export type RecordingWarning = "shared_microphone";
 
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
+/** `style`: the keyword style of the dictation, when one was detected (never the default style). */
 export type OverlayEvent =
   | { kind: "idle" }
-  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null }
-  | { kind: "processing" }
-  | { kind: "toast"; level: ToastLevel; message: Notice; preview: string | null; dictation_id: number | null };
+  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null; style: StyleBadge | null }
+  | { kind: "processing"; style: StyleBadge | null }
+  | {
+      kind: "toast";
+      level: ToastLevel;
+      message: Notice;
+      preview: string | null;
+      dictation_id: number | null;
+      style: StyleBadge | null;
+    };
 
 type Result<T> = { Ok: T } | { Err: ProviderError };
 /** Each call's duration in ms or its error; `llm` is null when correction is off (not tested). */
@@ -227,6 +237,12 @@ export type Permission = "accessibility" | "microphone";
 export type PermissionState = "granted" | "not_determined" | "denied";
 /** An OS permission (macOS privacy settings); Windows reports none. */
 export interface PermissionStatus { permission: Permission; state: PermissionState }
+
+/** An area of the overlay: `[x, y, width, height]` in CSS pixels. */
+export type HitArea = [number, number, number, number];
+
+/** The overlay's visible surface (null while idle: the window is transparent) and its buttons, in DOM order. */
+export interface OverlayAreas { surface: HitArea | null; buttons: HitArea[] }
 
 export const api = {
   listDictations: (query: string | null, limit = 50, offset = 0) =>
@@ -269,4 +285,5 @@ export const api = {
   improveStyle: (request: ImproveRequest) => invoke<string>("improve_style", { request }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
+  overlayHitAreas: (areas: OverlayAreas) => invoke<void>("overlay_hit_areas", { ...areas }),
 };

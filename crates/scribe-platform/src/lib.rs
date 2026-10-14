@@ -15,6 +15,7 @@ pub mod mac_keys;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod output_mute;
+pub mod overlay_pointer;
 pub mod wasapi_rules;
 #[cfg(windows)]
 mod windows;
@@ -69,16 +70,19 @@ pub type KeyCallback = Box<dyn Fn(HookEvent) + Send + Sync>;
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub use fallback::{
-    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions,
-    prepare_overlay, show_overlay, start_keyboard_hook, system_mute, HookHandle,
+    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender,
+    on_overlay_pointer, permissions, prepare_overlay, set_overlay_hit_areas, show_overlay, start_keyboard_hook,
+    system_mute, HookHandle,
 };
 #[cfg(target_os = "macos")]
 pub use macos::{
-    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions,
-    prepare_overlay, show_overlay, start_keyboard_hook, system_mute, HookHandle,
+    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender,
+    on_overlay_pointer, permissions, prepare_overlay, set_overlay_hit_areas, show_overlay, start_keyboard_hook,
+    system_mute, HookHandle,
 };
 #[cfg(windows)]
 pub use windows::{
-    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender, permissions,
-    prepare_overlay, show_overlay, start_keyboard_hook, system_mute, HookHandle,
+    boot_time_ms, exclusive_input, field_reader, focus_detector, hide_overlay, is_key_pressed, key_sender,
+    on_overlay_pointer, permissions, prepare_overlay, set_overlay_hit_areas, show_overlay, start_keyboard_hook,
+    system_mute, HookHandle,
 };

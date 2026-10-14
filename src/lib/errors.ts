@@ -154,13 +154,24 @@ export function storedErrorText(stored: string): string {
   return stored;
 }
 
-export function noticeText(n: Notice, os: Os = OS): string {
+/** A toast's main line, and an optional secondary explanation shown under it. */
+export interface NoticeLines {
+  title: string;
+  detail: string | null;
+}
+
+export function noticeText(n: Notice, os: Os = OS): NoticeLines {
   const m = t.value.errors.notice;
-  const note = (message: string, correction: ProviderError | null) =>
-    correction ? m.notCorrected(message, providerErrorText(correction)) : message;
+  const note = (title: string, correction: ProviderError | null): NoticeLines => ({
+    title,
+    detail: correction ? m.notCorrected(providerErrorText(correction)) : null,
+  });
+  const line = (title: string): NoticeLines => ({ title, detail: null });
   switch (n.code) {
+    case "pasted":
+      return line(m.pasted);
     case "pasted_without_correction":
-      return m.pastedWithoutCorrection(providerErrorText(n.correction));
+      return { title: m.pastedWithoutCorrection, detail: providerErrorText(n.correction) };
     case "pasted_uncertain":
       return note(m.pastedUncertain, n.correction);
     case "copied":
@@ -170,18 +181,18 @@ export function noticeText(n: Notice, os: Os = OS): string {
     case "clipboard_unavailable":
       return note(m.clipboardUnavailable, n.correction);
     case "transcription_failed":
-      return m.transcriptionFailed(providerErrorText(n.error));
+      return line(m.transcriptionFailed(providerErrorText(n.error)));
     case "audio_encoding_failed":
-      return m.audioEncodingFailed(n.detail);
+      return line(m.audioEncodingFailed(n.detail));
     case "microphone_unavailable":
-      return m.microphoneUnavailable(n.detail);
+      return line(m.microphoneUnavailable(n.detail));
     case "recording_lost":
-      return m.recordingLost(n.detail);
+      return line(m.recordingLost(n.detail));
     case "hook_unavailable":
-      return m.hookUnavailable(n.detail);
+      return line(m.hookUnavailable(n.detail));
     case "update_available":
-      return m.updateAvailable(n.version);
+      return line(m.updateAvailable(n.version));
     case "copy_failed":
-      return m.copyFailed(n.detail);
+      return line(m.copyFailed(n.detail));
   }
 }

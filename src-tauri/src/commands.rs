@@ -11,6 +11,7 @@ use scribe_core::permissions::{Permission, PermissionStatus};
 use scribe_core::pipeline::{Corrector, ProviderError};
 use scribe_core::prompt::{self, CorrectionPrompt, ImproveRequest};
 use scribe_core::style::{self, Preset, Style, MAX_TASK_CHARS};
+use scribe_platform::overlay_pointer::{HitArea, OverlayAreas};
 use scribe_providers::catalog::{self, Provider};
 
 use crate::audio_mute;
@@ -197,11 +198,7 @@ pub fn style_catalog(svc: Svc<'_>) -> StyleCatalog {
                 task: style::preset_task(preset, language),
             })
             .collect(),
-        styles: settings
-            .styles
-            .iter()
-            .map(|s| StyleBadge { id: s.id.clone(), name: style::display_name(s, language) })
-            .collect(),
+        styles: settings.styles.iter().map(|s| StyleBadge::of(s, language)).collect(),
         correction_enabled: settings.correction_enabled,
     }
 }
@@ -297,6 +294,17 @@ pub fn providers() -> Vec<Provider> {
 #[tauri::command(async)]
 pub fn overlay_dismiss(svc: Svc<'_>) {
     svc.overlay.dismiss();
+}
+
+/// The overlay's visible surface and buttons (`[x, y, width, height]`, CSS pixels) after each render: on macOS its web
+/// view gets no mouse event, so the hover state and the pointing-hand cursor are tracked natively against them.
+#[tauri::command]
+pub fn overlay_hit_areas(surface: Option<HitArea>, buttons: Vec<HitArea>) {
+    forward_hit_areas(surface, buttons, scribe_platform::set_overlay_hit_areas);
+}
+
+fn forward_hit_areas(surface: Option<HitArea>, buttons: Vec<HitArea>, platform: impl FnOnce(OverlayAreas)) {
+    platform(OverlayAreas { surface, buttons });
 }
 
 /// From an overlay toast: open the history, scrolled to that dictation. `async`: see `overlay_dismiss`.

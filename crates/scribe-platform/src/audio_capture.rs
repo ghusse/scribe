@@ -26,6 +26,7 @@ pub struct RecordingStart {
 
 pub struct RecordingHandle {
     started: RecordingStart,
+    capture: Arc<CaptureBuffer>,
     stop_tx: mpsc::Sender<()>,
     join: Option<JoinHandle<Result<AudioClip, String>>>,
 }
@@ -33,6 +34,11 @@ pub struct RecordingHandle {
 impl RecordingHandle {
     pub fn started(&self) -> RecordingStart {
         self.started
+    }
+
+    /// The first `max_ms` captured so far, as 16 kHz mono; recording goes on.
+    pub fn peek(&self, max_ms: u64) -> Option<AudioClip> {
+        self.capture.peek(max_ms)
     }
 
     /// Stops capture and returns 16 kHz mono audio. Partial audio is kept if the device failed mid-way.
@@ -53,8 +59,8 @@ pub type RecorderBody = Box<
 >;
 
 /// Runs `body` on a dedicated recording thread. `body` reports through `ready` how capture started
-/// (`Err` aborts the start), records until `stop` receives, then returns the clip.
-pub fn spawn_recorder(body: RecorderBody) -> Result<RecordingHandle, String> {
+/// (`Err` aborts the start), records into `capture` until `stop` receives, then returns the clip.
+pub fn spawn_recorder(capture: Arc<CaptureBuffer>, body: RecorderBody) -> Result<RecordingHandle, String> {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<RecordingStart, String>>();
     let join = std::thread::Builder::new()
@@ -62,7 +68,7 @@ pub fn spawn_recorder(body: RecorderBody) -> Result<RecordingHandle, String> {
         .spawn(move || body(stop_rx, ready_tx))
         .map_err(|e| e.to_string())?;
     match ready_rx.recv() {
-        Ok(Ok(started)) => Ok(RecordingHandle { started, stop_tx, join: Some(join) }),
+        Ok(Ok(started)) => Ok(RecordingHandle { started, capture, stop_tx, join: Some(join) }),
         Ok(Err(e)) => {
             let _ = join.join();
             Err(e)
@@ -91,12 +97,37 @@ pub fn rms(samples: &[f32]) -> f32 {
 pub struct CaptureBuffer {
     samples: Mutex<Vec<f32>>,
     error: Mutex<Option<String>>,
+    /// (channels, rate) of the open input, once known.
+    format: Mutex<Option<(u16, u32)>>,
     on_level: LevelCallback,
+}
+
+fn to_clip(interleaved: &[f32], channels: u16, rate: u32) -> AudioClip {
+    let mono = audio::downmix_to_mono(interleaved, channels);
+    let resampled = audio::resample_linear(&mono, rate, TARGET_RATE);
+    AudioClip { samples: audio::to_i16(&resampled), sample_rate: TARGET_RATE }
 }
 
 impl CaptureBuffer {
     pub fn new(on_level: LevelCallback) -> Self {
-        Self { samples: Mutex::new(Vec::new()), error: Mutex::new(None), on_level }
+        Self { samples: Mutex::new(Vec::new()), error: Mutex::new(None), format: Mutex::new(None), on_level }
+    }
+
+    pub fn set_format(&self, channels: u16, rate: u32) {
+        *self.format.lock().unwrap_or_else(|p| p.into_inner()) = Some((channels, rate));
+    }
+
+    /// Non-draining: the first `max_ms` captured, as 16 kHz mono. None before the format is known or when empty.
+    pub fn peek(&self, max_ms: u64) -> Option<AudioClip> {
+        let (channels, rate) = (*self.format.lock().unwrap_or_else(|p| p.into_inner()))?;
+        let frames = (rate as u64).saturating_mul(max_ms) / 1000;
+        let len = usize::try_from(frames.saturating_mul(channels.max(1) as u64)).unwrap_or(usize::MAX);
+        let head = {
+            let samples = self.samples.lock().unwrap_or_else(|p| p.into_inner());
+            samples[..len.min(samples.len())].to_vec()
+        };
+        let clip = to_clip(&head, channels, rate);
+        (!clip.samples.is_empty()).then_some(clip)
     }
 
     /// Appends interleaved samples and reports their level; empty buffers are ignored.
@@ -117,9 +148,7 @@ impl CaptureBuffer {
     /// is kept; the error is returned only if nothing was captured.
     pub fn finish(&self, channels: u16, rate: u32) -> Result<AudioClip, String> {
         let interleaved = std::mem::take(&mut *self.samples.lock().unwrap_or_else(|p| p.into_inner()));
-        let mono = audio::downmix_to_mono(&interleaved, channels);
-        let resampled = audio::resample_linear(&mono, rate, TARGET_RATE);
-        let clip = AudioClip { samples: audio::to_i16(&resampled), sample_rate: TARGET_RATE };
+        let clip = to_clip(&interleaved, channels, rate);
         match self.error.lock().unwrap_or_else(|p| p.into_inner()).take() {
             Some(e) if clip.samples.is_empty() => Err(format!("microphone disconnected: {e}")),
             _ => Ok(clip),
@@ -136,6 +165,10 @@ mod tests {
         let seen = Arc::new(Mutex::new(vec![]));
         let s = seen.clone();
         (Arc::new(move |l| s.lock().unwrap().push(l)), seen)
+    }
+
+    fn buffer() -> Arc<CaptureBuffer> {
+        Arc::new(CaptureBuffer::new(Arc::new(|_| {})))
     }
 
     fn clip(samples: Vec<i16>) -> AudioClip {
@@ -202,14 +235,59 @@ mod tests {
     }
 
     #[test]
+    fn peek_is_none_before_the_format_is_known_or_when_empty() {
+        let buf = buffer();
+        buf.push(vec![0.5; 32]);
+        assert_eq!(buf.peek(1_000), None);
+        let empty = buffer();
+        empty.set_format(1, TARGET_RATE);
+        assert_eq!(empty.peek(1_000), None);
+    }
+
+    #[test]
+    fn peek_returns_the_start_as_16k_mono_without_draining() {
+        let buf = buffer();
+        buf.set_format(2, 32_000);
+        // 1 ms at 32 kHz stereo = 32 frames: left 1.0 / right 0.0, then 32 silent frames.
+        buf.push([1.0, 0.0].repeat(32));
+        buf.push(vec![0.0; 64]);
+        let head = buf.peek(1).unwrap();
+        assert_eq!(head, clip(vec![16384; 16]), "capped to max_ms, downmixed and resampled");
+        assert_eq!(buf.peek(10).unwrap().samples.len(), 32, "everything when shorter than max_ms");
+        assert_eq!(buf.finish(2, 32_000).unwrap().samples.len(), 32, "peek does not drain");
+    }
+
+    #[test]
+    fn the_handle_peeks_into_the_recording_buffer() {
+        let capture = buffer();
+        let c = capture.clone();
+        let h = spawn_recorder(
+            capture,
+            Box::new(move |stop, ready| {
+                c.set_format(1, TARGET_RATE);
+                c.push(vec![0.5; 4]);
+                ready.send(Ok(RecordingStart::default())).unwrap();
+                stop.recv().unwrap();
+                c.finish(1, TARGET_RATE)
+            }),
+        )
+        .unwrap();
+        assert_eq!(h.peek(3_000), Some(clip(vec![16384; 4])));
+        assert_eq!(h.stop(), Ok(clip(vec![16384; 4])));
+    }
+
+    #[test]
     fn recorder_runs_until_stopped_and_returns_the_clip() {
         let (stopped_tx, stopped_rx) = mpsc::channel();
-        let h = spawn_recorder(Box::new(move |stop, ready| {
-            ready.send(Ok(RecordingStart::default())).unwrap();
-            stop.recv().unwrap();
-            stopped_tx.send("stopped").unwrap();
-            Ok(clip(vec![1, 2, 3]))
-        }))
+        let h = spawn_recorder(
+            buffer(),
+            Box::new(move |stop, ready| {
+                ready.send(Ok(RecordingStart::default())).unwrap();
+                stop.recv().unwrap();
+                stopped_tx.send("stopped").unwrap();
+                Ok(clip(vec![1, 2, 3]))
+            }),
+        )
         .unwrap();
         assert!(stopped_rx.recv_timeout(Duration::from_millis(100)).is_err(), "still recording before stop");
         assert_eq!(h.stop(), Ok(clip(vec![1, 2, 3])));
@@ -219,11 +297,14 @@ mod tests {
     #[test]
     fn the_handle_tells_how_the_recording_started() {
         let exclusive = RecordingStart { exclusive_microphone: true };
-        let h = spawn_recorder(Box::new(move |stop, ready| {
-            ready.send(Ok(exclusive)).unwrap();
-            stop.recv().unwrap();
-            Ok(clip(vec![]))
-        }))
+        let h = spawn_recorder(
+            buffer(),
+            Box::new(move |stop, ready| {
+                ready.send(Ok(exclusive)).unwrap();
+                stop.recv().unwrap();
+                Ok(clip(vec![]))
+            }),
+        )
         .unwrap();
         assert_eq!(h.started(), exclusive);
         h.stop().unwrap();
@@ -233,31 +314,37 @@ mod tests {
     fn start_failure_is_returned_and_the_thread_joined() {
         let finished = Arc::new(Mutex::new(false));
         let f = finished.clone();
-        let r = spawn_recorder(Box::new(move |_, ready| {
-            ready.send(Err("no microphone found".into())).unwrap();
-            std::thread::sleep(Duration::from_millis(20));
-            *f.lock().unwrap() = true;
-            Err("no microphone found".into())
-        }));
+        let r = spawn_recorder(
+            buffer(),
+            Box::new(move |_, ready| {
+                ready.send(Err("no microphone found".into())).unwrap();
+                std::thread::sleep(Duration::from_millis(20));
+                *f.lock().unwrap() = true;
+                Err("no microphone found".into())
+            }),
+        );
         assert_eq!(r.err(), Some("no microphone found".to_string()));
         assert!(*finished.lock().unwrap(), "the recording thread has ended before start returns");
     }
 
     #[test]
     fn thread_ending_before_ready_is_an_error() {
-        let r = spawn_recorder(Box::new(|_, _| Ok(clip(vec![]))));
+        let r = spawn_recorder(buffer(), Box::new(|_, _| Ok(clip(vec![]))));
         assert_eq!(r.err(), Some("the recording thread stopped".to_string()));
-        let r = spawn_recorder(Box::new(|_, _| panic!("device glue panicked")));
+        let r = spawn_recorder(buffer(), Box::new(|_, _| panic!("device glue panicked")));
         assert_eq!(r.err(), Some("the recording thread stopped".to_string()));
     }
 
     #[test]
     fn panic_while_recording_is_reported_by_stop() {
-        let h = spawn_recorder(Box::new(|stop, ready| {
-            ready.send(Ok(RecordingStart::default())).unwrap();
-            stop.recv().unwrap();
-            panic!("cpal callback panicked");
-        }))
+        let h = spawn_recorder(
+            buffer(),
+            Box::new(|stop, ready| {
+                ready.send(Ok(RecordingStart::default())).unwrap();
+                stop.recv().unwrap();
+                panic!("cpal callback panicked");
+            }),
+        )
         .unwrap();
         assert_eq!(h.stop(), Err("the recording thread panicked".into()));
     }
@@ -265,10 +352,13 @@ mod tests {
     #[test]
     fn device_failure_after_start_still_returns_its_audio() {
         // The thread may end on its own (stream error): stop must not hang and returns what it produced.
-        let h = spawn_recorder(Box::new(|_, ready| {
-            ready.send(Ok(RecordingStart::default())).unwrap();
-            Ok(clip(vec![7]))
-        }))
+        let h = spawn_recorder(
+            buffer(),
+            Box::new(|_, ready| {
+                ready.send(Ok(RecordingStart::default())).unwrap();
+                Ok(clip(vec![7]))
+            }),
+        )
         .unwrap();
         assert_eq!(h.stop(), Ok(clip(vec![7])));
     }

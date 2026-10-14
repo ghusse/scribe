@@ -1,13 +1,19 @@
-import type { OverlayEvent, ToastLevel } from "../lib/api";
+import type { HitArea, OverlayAreas, OverlayEvent } from "../lib/api";
 import { errorText } from "../lib/errors";
 
 /** Number of bars in the recording pill's level meter. */
 export const LEVEL_BARS = 12;
 
-/** How long a toast stays before it dismisses itself: errors stay longer. */
-export function toastTimeout(level: ToastLevel): number {
-  return level === "error" ? 10000 : 6000;
+type Toast = Extract<OverlayEvent, { kind: "toast" }>;
+
+/** How long a toast stays before it dismisses itself: errors stay longer, a style badge leaves time to reach it. */
+export function toastTimeout(ev: Toast): number {
+  if (ev.level === "error") return 10000;
+  return ev.style ? 8000 : 6000;
 }
+
+/** Once a toast's delay ran out under the pointer, how long it stays after the pointer leaves. */
+export const LEAVE_GRACE_MS = 1000;
 
 export function emptyLevels(): number[] {
   return Array(LEVEL_BARS).fill(0);
@@ -40,7 +46,40 @@ export interface OverlayView {
  */
 export function reduce(view: OverlayView, ev: OverlayEvent): { view: OverlayView; timeout: number | null } {
   const levels = ev.kind === "recording" && !ev.locked ? emptyLevels() : view.levels;
-  return { view: { ov: ev, levels }, timeout: ev.kind === "toast" ? toastTimeout(ev.level) : null };
+  return { view: { ov: ev, levels }, timeout: ev.kind === "toast" ? toastTimeout(ev) : null };
+}
+
+const area = (el: Element): HitArea => {
+  const r = el.getBoundingClientRect();
+  return [r.x, r.y, r.width, r.height];
+};
+
+/**
+ * What the native pointer tracking checks (see `overlay_hit_areas`): the bounding box of the `[data-surface]`
+ * elements (the visible pill or toast, not the transparent window) and the buttons.
+ */
+export function hitAreas(root: ParentNode): OverlayAreas {
+  return { surface: bounds([...root.querySelectorAll("[data-surface]")].map(area)), buttons: [...root.querySelectorAll("button")].map(area) };
+}
+
+function bounds(areas: HitArea[]): HitArea | null {
+  if (areas.length === 0) return null;
+  const left = Math.min(...areas.map((a) => a[0]));
+  const top = Math.min(...areas.map((a) => a[1]));
+  const right = Math.max(...areas.map((a) => a[0] + a[2]));
+  const bottom = Math.max(...areas.map((a) => a[1] + a[3]));
+  return [left, top, right - left, bottom - top];
+}
+
+/** Marks the button the native pointer tracking reports as hovered (`index` in `hitAreas` order), so it can be styled. */
+export function markHovered(root: ParentNode, index: number | null) {
+  root.querySelectorAll("button").forEach((b, i) => b.toggleAttribute("data-hover", i === index));
+}
+
+/** `overlay-pointer` event: where the native tracking sees the pointer. */
+export interface OverlayPointer {
+  inside: boolean;
+  button: number | null;
 }
 
 export interface OverlayDeps {
@@ -65,9 +104,14 @@ export function createOverlay(deps: OverlayDeps, render: (v: OverlayView) => voi
   let view: OverlayView = { ov: { kind: "idle" }, levels: emptyLevels() };
   let timer: unknown;
   let generation = 0;
+  let hovered = false;
+  /** The toast's delay ran out while the pointer was over it. */
+  let expired = false;
 
   const set = (v: OverlayView) => {
     view = v;
+    // A toast unmounted under the pointer gets no leave event (DOM or native): a stale hover would keep later toasts.
+    if (v.ov.kind !== "toast") hovered = false;
     render(v);
   };
   const stopTimer = () => {
@@ -78,9 +122,24 @@ export function createOverlay(deps: OverlayDeps, render: (v: OverlayView) => voi
   function event(ev: OverlayEvent) {
     stopTimer();
     generation++;
+    expired = false;
     const next = reduce(view, ev);
     set(next.view);
-    if (next.timeout !== null) timer = deps.schedule(dismiss, next.timeout);
+    if (next.timeout !== null) timer = deps.schedule(expire, next.timeout);
+  }
+
+  function expire() {
+    timer = undefined;
+    if (hovered) expired = true;
+    else dismiss();
+  }
+
+  /** A toast never hides under the pointer: once its delay ran out, it goes shortly after the pointer leaves. */
+  function hover(inside: boolean) {
+    hovered = inside;
+    if (!expired) return;
+    stopTimer();
+    if (!inside) timer = deps.schedule(dismiss, LEAVE_GRACE_MS);
   }
 
   function level(sample: number) {
@@ -103,7 +162,7 @@ export function createOverlay(deps: OverlayDeps, render: (v: OverlayView) => voi
     try {
       await deps.copy(id);
     } catch (e) {
-      if (gen === generation) event({ kind: "toast", level: "error", message: { code: "copy_failed", detail: errorText(e) }, preview: null, dictation_id: id });
+      if (gen === generation) event({ kind: "toast", level: "error", message: { code: "copy_failed", detail: errorText(e) }, preview: null, dictation_id: id, style: ov.style });
       return;
     }
     if (gen === generation) dismiss();
@@ -116,5 +175,5 @@ export function createOverlay(deps: OverlayDeps, render: (v: OverlayView) => voi
     deps.openHistory(ov.dictation_id).catch(deps.report);
   }
 
-  return { event, level, dismiss, copy, openHistory, view: () => view, destroy: stopTimer };
+  return { event, level, hover, dismiss, copy, openHistory, view: () => view, destroy: stopTimer };
 }
