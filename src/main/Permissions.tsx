@@ -11,7 +11,8 @@ const POLL_MS = 1500;
 
 export default function Permissions() {
   const missing = useSignal<PermissionStatus[]>([]);
-  const error = useSignal<string | null>(null);
+  // Translated at render, so it follows a language change.
+  const error = useSignal<(() => string) | null>(null);
 
   async function refresh() {
     try {
@@ -26,7 +27,7 @@ export default function Permissions() {
     try {
       missing.value = missingPermissions(await api.requestPermission(permission));
     } catch (e) {
-      error.value = t.value.permissions.requestFailed(errorText(e));
+      error.value = () => t.value.permissions.requestFailed(errorText(e));
     }
   }
 
@@ -35,7 +36,7 @@ export default function Permissions() {
     try {
       await api.openPermissionSettings(permission);
     } catch (e) {
-      error.value = t.value.permissions.openFailed(errorText(e));
+      error.value = () => t.value.permissions.openFailed(errorText(e));
     }
   }
 
@@ -78,7 +79,7 @@ export default function Permissions() {
       })}
       {error.value && (
         <p class={styles.error} role="alert">
-          {error.value}
+          {error.value()}
         </p>
       )}
     </section>

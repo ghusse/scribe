@@ -82,6 +82,8 @@ describe("Permissions", () => {
     await fireEvent.click(screen.getAllByRole("button", { name: "Ouvrir les Réglages Système" })[0]);
     expect((await screen.findByRole("alert")).textContent).toBe("Ouverture des Réglages impossible : Error: open introuvable");
     expect(panel()).not.toBeNull();
+    lang.value = "en";
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not open System Settings: Error: open introuvable");
   });
 
   it("speaks English and re-renders on a language change", async () => {

@@ -75,6 +75,8 @@ describe("ModelPicker", () => {
     await fireEvent.change(input, { target: { value: "   " } });
     expect(screen.getByRole("alert").textContent).toBe("Identifiant du modèle : ne peut pas être vide");
     expect(input.getAttribute("aria-invalid")).toBe("true");
+    lang.value = "en";
+    expect((await screen.findByRole("alert")).textContent).toBe("Model id: cannot be empty");
     expect(props.value).toBe("my-model");
     expect(props.onChange).not.toHaveBeenCalled();
   });

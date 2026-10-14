@@ -106,6 +106,8 @@ export type ProviderError =
   | { code: "missing_key"; provider: string }
   | { code: "unknown_provider"; role: ProviderRole; id: string }
   | { code: "correction_disabled" }
+  /** The correction exceeded its own time budget (Advanced settings), unlike `timeout` (no HTTP answer). */
+  | { code: "correction_timeout" }
   | { code: "no_output_tag" }
   | { code: "config"; detail: string };
 export type ProviderRole = "transcription" | "correction";

@@ -53,6 +53,7 @@ pub fn tray_labels(language: Language) -> TrayLabels {
 }
 
 /// The macOS menu bar entries (the app menu, Edit and Window).
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AppMenuLabels {
     pub about: &'static str,
@@ -74,6 +75,7 @@ pub struct AppMenuLabels {
 }
 
 /// Wording of the standard macOS menus in each language.
+#[cfg(any(target_os = "macos", test))]
 pub fn app_menu_labels(language: Language) -> AppMenuLabels {
     match language {
         Language::En => AppMenuLabels {

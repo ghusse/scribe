@@ -4,6 +4,8 @@
 .nav button { border: 0; background: transparent; text-align: left; padding: 6px 10px; font-size: 14px; white-space: nowrap; }
 .nav button[aria-current="page"] { background: color-mix(in srgb, var(--accent) 14%, var(--card)); font-weight: 600; }
 .dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: middle; }
+/* Rows follow the pane width, not the window's: the side navigation takes part of it. */
+.pane { container-type: inline-size; }
 .pane[hidden] { display: none; }
 .paneTitle { font-size: 18px; margin: 4px 0 12px; }
 
@@ -98,7 +100,7 @@
   .nav { flex-direction: row; overflow-x: auto; }
 }
 
-@media (max-width: 640px) {
+@container (max-width: 608px) {
   .row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
   .row.field .help { grid-column: 1; }
   .indent, .keyLine, .note.indent { margin-left: 0; }

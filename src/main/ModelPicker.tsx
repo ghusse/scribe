@@ -19,7 +19,8 @@ const CUSTOM = "__custom__";
  */
 export default function ModelPicker({ models, value, onValueChange, onChange }: ModelPickerProps) {
   const forceCustom = useSignal(false);
-  const invalid = useSignal<string | null>(null);
+  // Translated at render, so it follows a language change.
+  const invalid = useSignal<(() => string) | null>(null);
   const focusPending = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const selected = forceCustom.value || !models.includes(value) ? CUSTOM : value;
@@ -58,7 +59,7 @@ export default function ModelPicker({ models, value, onValueChange, onChange }: 
     const el = e.currentTarget as HTMLInputElement;
     const r = checkModelId(el.value);
     if (!r.ok) {
-      invalid.value = r.message;
+      invalid.value = () => t.value.settings.modelPicker.empty;
       return;
     }
     invalid.value = null;
@@ -91,7 +92,7 @@ export default function ModelPicker({ models, value, onValueChange, onChange }: 
       )}
       {invalid.value && (
         <span class={styles.pickerError} role="alert">
-          {invalid.value}
+          {invalid.value()}
         </span>
       )}
     </div>

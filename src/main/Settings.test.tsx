@@ -489,7 +489,10 @@ describe("Settings: provider test", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     expect(screen.getByText("Clé Anthropic saisie mais non enregistrée. Enregistrer ?")).toBeTruthy();
     expect(calls("test_providers")).toHaveLength(0);
-    const prompt = screen.getByText(/saisie mais non enregistrée/);
+    lang.value = "en";
+    expect(await screen.findByText("Anthropic key typed but not saved. Save it?")).toBeTruthy();
+    lang.value = "fr";
+    const prompt = await screen.findByText(/saisie mais non enregistrée/);
     await fireEvent.click(within(prompt).getByRole("button", { name: "Enregistrer" }));
     expect(await screen.findAllByText(/✓ fonctionne/)).toHaveLength(2);
     expect(calls("set_api_key")).toEqual([{ provider: "anthropic", key: "sk-ant" }]);
@@ -568,6 +571,8 @@ describe("Settings: hotkeys", () => {
     await setup("Dictée");
     await fireEvent.click(change("verrouillage"));
     expect(await screen.findByText(/Alt droit \(AltGr\) est déjà la touche de déclenchement/)).toBeTruthy();
+    lang.value = "en";
+    expect(await screen.findByText(/is already the trigger key/)).toBeTruthy();
   });
 
   it("swaps the keys when the trigger takes the lock key", async () => {
@@ -576,6 +581,8 @@ describe("Settings: hotkeys", () => {
     await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/Touches échangées/)).toBeTruthy();
+    lang.value = "en";
+    expect(await screen.findByText(/Keys swapped/)).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
     expect([lastSave().trigger_keys, lastSave().lock_vk]).toEqual([[0x14], 0xa5]);
   });

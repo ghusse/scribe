@@ -21,6 +21,7 @@ describe("providerErrorText", () => {
     [{ code: "refusal" }, null, "le modèle a refusé la requête"],
     [{ code: "malformed", detail: "{}" }, null, "réponse invalide du fournisseur, voir Détails"],
     [{ code: "correction_disabled" }, null, "correction désactivée"],
+    [{ code: "correction_timeout" }, null, "délai du correcteur dépassé"],
     [{ code: "no_output_tag" }, null, "réponse du correcteur sans balise <output>"],
     [{ code: "config", detail: "tls" }, null, "configuration du fournisseur invalide, voir Détails"],
   ])("%o", (e, provider, text) => {

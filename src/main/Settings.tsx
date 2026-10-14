@@ -51,7 +51,8 @@ export interface SettingsProps {
   onStatusChange?: (next: SaveState) => void;
 }
 
-type Accepted = Extract<Assignment, { ok: true }>;
+/** `noteOf` re-runs the assignment so its note is rendered in the current language. */
+type Accepted = Extract<Assignment, { ok: true }> & { noteOf: () => string | null };
 type KeyFeedback = { done: "saved" | "deleted" } | { error: unknown };
 type TestError = { kind: "unsaved" } | { kind: "failed"; error: unknown };
 
@@ -83,11 +84,12 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
 
   const test = useSignal<ProviderTest | null>(null);
   const testing = useSignal(false);
-  const testBlock = useSignal<string | null>(null);
+  // Messages kept as thunks are translated at render, so they follow a language change.
+  const testBlock = useSignal<(() => string) | null>(null);
   const testError = useSignal<TestError | null>(null);
 
   const capturing = useSignal<HotkeyRole | null>(null);
-  const hotkeyNote = useSignal<string | null>(null);
+  const hotkeyNote = useSignal<(() => string | null) | null>(null);
   const pendingAssign = useSignal<Accepted | null>(null);
 
   const [m] = useState(() => ({
@@ -336,8 +338,11 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   async function runTest() {
     test.value = null;
     testError.value = null;
-    testBlock.value = unsavedDraftMessage(unsavedDrafts(keyDrafts.value, providers.value));
-    if (testBlock.value) return;
+    const drafts = unsavedDrafts(keyDrafts.value, providers.value);
+    if (unsavedDraftMessage(drafts)) {
+      testBlock.value = () => unsavedDraftMessage(drafts) ?? "";
+      return;
+    }
     testing.value = true;
     try {
       await flush();
@@ -372,15 +377,17 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       const keys = await api.captureKey();
       const outcome = captureOutcome(keys, m.captureCancelled);
       const cur = s.value;
-      if (outcome === "timeout") hotkeyNote.value = t.value.settings.hotkey.captureTimeout;
+      if (outcome === "timeout") hotkeyNote.value = () => t.value.settings.hotkey.captureTimeout;
       else if (outcome === "keys" && cur) {
-        const a = assignHotkey(role, keys!, { trigger_keys: cur.trigger_keys, lock_vk: cur.lock_vk });
-        if (!a.ok) hotkeyNote.value = a.note;
-        else if (a.confirm) pendingAssign.value = a;
-        else applyKeys(a);
+        const prev = { trigger_keys: cur.trigger_keys, lock_vk: cur.lock_vk };
+        const noteOf = () => assignHotkey(role, keys!, prev).note;
+        const a = assignHotkey(role, keys!, prev);
+        if (!a.ok) hotkeyNote.value = noteOf;
+        else if (a.confirm) pendingAssign.value = { ...a, noteOf };
+        else applyKeys({ ...a, noteOf });
       }
     } catch (e) {
-      hotkeyNote.value = t.value.settings.hotkey.captureFailed(errorText(e));
+      hotkeyNote.value = () => t.value.settings.hotkey.captureFailed(errorText(e));
     } finally {
       m.captureEnded = { role, at: performance.now() };
       capturing.value = null;
@@ -404,7 +411,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       d.trigger_keys = a.keys.trigger_keys;
       d.lock_vk = a.keys.lock_vk;
     });
-    hotkeyNote.value = a.note;
+    hotkeyNote.value = a.note === null ? null : a.noteOf;
     pendingAssign.value = null;
   }
 
@@ -666,7 +673,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
               )}
               {hotkeyNote.value && (
                 <p class={styles.note} role="status">
-                  {hotkeyNote.value}
+                  {hotkeyNote.value()}
                 </p>
               )}
             </section>
@@ -783,7 +790,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
                 </button>
                 {testBlock.value && (
                   <p class={styles.inlineConfirm} role="status">
-                    {testBlock.value}
+                    {testBlock.value()}
                     <button class="primary" onClick={saveDraftsAndTest}>
                       {tr.save}
                     </button>

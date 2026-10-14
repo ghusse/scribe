@@ -27,6 +27,8 @@ export function providerErrorText(e: ProviderError, provider: string | null = nu
       return m.malformed;
     case "correction_disabled":
       return m.correctionDisabled;
+    case "correction_timeout":
+      return m.correctionTimeout;
     case "no_output_tag":
       return m.noOutputTag;
     case "config":

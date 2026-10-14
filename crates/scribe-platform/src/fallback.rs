@@ -34,7 +34,7 @@ struct NoKeys;
 
 impl KeySender for NoKeys {
     fn send_paste(&self) -> Result<(), String> {
-        Err("simulation clavier not available on this platform".into())
+        Err("keyboard simulation not available on this platform".into())
     }
 }
 
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn paste_simulation_fails_so_the_text_stays_in_the_clipboard() {
-        assert_eq!(key_sender().send_paste(), Err("simulation clavier not available on this platform".into()));
+        assert_eq!(key_sender().send_paste(), Err("keyboard simulation not available on this platform".into()));
     }
 
     #[test]

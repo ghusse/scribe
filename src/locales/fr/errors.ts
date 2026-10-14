@@ -14,6 +14,7 @@ export const errors: typeof En = {
     refusal: "le modèle a refusé la requête",
     malformed: "réponse invalide du fournisseur, voir Détails",
     correctionDisabled: "correction désactivée",
+    correctionTimeout: "délai du correcteur dépassé",
     noOutputTag: "réponse du correcteur sans balise <output>",
     config: "configuration du fournisseur invalide, voir Détails",
   },

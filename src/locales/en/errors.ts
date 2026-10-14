@@ -14,6 +14,7 @@ export const errors = {
     refusal: "the model refused the request",
     malformed: "invalid response from the provider, see Details",
     correctionDisabled: "correction turned off",
+    correctionTimeout: "the correction took too long",
     noOutputTag: "the corrector's response has no <output> tag",
     config: "invalid provider configuration, see Details",
   },

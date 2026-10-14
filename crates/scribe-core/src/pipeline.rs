@@ -47,6 +47,9 @@ pub enum ProviderError {
     UnknownProvider { role: ProviderRole, id: String },
     #[error("correction disabled")]
     CorrectionDisabled,
+    /// The correction exceeded its own budget (`llm_timeout`), unlike `Timeout`, the HTTP client's.
+    #[error("correction took too long")]
+    CorrectionTimeout,
     #[error("corrector response without an <output> tag")]
     NoOutputTag,
     #[error("configuration: {detail}")]
@@ -213,7 +216,7 @@ pub async fn run(
             None => (raw.clone(), Some(ProviderError::NoOutputTag)),
         },
         Ok(Err(e)) => (raw.clone(), Some(e)),
-        Err(_) => (raw.clone(), Some(ProviderError::Timeout)),
+        Err(_) => (raw.clone(), Some(ProviderError::CorrectionTimeout)),
     };
     Ok(PipelineOutput { raw, final_text, stt_ms, llm_ms, correction_error })
 }
@@ -342,7 +345,7 @@ mod tests {
         let llm = FakeLlm::new(Ok("<output>Bonjour.</output>".into()), 60_000);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
         assert_eq!(out.final_text, "bonjour à tous et merci");
-        assert_eq!(out.correction_error, Some(ProviderError::Timeout));
+        assert_eq!(out.correction_error, Some(ProviderError::CorrectionTimeout));
     }
 
     #[tokio::test(start_paused = true)]
@@ -453,6 +456,7 @@ mod tests {
             ProviderError::MissingKey { provider: "OpenAI".into() },
             ProviderError::UnknownProvider { role: ProviderRole::Correction, id: "x".into() },
             ProviderError::CorrectionDisabled,
+            ProviderError::CorrectionTimeout,
             ProviderError::NoOutputTag,
             ProviderError::Config { detail: "x".into() },
         ];
@@ -499,6 +503,7 @@ mod tests {
         let cases = [
             (ProviderError::Network { detail: "reset".into() }, json!({"code": "network", "detail": "reset"})),
             (ProviderError::Timeout, json!({"code": "timeout"})),
+            (ProviderError::CorrectionTimeout, json!({"code": "correction_timeout"})),
             (ProviderError::Auth, json!({"code": "auth"})),
             (
                 ProviderError::Http { status: 503, body: "down".into() },
