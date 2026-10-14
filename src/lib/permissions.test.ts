@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { missingPermissions, PERMISSION_COPY, permissionActions } from "./permissions";
+import { missingPermissions, permissionActions } from "./permissions";
 
 describe("permissions", () => {
   it("offers the prompt while the OS can show it, the settings page in every case", () => {
@@ -12,9 +12,5 @@ describe("permissions", () => {
     const mic = { permission: "microphone", state: "denied" } as const;
     expect(missingPermissions([{ permission: "accessibility", state: "granted" }, mic])).toEqual([mic]);
     expect(missingPermissions([])).toEqual([]);
-  });
-
-  it("explains every permission", () => {
-    for (const copy of Object.values(PERMISSION_COPY)) expect(copy.title && copy.why && copy.how).toBeTruthy();
   });
 });

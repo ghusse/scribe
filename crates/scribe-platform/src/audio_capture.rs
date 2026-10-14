@@ -42,7 +42,7 @@ impl RecordingHandle {
             .take()
             .expect("recording already stopped")
             .join()
-            .map_err(|_| "le thread d'enregistrement a paniqué".to_string())?
+            .map_err(|_| "the recording thread panicked".to_string())?
     }
 }
 
@@ -67,7 +67,7 @@ pub fn spawn_recorder(body: RecorderBody) -> Result<RecordingHandle, String> {
             let _ = join.join();
             Err(e)
         }
-        Err(_) => Err("le thread d'enregistrement s'est arrêté".into()),
+        Err(_) => Err("the recording thread stopped".into()),
     }
 }
 
@@ -121,7 +121,7 @@ impl CaptureBuffer {
         let resampled = audio::resample_linear(&mono, rate, TARGET_RATE);
         let clip = AudioClip { samples: audio::to_i16(&resampled), sample_rate: TARGET_RATE };
         match self.error.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            Some(e) if clip.samples.is_empty() => Err(format!("micro déconnecté : {e}")),
+            Some(e) if clip.samples.is_empty() => Err(format!("microphone disconnected: {e}")),
             _ => Ok(clip),
         }
     }
@@ -192,7 +192,7 @@ mod tests {
         let buf = CaptureBuffer::new(Arc::new(|_| {}));
         buf.set_error("premier".into());
         buf.set_error("débranché".into());
-        assert_eq!(buf.finish(1, TARGET_RATE), Err("micro déconnecté : débranché".into()));
+        assert_eq!(buf.finish(1, TARGET_RATE), Err("microphone disconnected: débranché".into()));
     }
 
     #[test]
@@ -234,21 +234,21 @@ mod tests {
         let finished = Arc::new(Mutex::new(false));
         let f = finished.clone();
         let r = spawn_recorder(Box::new(move |_, ready| {
-            ready.send(Err("aucun micro détecté".into())).unwrap();
+            ready.send(Err("no microphone found".into())).unwrap();
             std::thread::sleep(Duration::from_millis(20));
             *f.lock().unwrap() = true;
-            Err("aucun micro détecté".into())
+            Err("no microphone found".into())
         }));
-        assert_eq!(r.err(), Some("aucun micro détecté".to_string()));
+        assert_eq!(r.err(), Some("no microphone found".to_string()));
         assert!(*finished.lock().unwrap(), "the recording thread has ended before start returns");
     }
 
     #[test]
     fn thread_ending_before_ready_is_an_error() {
         let r = spawn_recorder(Box::new(|_, _| Ok(clip(vec![]))));
-        assert_eq!(r.err(), Some("le thread d'enregistrement s'est arrêté".to_string()));
+        assert_eq!(r.err(), Some("the recording thread stopped".to_string()));
         let r = spawn_recorder(Box::new(|_, _| panic!("device glue panicked")));
-        assert_eq!(r.err(), Some("le thread d'enregistrement s'est arrêté".to_string()));
+        assert_eq!(r.err(), Some("the recording thread stopped".to_string()));
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
             panic!("cpal callback panicked");
         }))
         .unwrap();
-        assert_eq!(h.stop(), Err("le thread d'enregistrement a paniqué".into()));
+        assert_eq!(h.stop(), Err("the recording thread panicked".into()));
     }
 
     #[test]

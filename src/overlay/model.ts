@@ -1,4 +1,5 @@
 import type { OverlayEvent, ToastLevel } from "../lib/api";
+import { errorText } from "../lib/errors";
 
 /** Number of bars in the recording pill's level meter. */
 export const LEVEL_BARS = 12;
@@ -102,7 +103,7 @@ export function createOverlay(deps: OverlayDeps, render: (v: OverlayView) => voi
     try {
       await deps.copy(id);
     } catch (e) {
-      if (gen === generation) event({ kind: "toast", level: "error", message: `Copie impossible : ${e}`, preview: null, dictation_id: id });
+      if (gen === generation) event({ kind: "toast", level: "error", message: { code: "copy_failed", detail: errorText(e) }, preview: null, dictation_id: id });
       return;
     }
     if (gen === generation) dismiss();

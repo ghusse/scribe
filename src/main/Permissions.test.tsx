@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import { advanceTimers } from "../../tests/timers";
 import type { PermissionStatus } from "../lib/api";
+import { lang } from "../lib/i18n";
 import Permissions from "./Permissions";
 
 let statuses: PermissionStatus[];
@@ -73,13 +74,27 @@ describe("Permissions", () => {
     render(<Permissions />);
     await screen.findByText("Accessibilité");
     commands({
-      request_permission: () => { throw new Error("refus"); },
+      request_permission: () => Promise.reject({ code: "system", detail: "refus" }),
       open_permission_settings: () => { throw new Error("open introuvable"); },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Autoriser" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("Demande impossible : Error: refus");
+    expect((await screen.findByRole("alert")).textContent).toBe("Demande impossible : refus");
     await fireEvent.click(screen.getAllByRole("button", { name: "Ouvrir les Réglages Système" })[0]);
     expect((await screen.findByRole("alert")).textContent).toBe("Ouverture des Réglages impossible : Error: open introuvable");
+    expect(panel()).not.toBeNull();
+  });
+
+  it("speaks English and re-renders on a language change", async () => {
+    lang.value = "en";
+    render(<Permissions />);
+    expect(await screen.findByRole("region", { name: "Missing permissions" })).toBeTruthy();
+    expect(screen.getByText("Accessibility")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Open System Settings" })).toHaveLength(2);
+    commands({ request_permission: () => Promise.reject("busy") });
+    await fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not ask: busy");
+    lang.value = "fr";
+    expect(await screen.findByText("Accessibilité")).toBeTruthy();
     expect(panel()).not.toBeNull();
   });
 });

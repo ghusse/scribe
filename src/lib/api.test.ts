@@ -37,6 +37,7 @@ describe("api", () => {
     ["permissions", () => api.permissions(), "permissions", undefined],
     ["requestPermission", () => api.requestPermission("microphone"), "request_permission", { permission: "microphone" }],
     ["openPermissionSettings", () => api.openPermissionSettings("accessibility"), "open_permission_settings", { permission: "accessibility" }],
+    ["language", () => api.language(), "language", undefined],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
   ];

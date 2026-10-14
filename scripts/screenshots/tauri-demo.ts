@@ -4,6 +4,7 @@ import type { Dictation, Provider, Settings, Term } from "../../src/lib/api";
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
 const settings: Settings = {
+  language: "system",
   trigger_keys: [0x5c],
   lock_vk: 0x20,
   gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
@@ -91,6 +92,7 @@ const routes: Record<string, (args: Record<string, unknown>) => unknown> = {
   list_dictations: ({ offset }) => (offset ? [] : dictations),
   list_terms: () => terms,
   get_settings: () => settings,
+  language: () => "en",
   key_status: () => ({ openai: true, anthropic: true, mistral: false, groq: false }),
   providers: () => providers,
   get_autostart: () => true,

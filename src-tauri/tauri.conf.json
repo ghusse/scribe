@@ -56,11 +56,15 @@
     "createUpdaterArtifacts": true,
     "publisher": "Guillaume Gautreau",
     "copyright": "Copyright (C) 2026 Guillaume Gautreau. AGPL-3.0-only.",
-    "shortDescription": "Dictée vocale : maintenez une touche, parlez, le texte s'insère.",
+    "shortDescription": "Voice dictation: hold a key, speak, the text is typed in.",
     "macOS": {
       "signingIdentity": "-",
       "entitlements": "Entitlements.plist",
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "files": {
+        "Resources/en.lproj/InfoPlist.strings": "locales/en.lproj/InfoPlist.strings",
+        "Resources/fr.lproj/InfoPlist.strings": "locales/fr.lproj/InfoPlist.strings"
+      }
     },
     "category": "Productivity"
   },

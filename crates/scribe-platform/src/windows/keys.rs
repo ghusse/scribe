@@ -42,7 +42,7 @@ impl KeySender for WinKeySender {
         if sent as usize == inputs.len() {
             Ok(())
         } else {
-            Err(format!("SendInput n'a envoyé que {sent}/{} événements", inputs.len()))
+            Err(format!("SendInput sent only {sent}/{} events", inputs.len()))
         }
     }
 }

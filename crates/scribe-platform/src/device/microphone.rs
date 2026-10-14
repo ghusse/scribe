@@ -43,8 +43,8 @@ pub struct CpalInput;
 impl InputOpener for CpalInput {
     fn open(&self, capture: Arc<CaptureBuffer>) -> Result<OpenStream, String> {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or("aucun micro détecté")?;
-        let supported = device.default_input_config().map_err(|e| format!("micro inutilisable : {e}"))?;
+        let device = host.default_input_device().ok_or("no microphone found")?;
+        let supported = device.default_input_config().map_err(|e| format!("unusable microphone: {e}"))?;
         let channels = supported.channels();
         let rate = supported.sample_rate().0;
         let format = supported.sample_format();
@@ -72,10 +72,10 @@ impl InputOpener for CpalInput {
                 err_fn,
                 None,
             ),
-            other => return Err(format!("format audio non pris en charge : {other:?}")),
+            other => return Err(format!("unsupported sample format: {other:?}")),
         };
-        let stream = stream.map_err(|e| format!("ouverture du micro impossible : {e}"))?;
-        stream.play().map_err(|e| format!("démarrage du micro impossible : {e}"))?;
+        let stream = stream.map_err(|e| format!("cannot open the microphone: {e}"))?;
+        stream.play().map_err(|e| format!("cannot start the microphone: {e}"))?;
         Ok(OpenStream { channels, rate, stream: Box::new(stream) })
     }
 }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { Settings } from "./api";
-import { checkModelId, checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, rangeMessage, retentionOptions } from "./validation";
+import { lang } from "./i18n";
+import { checkModelId, checkNumbers, fieldHelp, fieldText, parseNumber, rangeMessage, retentionOptions } from "./validation";
 
 const ok: Settings = {
+  language: "system",
   trigger_keys: [0xa3], lock_vk: 0x20,
   gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
   level: "formatted", stt_provider: "openai", stt_model: "gpt-transcribe", llm_provider: "anthropic", llm_model: "claude-opus-5-5",
@@ -52,10 +54,23 @@ describe("checkNumbers", () => {
 
 describe("labels and messages share the constants", () => {
   it("builds both from the same field", () => {
-    expect(fieldHelp(NUMBER_FIELDS.restore_delay_ms)).toBe("Augmentez si le texte collé est parfois l'ancien contenu. Défaut : 150 ms.");
-    expect(fieldHelp(NUMBER_FIELDS.max_recording_min)).toBe("Défaut : 10 min.");
-    expect(fieldHelp(NUMBER_FIELDS.llm_timeout_s)).toBe("Au-delà, le texte est collé sans correction. Défaut : 5 s.");
-    expect(rangeMessage(NUMBER_FIELDS.double_tap_window_ms)).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
+    expect(fieldHelp("restore_delay_ms")).toBe("Augmentez si le texte collé est parfois l'ancien contenu. Défaut : 150 ms.");
+    expect(fieldHelp("max_recording_min")).toBe("Défaut : 10 min.");
+    expect(fieldHelp("llm_timeout_s")).toBe("Au-delà, le texte est collé sans correction. Défaut : 5 s.");
+    expect(rangeMessage("double_tap_window_ms")).toBe("Fenêtre de double-tap : entre 150 et 1000 ms");
+  });
+});
+
+describe("in English", () => {
+  it("words labels, help and messages in the UI language", () => {
+    lang.value = "en";
+    expect(fieldText("hold_threshold_ms")).toEqual({ label: "Hold threshold", unit: "ms", help: "A longer press is a hold." });
+    expect(fieldHelp("audio_retention_days")).toBe("Default: 30 days.");
+    expect(checkNumbers(edited((s) => (s.gesture.hold_threshold_ms = 2)))?.message).toBe("Hold threshold: between 100 and 2000 ms");
+    expect(checkNumbers(edited((s) => (s.max_recording_ms = NaN)))?.message).toBe("Max. dictation length: enter a number between 1 and 10 min");
+    expect(checkNumbers(edited((s) => (s.audio_retention_days = NaN)))?.message).toBe("Audio retention: enter a whole number between 0 and 36500 days");
+    expect(retentionOptions(1).map((o) => o.label)).toEqual(["1 day", "7 days", "30 days", "90 days", "Forever"]);
+    expect(checkModelId(" ")).toEqual({ ok: false, message: "Model id: cannot be empty" });
   });
 });
 

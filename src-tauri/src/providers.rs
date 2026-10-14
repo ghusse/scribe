@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use scribe_core::model::Level;
-use scribe_core::pipeline::{Corrector, ProviderError};
+use scribe_core::pipeline::{Corrector, ProviderError, ProviderRole};
 use scribe_core::prompt::CorrectionPrompt;
 use scribe_providers::anthropic::AnthropicCorrector;
 use scribe_providers::catalog::{self, LlmApi, Provider};
@@ -17,15 +17,15 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Stands in for the LLM when there is none (Raw level) or it cannot be built (missing key):
 /// the pipeline then falls back to the raw text instead of failing the dictation.
-pub struct NoCorrector(pub String);
+pub struct NoCorrector(pub ProviderError);
 
 #[async_trait::async_trait]
 impl Corrector for NoCorrector {
-    fn name(&self) -> String {
-        "aucun".into()
+    fn name(&self) -> Option<String> {
+        None
     }
     async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
-        Err(ProviderError::Config(self.0.clone()))
+        Err(self.0.clone())
     }
 }
 
@@ -36,13 +36,16 @@ fn effort_for(provider: &Provider, s: &Settings) -> Option<String> {
 
 fn build_corrector(s: &Settings, llm_key: Option<String>) -> Box<dyn Corrector> {
     if s.level == Level::Raw {
-        return Box::new(NoCorrector("correcteur désactivé".into()));
+        return Box::new(NoCorrector(ProviderError::CorrectionDisabled));
     }
     let Some(provider) = catalog::llm_provider(&s.llm_provider) else {
-        return Box::new(NoCorrector(format!("fournisseur de correction inconnu : {}", s.llm_provider)));
+        return Box::new(NoCorrector(ProviderError::UnknownProvider {
+            role: ProviderRole::Correction,
+            id: s.llm_provider.clone(),
+        }));
     };
     let Some(key) = llm_key else {
-        return Box::new(NoCorrector(format!("clé API {} manquante", provider.label)));
+        return Box::new(NoCorrector(ProviderError::MissingKey { provider: provider.label.into() }));
     };
     let effort = effort_for(provider, s);
     let built: Result<Box<dyn Corrector>, ProviderError> = match provider.llm_api {
@@ -51,16 +54,18 @@ fn build_corrector(s: &Settings, llm_key: Option<String>) -> Box<dyn Corrector> 
         _ => OpenAiChatCorrector::new(provider.base_url, key, &s.llm_model, effort, HTTP_TIMEOUT)
             .map(|c| Box::new(c) as Box<dyn Corrector>),
     };
-    built.unwrap_or_else(|e| Box::new(NoCorrector(e.to_string())))
+    built.unwrap_or_else(|e| Box::new(NoCorrector(e)))
 }
 
 /// The app's `ProviderFactory`. A missing transcription key fails; a missing correction key only
 /// disables the correction.
 pub fn build(s: &Settings, store: &dyn SecretStore) -> Result<Providers, ProviderError> {
-    let provider = catalog::stt_provider(&s.stt_provider)
-        .ok_or_else(|| ProviderError::Config(format!("fournisseur de transcription inconnu : {}", s.stt_provider)))?;
+    let provider = catalog::stt_provider(&s.stt_provider).ok_or_else(|| ProviderError::UnknownProvider {
+        role: ProviderRole::Transcription,
+        id: s.stt_provider.clone(),
+    })?;
     let stt_key = secrets::get_key(store, provider.id)
-        .ok_or_else(|| ProviderError::Config(format!("clé API manquante pour « {} »", provider.label)))?;
+        .ok_or_else(|| ProviderError::MissingKey { provider: provider.label.into() })?;
     let stt = OpenAiCompatTranscriber::new(provider.base_url, stt_key, &s.stt_model, HTTP_TIMEOUT)?;
     let llm_key = if s.level == Level::Raw { None } else { secrets::get_key(store, &s.llm_provider) };
     Ok((Box::new(stt), build_corrector(s, llm_key)))
@@ -89,9 +94,9 @@ mod tests {
     use crate::secrets::memory::MemorySecretStore;
     use scribe_core::prompt;
 
-    fn correction_error(c: &dyn Corrector) -> String {
+    fn correction_error(c: &dyn Corrector) -> ProviderError {
         let p = prompt::build_correction_prompt("bonjour", &[], None, Level::Formatted);
-        tauri::async_runtime::block_on(c.correct(&p)).unwrap_err().to_string()
+        tauri::async_runtime::block_on(c.correct(&p)).unwrap_err()
     }
 
     fn settings(stt: &str, llm: &str, model: &str, level: Level) -> Settings {
@@ -135,32 +140,35 @@ mod tests {
     fn missing_llm_key_falls_back_to_raw_text_instead_of_failing() {
         let s = Settings { level: Level::Formatted, ..Default::default() };
         let c = build_corrector(&s, None);
-        assert_eq!(c.name(), "aucun");
-        assert!(correction_error(c.as_ref()).contains("clé API Anthropic manquante"));
+        assert_eq!(c.name(), None);
+        assert_eq!(correction_error(c.as_ref()), ProviderError::MissingKey { provider: "Anthropic".into() });
     }
 
     #[test]
     fn raw_level_has_no_corrector() {
         let s = settings("openai", "anthropic", "claude-opus-5-5", Level::Raw);
         let c = build_corrector(&s, Some("sk".into()));
-        assert!(correction_error(c.as_ref()).contains("correcteur désactivé"));
+        assert_eq!(correction_error(c.as_ref()), ProviderError::CorrectionDisabled);
     }
 
     #[test]
     fn unknown_llm_provider_disables_the_correction() {
         let s = settings("openai", "nope", "m", Level::Formatted);
         let c = build_corrector(&s, Some("sk".into()));
-        assert!(correction_error(c.as_ref()).contains("fournisseur de correction inconnu : nope"));
+        assert_eq!(
+            correction_error(c.as_ref()),
+            ProviderError::UnknownProvider { role: ProviderRole::Correction, id: "nope".into() }
+        );
     }
 
     #[test]
     fn builds_the_api_of_the_llm_provider() {
         let c =
             build_corrector(&settings("openai", "anthropic", "claude-haiku-4-5", Level::Formatted), Some("sk".into()));
-        assert_eq!(c.name(), "claude-haiku-4-5");
+        assert_eq!(c.name().as_deref(), Some("claude-haiku-4-5"));
         let c =
             build_corrector(&settings("openai", "mistral", "mistral-small-latest", Level::Clean), Some("sk".into()));
-        assert_eq!(c.name(), "mistral-small-latest");
+        assert_eq!(c.name().as_deref(), Some("mistral-small-latest"));
     }
 
     #[test]
@@ -181,26 +189,26 @@ mod tests {
         let store = MemorySecretStore::with(&[("openai", "sk-o"), ("anthropic", "sk-a")]);
         let err =
             build(&settings("anthropic", "anthropic", "claude-opus-5-5", Level::Formatted), &store).err().unwrap();
-        assert_eq!(err, ProviderError::Config("fournisseur de transcription inconnu : anthropic".into()));
+        assert_eq!(err, ProviderError::UnknownProvider { role: ProviderRole::Transcription, id: "anthropic".into() });
         let err = build(&settings("groq", "anthropic", "claude-opus-5-5", Level::Formatted), &store).err().unwrap();
-        assert_eq!(err, ProviderError::Config("clé API manquante pour « Groq »".into()));
+        assert_eq!(err, ProviderError::MissingKey { provider: "Groq".into() });
         let (stt, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted), &store).unwrap();
         assert_eq!(stt.name(), "whisper-x");
-        assert_eq!(llm.name(), "claude-opus-5-5");
+        assert_eq!(llm.name().as_deref(), Some("claude-opus-5-5"));
     }
 
     #[test]
     fn raw_level_does_not_read_the_correction_key() {
         let store = MemorySecretStore::with(&[("openai", "sk-o"), ("anthropic", "sk-a")]);
         let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Raw), &store).unwrap();
-        assert_eq!(llm.name(), "aucun");
+        assert_eq!(llm.name(), None);
         assert_eq!(*store.reads.lock().unwrap(), vec!["openai".to_string()], "only the transcription key is read");
         store.reads.lock().unwrap().clear();
         let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted), &store).unwrap();
-        assert_ne!(llm.name(), "aucun");
+        assert!(llm.name().is_some());
         assert_eq!(*store.reads.lock().unwrap(), vec!["openai".to_string(), "anthropic".to_string()]);
         let store = MemorySecretStore::with(&[("openai", "sk-o")]);
         let (_, llm) = build(&settings("openai", "anthropic", "claude-opus-5-5", Level::Formatted), &store).unwrap();
-        assert_eq!(llm.name(), "aucun", "missing correction key: raw text instead of a failure");
+        assert_eq!(llm.name(), None, "missing correction key: raw text instead of a failure");
     }
 }

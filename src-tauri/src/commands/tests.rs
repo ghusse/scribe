@@ -6,7 +6,9 @@ use scribe_core::pipeline::ProviderError;
 use scribe_platform::RawKey;
 
 use super::*;
-use crate::overlay::{OverlayEvent, ToastLevel};
+use crate::locale::LanguagePref;
+use crate::overlay::{Notice, OverlayEvent, ToastLevel};
+use crate::settings::SettingsError;
 use crate::testing::{Fixture, MuteCall, UiCall};
 
 /// Runs `f` with the fixture's services as Tauri state, the way commands receive them.
@@ -67,10 +69,10 @@ fn copy_reports_missing_rows_text_and_clipboard_errors() {
     let empty = insert(&f, None, None);
     let ok = insert(&f, Some("Texte."), None);
     with_state(&f, |s| {
-        assert_eq!(copy_dictation(s.clone(), 999).unwrap_err(), "dictée introuvable");
-        assert_eq!(copy_dictation(s.clone(), empty).unwrap_err(), "cette dictée n'a pas de texte");
+        assert_eq!(copy_dictation(s.clone(), 999).unwrap_err(), AppError::DictationNotFound);
+        assert_eq!(copy_dictation(s.clone(), empty).unwrap_err(), AppError::NoText);
         *f.clipboard.fail.lock().unwrap() = true;
-        assert_eq!(copy_dictation(s, ok).unwrap_err(), "presse-papier occupé");
+        assert_eq!(copy_dictation(s, ok).unwrap_err(), AppError::System { detail: "presse-papier occupé".into() });
     });
 }
 
@@ -79,7 +81,7 @@ fn retranscribe_command_delegates_to_the_pipeline() {
     let f = Fixture::new();
     with_state(&f, |s| {
         let r = tauri::async_runtime::block_on(retranscribe(s, 42));
-        assert_eq!(r.unwrap_err(), "dictée introuvable");
+        assert_eq!(r.unwrap_err(), AppError::DictationNotFound);
     });
 }
 
@@ -97,7 +99,12 @@ fn glossary_commands_round_trip() {
         );
         delete_term(s.clone(), id).unwrap();
         assert!(list_terms(s.clone()).unwrap().is_empty());
-        assert!(add_term(s, "  ".into(), vec![], None).is_err(), "blank term rejected by the store");
+        assert!(add_term(s.clone(), "  ".into(), vec![], None).is_err(), "blank term rejected by the store");
+        add_term(s.clone(), "Tauri".into(), vec![], None).unwrap();
+        assert_eq!(
+            add_term(s, "tauri".into(), vec![], None).unwrap_err(),
+            AppError::DuplicateTerm { term: "tauri".into() }
+        );
     });
 }
 
@@ -120,7 +127,7 @@ fn invalid_settings_are_neither_written_nor_applied() {
     let before = f.svc.settings.read().unwrap().clone();
     with_state(&f, |s| {
         let err = save_settings(s.clone(), Settings { trigger_keys: vec![], ..Default::default() }).unwrap_err();
-        assert_eq!(err, "choisissez un raccourci");
+        assert_eq!(err, AppError::InvalidSettings { error: SettingsError::InvalidHotkey });
         assert_eq!(get_settings(s.clone()), before);
         // A valid value that cannot be written is not applied either.
         std::fs::create_dir(f.svc.paths.settings_path.with_extension("json.tmp")).unwrap();
@@ -129,6 +136,35 @@ fn invalid_settings_are_neither_written_nor_applied() {
     });
     assert!(!f.svc.paths.settings_path.exists());
     assert!(f.ctrl_rx.try_recv().is_err());
+}
+
+#[test]
+fn a_new_ui_language_is_announced_once() {
+    let f = Fixture::new();
+    with_state(&f, |s| {
+        assert_eq!(language(s.clone()), Language::Fr, "system: fr-FR first");
+        save_settings(s.clone(), Settings { language: LanguagePref::Fr, ..Default::default() }).unwrap();
+        assert!(f.ui.calls().is_empty(), "the system language was already French");
+        save_settings(s.clone(), Settings { language: LanguagePref::En, ..Default::default() }).unwrap();
+        assert_eq!(language(s.clone()), Language::En);
+        save_settings(s.clone(), Settings { language: LanguagePref::En, level: Level::Raw, ..Default::default() })
+            .unwrap();
+        assert_eq!(f.ui.calls(), vec![UiCall::LanguageChanged(Language::En)], "only on a change");
+        save_settings(s.clone(), Settings::default()).unwrap();
+        assert_eq!(language(s), Language::Fr);
+    });
+    assert_eq!(f.ui.calls(), vec![UiCall::LanguageChanged(Language::En), UiCall::LanguageChanged(Language::Fr)]);
+}
+
+#[test]
+fn an_invalid_language_change_is_not_announced() {
+    let f = Fixture::new();
+    with_state(&f, |s| {
+        let bad = Settings { language: LanguagePref::En, trigger_keys: vec![], ..Default::default() };
+        assert!(save_settings(s.clone(), bad).is_err());
+        assert_eq!(language(s), Language::Fr);
+    });
+    assert!(f.ui.calls().is_empty());
 }
 
 #[test]
@@ -141,14 +177,17 @@ fn api_keys_are_stored_and_reported_per_provider() {
         set_api_key(s.clone(), "openai".into(), " sk-1 ".into()).unwrap();
         let status = key_status(s.clone());
         assert_eq!((status["openai"], status["anthropic"]), (true, false));
-        assert_eq!(set_api_key(s.clone(), "nope".into(), "k".into()).unwrap_err(), "fournisseur inconnu : nope");
+        assert_eq!(
+            set_api_key(s.clone(), "nope".into(), "k".into()).unwrap_err(),
+            AppError::System { detail: "unknown provider: nope".into() }
+        );
         set_api_key(s.clone(), "openai".into(), "".into()).unwrap();
         assert!(!key_status(s)["openai"]);
     });
     assert!(f.secrets.keys.lock().unwrap().is_empty());
 }
 
-fn test_providers_with(f: &Fixture) -> Result<ProviderTest, String> {
+fn test_providers_with(f: &Fixture) -> Result<ProviderTest, AppError> {
     with_state(f, |s| tauri::async_runtime::block_on(test_providers(s)))
 }
 
@@ -163,11 +202,19 @@ fn provider_test_reports_each_call() {
         p.llm = Err(ProviderError::Http { status: 404, body: "modèle inconnu".into() });
     });
     let r = test_providers_with(&f).unwrap();
-    assert_eq!(r.stt, Err("clé API refusée".into()));
-    assert_eq!(r.llm, Some(Err("HTTP 404 : modèle inconnu".into())));
+    assert_eq!(r.stt, Err(ProviderError::Auth));
+    assert_eq!(r.llm, Some(Err(ProviderError::Http { status: 404, body: "modèle inconnu".into() })));
+    assert_eq!(
+        serde_json::to_value(&r).unwrap(),
+        serde_json::json!({
+            "stt": {"Err": {"code": "auth"}},
+            "llm": {"Err": {"code": "http", "status": 404, "body": "modèle inconnu"}}
+        })
+    );
 
-    f.plan(|p| p.build = Err(ProviderError::Config("clé API manquante".into())));
-    assert_eq!(test_providers_with(&f).unwrap_err(), "configuration : clé API manquante");
+    let missing = ProviderError::MissingKey { provider: "OpenAI".into() };
+    f.plan(|p| p.build = Err(missing.clone()));
+    assert_eq!(test_providers_with(&f).unwrap_err(), AppError::Provider { error: missing });
 }
 
 #[test]
@@ -176,7 +223,9 @@ fn provider_test_skips_the_corrector_at_the_raw_level() {
     let r = test_providers_with(&f).unwrap();
     assert!(r.stt.is_ok());
     assert_eq!(r.llm, None);
-    assert_eq!(serde_json::to_value(&r).unwrap()["llm"], serde_json::Value::Null);
+    let json = serde_json::to_value(&r).unwrap();
+    assert_eq!(json["llm"], serde_json::Value::Null);
+    assert!(json["stt"]["Ok"].is_u64(), "{json}");
 }
 
 #[test]
@@ -218,9 +267,10 @@ fn autostart_is_read_and_switched() {
         assert_eq!(set_autostart(s.clone(), true), Ok(true));
         assert_eq!(get_autostart(s.clone()), Ok(true));
         assert_eq!(set_autostart(s.clone(), false), Ok(false));
-        *f.autostart.fail.lock().unwrap() = Some("accès au registre refusé".into());
-        assert_eq!(set_autostart(s.clone(), true), Err("accès au registre refusé".into()));
-        assert_eq!(get_autostart(s), Err("accès au registre refusé".into()));
+        *f.autostart.fail.lock().unwrap() = Some("registry access denied".into());
+        let denied = AppError::System { detail: "registry access denied".into() };
+        assert_eq!(set_autostart(s.clone(), true), Err(denied.clone()));
+        assert_eq!(get_autostart(s), Err(denied));
     });
     assert!(!*f.autostart.enabled.lock().unwrap(), "a failed switch changes nothing");
 }
@@ -241,8 +291,11 @@ fn permissions_are_read_requested_and_opened_in_the_settings() {
             "the states after the request"
         );
         assert_eq!(open_permission_settings(s.clone(), Permission::Accessibility), Ok(()));
-        *f.permissions.fail.lock().unwrap() = Some("open introuvable".into());
-        assert_eq!(open_permission_settings(s, Permission::Microphone), Err("open introuvable".into()));
+        *f.permissions.fail.lock().unwrap() = Some("open not found".into());
+        assert_eq!(
+            open_permission_settings(s, Permission::Microphone),
+            Err(AppError::System { detail: "open not found".into() })
+        );
     });
     assert_eq!(*f.permissions.opened.lock().unwrap(), [Permission::Accessibility]);
 }
@@ -256,8 +309,14 @@ fn update_commands_check_and_install() {
         let st = tauri::async_runtime::block_on(check_update(s.clone())).unwrap();
         assert_eq!((st.current.as_str(), st.available.map(|u| u.version)), ("0.1.0", Some("0.2.0".into())));
         tauri::async_runtime::block_on(install_update(s.clone())).unwrap();
-        *f.updater.fail.lock().unwrap() = Some("signature invalide".into());
-        assert_eq!(tauri::async_runtime::block_on(install_update(s)), Err("signature invalide".into()));
+        *f.updater.fail.lock().unwrap() = Some("invalid signature".into());
+        assert_eq!(
+            tauri::async_runtime::block_on(install_update(s.clone())),
+            Err(AppError::System { detail: "invalid signature".into() })
+        );
+        *f.updater.fail.lock().unwrap() = None;
+        *f.updater.available.lock().unwrap() = None;
+        assert_eq!(tauri::async_runtime::block_on(install_update(s)), Err(AppError::NoUpdate));
     });
     assert_eq!(*f.updater.installs.lock().unwrap(), 1);
 }
@@ -288,7 +347,7 @@ fn overlay_dismiss_hides_a_toast_but_not_a_recording() {
         f.svc.overlay.emit(OverlayEvent::Recording { locked: false, warning: None });
         overlay_dismiss(s.clone());
         assert!(f.window.visible());
-        f.svc.overlay.toast(ToastLevel::Copied, "copié", None, Some(1));
+        f.svc.overlay.toast(ToastLevel::Copied, Notice::Copied { correction: None }, None, Some(1));
         overlay_dismiss(s);
         assert!(!f.window.visible());
     });
@@ -297,7 +356,7 @@ fn overlay_dismiss_hides_a_toast_but_not_a_recording() {
 #[test]
 fn open_history_shows_the_main_window_on_the_dictation() {
     let f = Fixture::new();
-    f.svc.overlay.toast(ToastLevel::Error, "échec", None, Some(5));
+    f.svc.overlay.toast(ToastLevel::Error, Notice::TranscriptionFailed { error: ProviderError::Auth }, None, Some(5));
     with_state(&f, |s| {
         open_history(s.clone(), Some(5));
         open_history(s, None);

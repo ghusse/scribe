@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { lang } from "./i18n";
 import { assignHotkey, CAPTURE_GRACE_MS, captureOutcome, isTypingKey, normalizeLock, pendingSummary, swallowsKey } from "./hotkeys";
 
 const CTRL_R = 0xa3, CTRL_L = 0xa2, SHIFT_L = 0xa0, ALT_L = 0xa4, SPACE = 0x20, F8 = 0x77, A = 0x41, B = 0x42;
@@ -67,6 +68,18 @@ describe("assignHotkey", () => {
       note: "Windows peut utiliser Alt + Maj pour changer la langue du clavier.",
       confirm: false,
     });
+  });
+});
+
+describe("assignHotkey in English", () => {
+  it("words its notes in the UI language", () => {
+    lang.value = "en";
+    expect(assignHotkey("trigger", [SPACE], cur)).toMatchObject({ note: "Keys swapped: Trigger = Space, Lock = Right Ctrl." });
+    expect(assignHotkey("lock", [CTRL_L, A], cur)).toEqual({ ok: false, note: "The lock is a single key." });
+    expect(assignHotkey("trigger", [CTRL_L, SHIFT_L, ALT_L, 0x5b, A], cur)).toEqual({ ok: false, note: "A shortcut has at most 4 keys." });
+    expect(assignHotkey("trigger", [CTRL_L, SPACE], cur)).toEqual({ ok: false, note: "Space is the lock key: it cannot be part of the shortcut." });
+    expect(assignHotkey("lock", [A], { trigger_keys: [CTRL_L, A], lock_vk: SPACE })).toEqual({ ok: false, note: "A is part of the trigger shortcut." });
+    expect(assignHotkey("lock", [CTRL_R], { trigger_keys: [CTRL_R], lock_vk: 0 })).toEqual({ ok: false, note: "Right Ctrl is already the trigger key." });
   });
 });
 

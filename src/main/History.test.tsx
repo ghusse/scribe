@@ -4,6 +4,7 @@ import type { Dictation } from "../lib/api";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
 import { advanceTimers } from "../../tests/timers";
 import { COPY_FEEDBACK_MS } from "../lib/history";
+import { lang } from "../lib/i18n";
 import History, { type HistoryProps } from "./History";
 import styles from "./History.module.css";
 
@@ -45,11 +46,35 @@ describe("History", () => {
     expect(calls("list_dictations")).toEqual([{ query: null, limit: 50, offset: 0 }]);
     expect(within(card(1)).getByText("Inséré")).toBeTruthy();
     expect(within(card(1)).getByText("· Code")).toBeTruthy();
-    expect(within(card(1)).getByText("4.2 s · STT 800 ms · LLM 600 ms")).toBeTruthy();
+    expect(within(card(1)).getByText("4,2 s · STT 800 ms · LLM 600 ms")).toBeTruthy();
     expect(within(card(2)).getByText("Erreur")).toBeTruthy();
     expect(within(card(2)).getByText("—")).toBeTruthy();
     expect(within(card(2)).getByText("clé refusée")).toBeTruthy();
-    expect(within(card(2)).getByText("4.2 s")).toBeTruthy();
+    expect(within(card(2)).getByText("4,2 s")).toBeTruthy();
+  });
+
+  it("translates a stored provider error and a command's error code", async () => {
+    rows = [dictation(1), dictation(2, { outcome: "error", error: JSON.stringify({ code: "http", status: 429, body: "slow down" }) })];
+    commands({ copy_dictation: () => Promise.reject({ code: "no_text" }) });
+    await mount();
+    expect(within(card(2)).getByText("trop de requêtes, réessayez dans un instant")).toBeTruthy();
+    await fireEvent.click(button(1, "Copier"));
+    expect(await screen.findByText("cette dictée n'a pas de texte")).toBeTruthy();
+  });
+
+  it("speaks English, dates and numbers included, and re-renders on a language change", async () => {
+    lang.value = "en";
+    rows = [dictation(1, { duration_ms: 1500, stt_ms: 1234 })];
+    await mount();
+    expect(within(card(1)).getByText("Inserted")).toBeTruthy();
+    expect(within(card(1)).getByText("1.5 s · STT 1,234 ms · LLM 600 ms")).toBeTruthy();
+    expect(within(card(1)).getByText(new Date("2026-10-05T10:00:00Z").toLocaleString("en"))).toBeTruthy();
+    expect(button(1, "Transcribe again")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Search the history…")).toBeTruthy();
+    lang.value = "fr";
+    await waitFor(() => expect(within(card(1)).getByText("Inséré")).toBeTruthy());
+    expect(within(card(1)).getByText(new Date("2026-10-05T10:00:00Z").toLocaleString("fr"))).toBeTruthy();
+    expect(button(1, "Retranscrire")).toBeTruthy();
   });
 
   it("disables copy/edit without a transcript and retranscription without audio", async () => {

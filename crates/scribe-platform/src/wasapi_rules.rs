@@ -188,12 +188,12 @@ pub fn aligned_duration(frames: u32, rate: u32) -> i64 {
 /// Why exclusive mode was refused, in the user's words.
 pub fn describe_failure(code: i32, message: &str) -> String {
     match code {
-        AUDCLNT_E_DEVICE_IN_USE => "micro déjà réservé par une autre application".into(),
+        AUDCLNT_E_DEVICE_IN_USE => "microphone already held by another application".into(),
         AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED => {
-            "mode exclusif désactivé pour ce micro dans les réglages Son de Windows".into()
+            "exclusive mode disabled for this microphone in the Windows Sound settings".into()
         }
-        AUDCLNT_E_DEVICE_INVALIDATED => "micro débranché ou désactivé".into(),
-        AUDCLNT_E_UNSUPPORTED_FORMAT => "format audio refusé par le micro".into(),
+        AUDCLNT_E_DEVICE_INVALIDATED => "microphone unplugged or disabled".into(),
+        AUDCLNT_E_UNSUPPORTED_FORMAT => "audio format refused by the microphone".into(),
         _ => format!("{message} ({:#010x})", code as u32),
     }
 }
@@ -250,7 +250,7 @@ pub fn negotiate(client: &mut dyn ExclusiveClient) -> Result<PcmFormat, String> 
     Err(if used {
         describe_failure(AUDCLNT_E_UNSUPPORTED_FORMAT, "")
     } else {
-        "aucun format audio accepté par le micro en mode exclusif".into()
+        "no audio format accepted by the microphone in exclusive mode".into()
     })
 }
 
@@ -286,7 +286,7 @@ pub fn spawn_capture(body: CaptureBody) -> Result<OpenStream, String> {
     match ready_rx.recv() {
         Ok(Ok((channels, rate))) => Ok(OpenStream { channels, rate, stream: Box::new(thread) }),
         Ok(Err(e)) => Err(e),
-        Err(_) => Err("le thread de capture exclusive s'est arrêté".into()),
+        Err(_) => Err("the exclusive capture thread stopped".into()),
     }
 }
 
@@ -408,10 +408,10 @@ mod tests {
 
     #[test]
     fn failures_are_told_in_the_users_words() {
-        assert_eq!(describe_failure(AUDCLNT_E_DEVICE_IN_USE, "x"), "micro déjà réservé par une autre application");
-        assert!(describe_failure(AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, "x").contains("désactivé"));
-        assert_eq!(describe_failure(AUDCLNT_E_UNSUPPORTED_FORMAT, "x"), "format audio refusé par le micro");
-        assert_eq!(describe_failure(AUDCLNT_E_DEVICE_INVALIDATED, "x"), "micro débranché ou désactivé");
+        assert_eq!(describe_failure(AUDCLNT_E_DEVICE_IN_USE, "x"), "microphone already held by another application");
+        assert!(describe_failure(AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, "x").contains("disabled"));
+        assert_eq!(describe_failure(AUDCLNT_E_UNSUPPORTED_FORMAT, "x"), "audio format refused by the microphone");
+        assert_eq!(describe_failure(AUDCLNT_E_DEVICE_INVALIDATED, "x"), "microphone unplugged or disabled");
         assert_eq!(describe_failure(0x80070005_u32 as i32, "Accès refusé."), "Accès refusé. (0x80070005)");
     }
 
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn no_accepted_format_is_refused_before_initialising() {
         let mut c = FakeClient::default();
-        assert_eq!(negotiate(&mut c), Err("aucun format audio accepté par le micro en mode exclusif".into()));
+        assert_eq!(negotiate(&mut c), Err("no audio format accepted by the microphone in exclusive mode".into()));
         assert!(c.log.is_empty());
     }
 
@@ -503,14 +503,14 @@ mod tests {
     fn initialisation_failures_are_refusals() {
         let mut c =
             FakeClient { accepted: vec![mono16()], init: vec![Err(AUDCLNT_E_DEVICE_IN_USE)], ..FakeClient::default() };
-        assert_eq!(negotiate(&mut c), Err("micro déjà réservé par une autre application".into()));
+        assert_eq!(negotiate(&mut c), Err("microphone already held by another application".into()));
 
         let mut c = FakeClient {
             accepted: vec![mono16()],
             init: vec![Err(AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED), Err(AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED)],
             ..FakeClient::default()
         };
-        assert!(negotiate(&mut c).unwrap_err().contains("désactivé"));
+        assert!(negotiate(&mut c).unwrap_err().contains("disabled"));
 
         for call in ["period", "buffer_frames", "renew"] {
             let mut c = FakeClient {
@@ -545,17 +545,17 @@ mod tests {
             init: vec![Err(AUDCLNT_E_UNSUPPORTED_FORMAT), Err(AUDCLNT_E_UNSUPPORTED_FORMAT)],
             ..FakeClient::default()
         };
-        assert_eq!(negotiate(&mut c), Err("format audio refusé par le micro".into()));
+        assert_eq!(negotiate(&mut c), Err("audio format refused by the microphone".into()));
     }
 
     #[test]
     fn a_device_refusal_while_probing_formats_stops_with_its_reason() {
         for (code, reason) in [
-            (AUDCLNT_E_DEVICE_IN_USE, "micro déjà réservé par une autre application"),
-            (AUDCLNT_E_DEVICE_INVALIDATED, "micro débranché ou désactivé"),
+            (AUDCLNT_E_DEVICE_IN_USE, "microphone already held by another application"),
+            (AUDCLNT_E_DEVICE_INVALIDATED, "microphone unplugged or disabled"),
             (
                 AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED,
-                "mode exclusif désactivé pour ce micro dans les réglages Son de Windows",
+                "exclusive mode disabled for this microphone in the Windows Sound settings",
             ),
         ] {
             let mut c = FakeClient { accepted: vec![stereo16()], refusal: Some(code), ..FakeClient::default() };
@@ -598,6 +598,6 @@ mod tests {
         let r = spawn_capture(Box::new(|ready, _| ready.send(Err("micro déjà réservé".into())).unwrap()));
         assert_eq!(r.err(), Some("micro déjà réservé".into()));
         let r = spawn_capture(Box::new(|_, _| panic!("WASAPI glue panicked")));
-        assert_eq!(r.err(), Some("le thread de capture exclusive s'est arrêté".into()));
+        assert_eq!(r.err(), Some("the exclusive capture thread stopped".into()));
     }
 }

@@ -273,7 +273,7 @@ fn unavailable_microphone_aborts_and_resets() {
         h.last_overlay(),
         Some(OverlayEvent::Toast {
             level: ToastLevel::Error,
-            message: "Micro indisponible : aucun périphérique".into(),
+            message: Notice::MicrophoneUnavailable { detail: "aucun périphérique".into() },
             preview: None,
             dictation_id: None
         })
@@ -312,7 +312,7 @@ fn lost_recording_is_reported_and_the_session_goes_idle() {
         h.last_overlay(),
         Some(OverlayEvent::Toast {
             level: ToastLevel::Error,
-            message: "Enregistrement perdu : micro débranché".into(),
+            message: Notice::RecordingLost { detail: "micro débranché".into() },
             preview: None,
             dictation_id: None
         })
@@ -645,7 +645,7 @@ fn exclusive(refused: bool) -> Harness {
 }
 
 fn warning(locked: bool) -> Option<OverlayEvent> {
-    Some(OverlayEvent::Recording { locked, warning: Some(SHARED_MICROPHONE_WARNING.into()) })
+    Some(OverlayEvent::Recording { locked, warning: Some(RecordingWarning::SharedMicrophone) })
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn microphone_warning_only_when_exclusive_access_was_asked_and_not_obtained() {
     let asked = RecordOptions { exclusive_microphone: true };
     let (shared, held) =
         (RecordingStart { exclusive_microphone: false }, RecordingStart { exclusive_microphone: true });
-    assert_eq!(microphone_warning(asked, shared), Some(SHARED_MICROPHONE_WARNING.to_string()));
+    assert_eq!(microphone_warning(asked, shared), Some(RecordingWarning::SharedMicrophone));
     assert_eq!(microphone_warning(asked, held), None);
     assert_eq!(microphone_warning(RecordOptions::default(), shared), None);
 }

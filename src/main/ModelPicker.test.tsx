@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
+import { lang } from "../lib/i18n";
 import ModelPicker from "./ModelPicker";
 
 const CUSTOM_LABEL = "Identifiant du modèle personnalisé";
@@ -105,5 +106,12 @@ describe("ModelPicker", () => {
     const input = screen.getByLabelText(CUSTOM_LABEL) as HTMLInputElement;
     await fireEvent.change(input, { target: { value: "   " } });
     expect(input.value).toBe("   ");
+  });
+
+  it("speaks English", () => {
+    lang.value = "en";
+    setup(["a-2"], "my-model");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["a-2 (latest, default)", "Other…"]);
+    expect(screen.getByLabelText("Custom model id")).toBeTruthy();
   });
 });

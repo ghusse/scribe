@@ -14,6 +14,8 @@ use scribe_platform::{HookConfig, RawKey};
 
 use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
+use crate::error::AppError;
+use crate::locale::{self, Language};
 use crate::overlay::Overlay;
 use crate::secrets::SecretStore;
 use crate::settings::Settings;
@@ -48,6 +50,8 @@ pub trait UiSink: Send + Sync {
     fn focus_dictation(&self, id: i64);
     /// Show, restore and focus the main window.
     fn show_main(&self);
+    /// The UI language changed: every window and the tray must switch to it.
+    fn language_changed(&self, language: Language);
 }
 
 /// A newer version published as a GitHub release.
@@ -64,7 +68,7 @@ pub trait AppUpdater: Send + Sync {
     fn current_version(&self) -> String;
     async fn check(&self) -> Result<Option<AvailableUpdate>, String>;
     /// Downloads, verifies the signature and installs the latest version, then restarts Scribe.
-    async fn install(&self) -> Result<(), String>;
+    async fn install(&self) -> Result<(), AppError>;
 }
 
 /// Launching Scribe when the user logs in (Windows registry Run key, macOS LaunchAgent), with `--minimized`.
@@ -83,6 +87,8 @@ pub type WarmUp = Box<dyn Fn(&Settings) + Send + Sync>;
 pub struct Services {
     pub db: Mutex<Db>,
     pub settings: RwLock<Settings>,
+    /// The OS preferred languages (BCP 47 tags), read at launch.
+    pub system_languages: Vec<String>,
     pub paths: AppPaths,
     pub hook_cfg: Arc<HookConfig>,
     pub focus: Arc<dyn FocusDetector>,
@@ -110,6 +116,11 @@ pub struct Services {
 impl Services {
     pub fn build_providers(&self, settings: &Settings) -> Result<Providers, ProviderError> {
         (self.providers)(settings, self.secrets.as_ref())
+    }
+
+    /// The language the UI must use: the saved choice, else the system's.
+    pub fn language(&self) -> Language {
+        locale::resolve(self.settings.read().unwrap().language, &self.system_languages)
     }
 
     pub fn send_ctrl(&self, msg: ControllerMsg) {

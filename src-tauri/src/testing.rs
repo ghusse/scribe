@@ -12,6 +12,8 @@ use scribe_platform::HookConfig;
 
 use crate::audio_mute::AudioMute;
 use crate::controller::ControllerMsg;
+use crate::error::AppError;
+use crate::locale::Language;
 use crate::overlay::fake::FakeWindow;
 use crate::overlay::Overlay;
 use crate::secrets::memory::MemorySecretStore;
@@ -24,6 +26,7 @@ pub enum UiCall {
     HistoryChanged,
     FocusDictation(i64),
     ShowMain,
+    LanguageChanged(Language),
 }
 
 #[derive(Default)]
@@ -52,6 +55,9 @@ impl UiSink for FakeUi {
     }
     fn show_main(&self) {
         self.calls.lock().unwrap().push(UiCall::ShowMain);
+    }
+    fn language_changed(&self, language: Language) {
+        self.calls.lock().unwrap().push(UiCall::LanguageChanged(language));
     }
 }
 
@@ -178,9 +184,12 @@ impl AppUpdater for FakeUpdater {
             None => Ok(self.available.lock().unwrap().clone()),
         }
     }
-    async fn install(&self) -> Result<(), String> {
+    async fn install(&self) -> Result<(), AppError> {
         if let Some(e) = self.fail.lock().unwrap().clone() {
-            return Err(e);
+            return Err(e.into());
+        }
+        if self.available.lock().unwrap().is_none() {
+            return Err(AppError::NoUpdate);
         }
         *self.installs.lock().unwrap() += 1;
         Ok(())
@@ -256,8 +265,8 @@ struct FakeLlm(Result<String, ProviderError>);
 
 #[async_trait::async_trait]
 impl Corrector for FakeLlm {
-    fn name(&self) -> String {
-        "fake-llm".into()
+    fn name(&self) -> Option<String> {
+        Some("fake-llm".into())
     }
     async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
         self.0.clone()
@@ -351,6 +360,7 @@ impl Fixture {
             db: Mutex::new(Db::open_in_memory().unwrap()),
             hook_cfg: hook_cfg.clone(),
             settings: RwLock::new(settings),
+            system_languages: vec!["fr-FR".into(), "en-US".into()],
             paths,
             focus: focus.clone(),
             clipboard: clipboard.clone(),

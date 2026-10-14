@@ -27,11 +27,6 @@ pub fn hides_on_close(window_label: &str) -> bool {
     window_label == MAIN_WINDOW
 }
 
-/// Toast shown when the global keyboard hook cannot be installed.
-pub fn hook_unavailable_message(error: &str) -> String {
-    format!("Raccourci indisponible : {error}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,10 +85,5 @@ mod tests {
         assert!(hides_on_close("main"));
         assert!(!hides_on_close("overlay"));
         assert!(!hides_on_close("Main"));
-    }
-
-    #[test]
-    fn hook_failure_message_names_the_error() {
-        assert_eq!(hook_unavailable_message("accès refusé"), "Raccourci indisponible : accès refusé");
     }
 }

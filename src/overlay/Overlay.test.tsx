@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
+import { lang } from "../lib/i18n";
 import Overlay from "./Overlay";
 import styles from "./Overlay.module.css";
 
 const toast = (over: Record<string, unknown> = {}) => ({
-  kind: "toast", level: "info", message: "Inséré", preview: "Bonjour", dictation_id: 7, ...over,
+  kind: "toast", level: "info", message: { code: "copied", correction: null }, preview: "Bonjour", dictation_id: 7, ...over,
 });
 
 async function mount() {
@@ -13,6 +14,8 @@ async function mount() {
   await waitFor(() => expect(emit("overlay", { kind: "idle" })).toBe(1));
   return r;
 }
+
+const COPIED = "Texte copié dans le presse-papier";
 
 const fire = async (name: string, payload: unknown) => {
   emit(name, payload);
@@ -50,11 +53,11 @@ describe("Overlay", () => {
     await mount();
     await fire("overlay", { kind: "recording", locked: false, warning: null });
     expect(screen.queryByRole("alert")).toBeNull();
-    const warning = "Micro non exclusif : les autres applications vous entendent";
-    await fire("overlay", { kind: "recording", locked: false, warning });
-    expect(screen.getByRole("alert").textContent).toBe(warning);
-    await fire("overlay", { kind: "recording", locked: true, warning });
-    expect(screen.getByRole("alert").textContent).toBe(warning);
+    const text = "Micro non exclusif : les autres applications vous entendent";
+    await fire("overlay", { kind: "recording", locked: false, warning: "shared_microphone" });
+    expect(screen.getByRole("alert").textContent).toBe(text);
+    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone" });
+    expect(screen.getByRole("alert").textContent).toBe(text);
     expect(screen.getByText("Verrouillé")).toBeTruthy();
     await fire("overlay", { kind: "processing" });
     expect(screen.queryByRole("alert")).toBeNull();
@@ -69,24 +72,24 @@ describe("Overlay", () => {
   it("shows a toast with its preview and buttons; Copier copies then closes", async () => {
     const { container } = await mount();
     await fire("overlay", toast());
-    expect(screen.getByText("Inséré")).toBeTruthy();
+    expect(screen.getByText(COPIED)).toBeTruthy();
     expect(screen.getByText("Bonjour")).toBeTruthy();
     expect(container.querySelector(`.${styles.toast}[data-level="info"]`)).toBeTruthy();
     await fireEvent.click(screen.getByText("Copier"));
-    await waitFor(() => expect(screen.queryByText("Inséré")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(COPIED)).toBeNull());
     expect(calls("copy_dictation")).toEqual([{ id: 7 }]);
     expect(calls("overlay_dismiss")).toHaveLength(1);
   });
 
   it("an error toast has Voir but no Copier, and no preview line when there is none", async () => {
     const { container } = await mount();
-    await fire("overlay", toast({ level: "error", preview: null, message: "Échec" }));
+    await fire("overlay", toast({ level: "error", preview: null, message: { code: "transcription_failed", error: { code: "timeout" } } }));
     expect(screen.queryByText("Copier")).toBeNull();
     expect(container.querySelector(`.${styles.toast}.${styles.error}[data-level="error"]`)).toBeTruthy();
     expect(container.querySelector(`.${styles.toast} p`)).toBeNull();
     await fireEvent.click(screen.getByText("Voir"));
     expect(calls("open_history")).toEqual([{ id: 7 }]);
-    expect(screen.getByText("Échec")).toBeTruthy();
+    expect(screen.getByText("Échec de la transcription : fournisseur injoignable. Réessayez depuis l'historique.")).toBeTruthy();
   });
 
   it("a toast without dictation only has the close button", async () => {
@@ -94,7 +97,7 @@ describe("Overlay", () => {
     await fire("overlay", toast({ dictation_id: null }));
     expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual(["Fermer"]);
     await fireEvent.click(screen.getByLabelText("Fermer"));
-    expect(screen.queryByText("Inséré")).toBeNull();
+    expect(screen.queryByText(COPIED)).toBeNull();
     expect(calls("overlay_dismiss")).toHaveLength(1);
   });
 
@@ -104,9 +107,9 @@ describe("Overlay", () => {
     await fire("overlay", toast());
     vi.advanceTimersByTime(5999);
     await Promise.resolve();
-    expect(screen.getByText("Inséré")).toBeTruthy();
+    expect(screen.getByText(COPIED)).toBeTruthy();
     vi.advanceTimersByTime(1);
-    await waitFor(() => expect(screen.queryByText("Inséré")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(COPIED)).toBeNull());
     expect(calls("overlay_dismiss")).toHaveLength(1);
   });
 
@@ -115,7 +118,7 @@ describe("Overlay", () => {
     await mount();
     await fire("overlay", toast());
     await fireEvent.click(screen.getByText("Copier"));
-    expect(await screen.findByText(/^Copie impossible\s: presse-papier occupé$/)).toBeTruthy();
+    expect(await screen.findByText("Copie impossible : presse-papier occupé")).toBeTruthy();
     expect(calls("overlay_dismiss")).toHaveLength(0);
   });
 
@@ -127,10 +130,32 @@ describe("Overlay", () => {
       await fire("overlay", toast());
       await fireEvent.click(screen.getByLabelText("Fermer"));
       await waitFor(() => expect(logged).toHaveBeenCalledWith("fenêtre fermée"));
-      expect(screen.queryByText("Inséré")).toBeNull();
+      expect(screen.queryByText(COPIED)).toBeNull();
     } finally {
       logged.mockRestore();
     }
+  });
+
+  it("speaks English, and follows a language change while shown", async () => {
+    lang.value = "en";
+    await mount();
+    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone" });
+    expect(screen.getByRole("status", { name: "Recording" })).toBeTruthy();
+    expect(screen.getByText("Locked")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Microphone not exclusive: other apps can hear you");
+    await fire("overlay", toast());
+    expect(screen.getByText("Text copied to the clipboard")).toBeTruthy();
+    expect(screen.getByText("Copy")).toBeTruthy();
+    await fire("language", "fr");
+    expect(await screen.findByText(COPIED)).toBeTruthy();
+    expect(screen.getByText("Voir")).toBeTruthy();
+  });
+
+  it("starts in the backend's language", async () => {
+    commands({ language: () => "en" });
+    await mount();
+    await fire("overlay", { kind: "processing" });
+    expect(await screen.findByText("Transcribing…")).toBeTruthy();
   });
 
   it("stops listening when unmounted", async () => {

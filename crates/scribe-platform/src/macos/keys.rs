@@ -108,8 +108,8 @@ impl KeySender for MacKeySender {
         let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState);
         let keycode = active_paste_keycode();
         for down in [true, false] {
-            let event = CGEvent::new_keyboard_event(source.as_deref(), keycode, down)
-                .ok_or("création de l'événement Cmd+V impossible")?;
+            let event =
+                CGEvent::new_keyboard_event(source.as_deref(), keycode, down).ok_or("cannot create the Cmd+V event")?;
             CGEvent::set_flags(Some(&event), CGEventFlags::MaskCommand);
             // Never set the unicode string: macOS 27 then types a plain « v » (or beeps) instead of pasting.
             CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, INJECTED_MARK);

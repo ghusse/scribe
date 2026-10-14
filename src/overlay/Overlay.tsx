@@ -2,10 +2,13 @@ import { listen } from "@tauri-apps/api/event";
 import { useSignal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
 import { api, type OverlayEvent } from "../lib/api";
+import { noticeText } from "../lib/errors";
+import { t, useLanguage } from "../lib/i18n";
 import { barHeight, createOverlay, emptyLevels, toastActions, type OverlayView } from "./model";
 import styles from "./Overlay.module.css";
 
 export default function Overlay() {
+  useLanguage();
   const view = useSignal<OverlayView>({ ov: { kind: "idle" }, levels: emptyLevels() });
   const [overlay] = useState(() =>
     createOverlay(
@@ -32,21 +35,22 @@ export default function Overlay() {
   }, []);
 
   const { ov, levels } = view.value;
+  const m = t.value.overlay;
   if (ov.kind === "recording") {
     return (
       <div class={styles.recording}>
-        <div class={styles.pill} role="status" aria-label="Enregistrement">
+        <div class={styles.pill} role="status" aria-label={m.recording}>
           <span class={styles.dot}></span>
           <div class={styles.bars}>
             {levels.map((l, i) => (
               <span key={i} style={{ height: `${barHeight(l)}px` }}></span>
             ))}
           </div>
-          {ov.locked && <span class={styles.tag}>Verrouillé</span>}
+          {ov.locked && <span class={styles.tag}>{m.locked}</span>}
         </div>
         {ov.warning && (
           <p class={styles.warning} role="alert">
-            {ov.warning}
+            {m.warnings[ov.warning]}
           </p>
         )}
       </div>
@@ -56,7 +60,7 @@ export default function Overlay() {
     return (
       <div class={styles.pill} role="status">
         <span class={styles.spinner}></span>
-        <span class={styles.label}>Transcription…</span>
+        <span class={styles.label}>{m.processing}</span>
       </div>
     );
   }
@@ -65,13 +69,13 @@ export default function Overlay() {
     return (
       <div class={`${styles.toast} ${styles[ov.level] ?? ""}`} data-level={ov.level} role="status">
         <div class={styles.text}>
-          <strong>{ov.message}</strong>
+          <strong>{noticeText(ov.message)}</strong>
           {ov.preview && <p>{ov.preview}</p>}
         </div>
         <div class={styles.actions}>
-          {actions.copy && <button onClick={overlay.copy}>Copier</button>}
-          {actions.view && <button onClick={overlay.openHistory}>Voir</button>}
-          <button class={styles.close} onClick={overlay.dismiss} aria-label="Fermer">
+          {actions.copy && <button onClick={overlay.copy}>{m.copy}</button>}
+          {actions.view && <button onClick={overlay.openHistory}>{m.view}</button>}
+          <button class={styles.close} onClick={overlay.dismiss} aria-label={m.close}>
             ×
           </button>
         </div>

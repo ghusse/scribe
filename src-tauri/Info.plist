@@ -2,8 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>fr</string>
+  </array>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Scribe enregistre votre voix pendant que vous maintenez le raccourci, pour la transcrire.</string>
+  <string>Scribe records your voice while you hold the shortcut, to transcribe it.</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

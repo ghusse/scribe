@@ -10,10 +10,11 @@ import {
   editDraft,
   editPayload,
   latestOnly,
-  OUTCOME_BADGES,
   STALE,
   timingLine,
 } from "../lib/history";
+import { errorText, storedErrorText } from "../lib/errors";
+import { lang, t } from "../lib/i18n";
 import { cx, useTick } from "../lib/ui";
 import styles from "./History.module.css";
 
@@ -49,7 +50,7 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
       hasMore.value = page.length === PAGE;
       error.value = null;
     } catch (e) {
-      error.value = String(e);
+      error.value = errorText(e);
     }
   }
 
@@ -66,7 +67,7 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
       error.value = null;
       return true;
     } catch (e) {
-      error.value = String(e);
+      error.value = errorText(e);
       return false;
     } finally {
       busy.value = null;
@@ -120,15 +121,16 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
     };
   }, []);
 
+  const m = t.value.history;
   return (
     <>
-      <input class={styles.search} placeholder="Rechercher dans l'historique…" value={query.value} onInput={onSearch} />
+      <input class={styles.search} placeholder={m.search} value={query.value} onInput={onSearch} />
       {error.value && <p class={styles.error}>{error.value}</p>}
       <p class={styles.srOnly} aria-live="polite">
-        {copied.value !== null ? "Texte copié" : ""}
+        {copied.value !== null ? m.copiedAnnouncement : ""}
       </p>
       {items.value.length === 0 && (
-        <p class={styles.muted}>Aucune dictée. Maintenez la touche de déclenchement et parlez.</p>
+        <p class={styles.muted}>{m.empty}</p>
       )}
 
       {items.value.map((d) => (
@@ -138,10 +140,10 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
           class={cx(styles.card, highlighted.value === d.id && styles.highlighted, copied.value === d.id && styles.justCopied)}
         >
           <header>
-            <span class={cx(styles.badge, styles[d.outcome])}>{OUTCOME_BADGES[d.outcome]}</span>
-            <span class={styles.muted}>{new Date(d.created_at).toLocaleString("fr-FR")}</span>
+            <span class={cx(styles.badge, styles[d.outcome])}>{m.outcome[d.outcome]}</span>
+            <span class={styles.muted}>{new Date(d.created_at).toLocaleString(lang.value)}</span>
             {d.app_name && <span class={styles.muted}>· {d.app_name}</span>}
-            <span class={cx(styles.muted, styles.right)}>{timingLine(d)}</span>
+            <span class={cx(styles.muted, styles.right)}>{timingLine(d, lang.value)}</span>
           </header>
 
           {editing.value === d.id ? (
@@ -153,29 +155,29 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
               />
               <div class={styles.row}>
                 <button class="primary" onClick={() => saveEdit(d)}>
-                  Enregistrer la correction
+                  {m.saveEdit}
                 </button>
-                <button onClick={() => (editing.value = null)}>Annuler</button>
+                <button onClick={() => (editing.value = null)}>{m.cancel}</button>
               </div>
             </>
           ) : (
             <p class={styles.text}>{displayText(d)}</p>
           )}
-          {d.error && <p class={cx(styles.error, styles.small)}>{d.error}</p>}
+          {d.error && <p class={cx(styles.error, styles.small)}>{storedErrorText(d.error)}</p>}
 
           {expanded.value === d.id && (
             <dl>
-              <dt>Brut</dt>
+              <dt>{m.raw}</dt>
               <dd>{d.raw_text ?? "—"}</dd>
-              <dt>Corrigé</dt>
+              <dt>{m.corrected}</dt>
               <dd>{d.final_text ?? "—"}</dd>
               {d.edited_text && (
                 <>
-                  <dt>Votre correction</dt>
+                  <dt>{m.yourCorrection}</dt>
                   <dd>{d.edited_text}</dd>
                 </>
               )}
-              <dt>Modèles</dt>
+              <dt>{m.models}</dt>
               <dd>
                 {d.transcriber ?? "—"} / {d.corrector ?? "—"}
               </dd>
@@ -188,16 +190,16 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
               onClick={() => copy(d.id)}
               disabled={!canCopy(d)}
             >
-              {copied.value === d.id ? "✓ Copié" : "Copier"}
+              {copied.value === d.id ? m.copied : m.copy}
             </button>
             <button onClick={() => startEdit(d)} disabled={!canCopy(d)}>
-              Corriger
+              {m.edit}
             </button>
             <button onClick={() => run(d.id, () => api.retranscribe(d.id))} disabled={!canRetranscribe(d, busy.value)}>
-              {busy.value === d.id ? "…" : "Retranscrire"}
+              {busy.value === d.id ? "…" : m.retranscribe}
             </button>
             <button onClick={() => (expanded.value = expanded.value === d.id ? null : d.id)}>
-              {expanded.value === d.id ? "Moins" : "Détails"}
+              {expanded.value === d.id ? m.less : m.details}
             </button>
             {confirmDelete.value === d.id ? (
               <>
@@ -211,19 +213,19 @@ export default function History({ focus = null, onFocused }: HistoryProps) {
                     })
                   }
                 >
-                  Confirmer la suppression
+                  {m.confirmDelete}
                 </button>
-                <button onClick={() => (confirmDelete.value = null)}>Annuler</button>
+                <button onClick={() => (confirmDelete.value = null)}>{m.cancel}</button>
               </>
             ) : (
               <button class="danger" onClick={() => (confirmDelete.value = d.id)}>
-                Supprimer
+                {m.delete}
               </button>
             )}
           </div>
         </article>
       ))}
-      {hasMore.value && <button onClick={() => load(false)}>Plus</button>}
+      {hasMore.value && <button onClick={() => load(false)}>{m.more}</button>}
     </>
   );
 }

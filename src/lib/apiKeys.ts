@@ -1,7 +1,20 @@
 import type { Provider, Settings } from "./api";
+import { lang, t } from "./i18n";
 
 export type KeyRole = "transcription" | "correction";
-export const ROLE_LABELS: Record<KeyRole, string> = { transcription: "Transcription", correction: "Correction" };
+
+export function roleLabel(role: KeyRole): string {
+  return t.value.settings.roles[role];
+}
+
+/** « A, B et C » in the UI language; `formatToParts` keeps each item apart, so it can be a link. */
+export function listParts(items: string[]): { type: "element" | "literal"; value: string }[] {
+  return new Intl.ListFormat(lang.value, { type: "conjunction" }).formatToParts(items);
+}
+
+export function listText(items: string[]): string {
+  return listParts(items).map((p) => p.value).join("");
+}
 
 type UsageSettings = Pick<Settings, "stt_provider" | "llm_provider" | "level">;
 
@@ -42,11 +55,8 @@ export function canSaveKey(draft: string | undefined): boolean {
 }
 
 export function keyPlaceholder(stored: boolean): string {
-  return stored ? "Remplacer la clé…" : "Coller la clé API…";
-}
-
-export function deleteKeyQuestion(label: string): string {
-  return `Supprimer la clé ${label} ?`;
+  const m = t.value.settings.apiKeys;
+  return stored ? m.replace : m.paste;
 }
 
 /** Providers with a typed but unsaved key (a test would run without it), in catalog order. */
@@ -55,25 +65,22 @@ export function unsavedDrafts(drafts: Record<string, string | undefined>, provid
 }
 
 export function unsavedDraftMessage(unsaved: Provider[]): string | null {
+  const m = t.value.settings.test;
   if (unsaved.length === 0) return null;
-  if (unsaved.length === 1) return `Clé ${unsaved[0].label} saisie mais non enregistrée. Enregistrer ?`;
-  const names = unsaved.map((p) => p.label);
-  return `Clés ${names.slice(0, -1).join(", ")} et ${names[names.length - 1]} saisies mais non enregistrées. Enregistrer ?`;
+  if (unsaved.length === 1) return m.unsavedDraft(unsaved[0].label);
+  return m.unsavedDrafts(listText(unsaved.map((p) => p.label)));
 }
 
 export type KeyState = ReturnType<typeof keyState>;
 
 /** Status text of a key row: red when needed, grey when unused, green when stored. */
-export const KEY_STATE_LABELS: Record<KeyState, string> = {
-  saved: "✓ enregistrée",
-  required: "✗ requise",
-  unconfigured: "— non configurée",
-};
+export function keyStateLabel(state: KeyState): string {
+  return t.value.settings.apiKeys.states[state];
+}
 
 /** « Transcription et Correction » for the « utilisée pour » tag. */
 export function rolesText(roles: KeyRole[], lower = false): string {
-  const names = roles.map((r) => (lower ? ROLE_LABELS[r].toLowerCase() : ROLE_LABELS[r]));
-  return names.length > 1 ? `${names.slice(0, -1).join(", ")} et ${names[names.length - 1]}` : (names[0] ?? "");
+  return listText(roles.map((r) => (lower ? roleLabel(r).toLowerCase() : roleLabel(r))));
 }
 
 /** Key rows: providers in use first (transcription, then correction), the others after, catalog order. */
@@ -93,5 +100,5 @@ export function setupBannerParts(missing: { provider: string; roles: KeyRole[] }
 
 /** Under a provider select whose key is missing. */
 export function missingKeyWarning(label: string, role: KeyRole): string {
-  return `⚠ Aucune clé ${label}\u00a0: la ${ROLE_LABELS[role].toLowerCase()} échouera.`;
+  return t.value.settings.models.missingKey(label, roleLabel(role).toLowerCase());
 }

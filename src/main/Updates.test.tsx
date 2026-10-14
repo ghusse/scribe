@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { lang } from "../lib/i18n";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import Updates from "./Updates";
 
@@ -68,5 +69,16 @@ describe("Updates", () => {
     await fireEvent.click(await screen.findByRole("button", { name: /Installer et redémarrer/ }));
     expect((await screen.findByRole("alert")).textContent).toBe("Installation impossible : signature invalide");
     expect(button(/Installer et redémarrer/).disabled).toBe(false);
+  });
+
+  it("speaks English, errors included", async () => {
+    lang.value = "en";
+    commands({ check_update: () => Promise.reject({ code: "no_update" }) });
+    render(<Updates />);
+    await fireEvent.click(button(/Check for updates/));
+    expect((await screen.findByRole("alert")).textContent).toBe("Could not check: no update available");
+    commands({ check_update: () => ({ current: "0.1.0", available: { version: "0.2.0", notes: null } }) });
+    await fireEvent.click(button(/Check for updates/));
+    expect((await screen.findByRole("status")).textContent).toContain("Scribe 0.2.0 is available (current version: 0.1.0).");
   });
 });

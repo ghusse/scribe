@@ -1,0 +1,2 @@
+/* Microphone permission prompt (macOS). */
+"NSMicrophoneUsageDescription" = "Scribe records your voice while you hold the shortcut, to transcribe it.";

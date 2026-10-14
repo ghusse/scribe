@@ -1,12 +1,10 @@
+import { t } from "./i18n";
 import { chordContains, chordName, isModifier, keyName, reservedWarning } from "./keys";
 
 export type HotkeyRole = "trigger" | "lock";
 export interface Hotkeys { trigger_keys: number[]; lock_vk: number }
 
 export const MAX_KEYS = 4;
-/** Shown when the 10 s capture window expires without a key press. */
-export const CAPTURE_TIMEOUT_MESSAGE = "Aucune touche détectée, raccourci inchangé";
-export const TYPING_KEY_WARNING = "Ce raccourci gênera la saisie normale de texte. Continuer ?";
 
 /** Keys used to type text: they are swallowed when they complete the trigger combination. */
 export function isTypingKey(vk: number): boolean {
@@ -41,14 +39,15 @@ const sameKeys = (a: number[], b: number[]) => a.length === b.length && a.every(
  * typing keys, which would be swallowed while typing.
  */
 export function assignHotkey(role: HotkeyRole, captured: number[], cur: Hotkeys): Assignment {
+  const m = t.value.settings.hotkey;
   let keys: Hotkeys;
   let swapped = false;
   if (role === "trigger") {
-    if (captured.length > MAX_KEYS) return { ok: false, note: `Un raccourci compte au plus ${MAX_KEYS} touches.` };
+    if (captured.length > MAX_KEYS) return { ok: false, note: m.tooManyKeys(MAX_KEYS) };
     const old = single(cur.trigger_keys);
     if (chordContains(captured, cur.lock_vk)) {
       if (single(captured) !== cur.lock_vk || old === null) {
-        return { ok: false, note: `${keyName(cur.lock_vk)} est la touche de verrouillage : elle ne peut pas faire partie du raccourci.` };
+        return { ok: false, note: m.lockInTrigger(keyName(cur.lock_vk)) };
       }
       keys = { trigger_keys: [cur.lock_vk], lock_vk: old };
       swapped = true;
@@ -57,11 +56,11 @@ export function assignHotkey(role: HotkeyRole, captured: number[], cur: Hotkeys)
     }
   } else {
     const vk = single(captured);
-    if (vk === null) return { ok: false, note: "Le verrouillage se fait avec une seule touche." };
+    if (vk === null) return { ok: false, note: m.lockSingleKey };
     if (chordContains(cur.trigger_keys, vk)) {
-      if (single(cur.trigger_keys) !== vk) return { ok: false, note: `${keyName(vk)} fait partie du raccourci de déclenchement.` };
+      if (single(cur.trigger_keys) !== vk) return { ok: false, note: m.partOfTrigger(keyName(vk)) };
       // No lock key to give back to the trigger: a swap would leave it empty.
-      if (cur.lock_vk === 0) return { ok: false, note: `${keyName(vk)} est déjà la touche de déclenchement.` };
+      if (cur.lock_vk === 0) return { ok: false, note: m.alreadyTrigger(keyName(vk)) };
       keys = { trigger_keys: [cur.lock_vk], lock_vk: vk };
       swapped = true;
     } else {
@@ -69,13 +68,13 @@ export function assignHotkey(role: HotkeyRole, captured: number[], cur: Hotkeys)
     }
   }
   const notes = [];
-  if (swapped) notes.push(`Touches échangées : Déclenchement = ${chordName(keys.trigger_keys)}, Verrouillage = ${keyName(keys.lock_vk)}.`);
+  if (swapped) notes.push(m.swapped(chordName(keys.trigger_keys), keyName(keys.lock_vk)));
   const changed = !sameKeys(keys.trigger_keys, cur.trigger_keys);
   const warning = changed ? reservedWarning(keys.trigger_keys) : null;
   if (warning) notes.push(warning);
-  const t = keys.trigger_keys;
+  const trigger = keys.trigger_keys;
   // Maj alone does not keep typing safe: Maj + A would swallow every capital A.
-  const confirm = changed && !t.some((k) => isModifier(k) && !isShift(k)) && t.some(isTypingKey);
+  const confirm = changed && !trigger.some((k) => isModifier(k) && !isShift(k)) && trigger.some(isTypingKey);
   return { ok: true, keys, note: notes.length ? notes.join(" ") : null, confirm };
 }
 

@@ -15,7 +15,6 @@ const CTRL: [u32; 3] = [0x11, 0xA2, 0xA3];
 const SHIFT: [u32; 3] = [0x10, 0xA0, 0xA1];
 const ALT: [u32; 3] = [0x12, 0xA4, 0xA5];
 const WIN: [u32; 2] = [0x5B, 0x5C];
-const VK_L: u32 = 0x4C;
 
 /// Ctrl, Maj, Alt and Windows (generic, left or right).
 pub fn is_modifier(vk: u32) -> bool {
@@ -83,41 +82,32 @@ pub fn key_pressed(packed: u32, key: u32, is_pressed: &dyn Fn(u32) -> bool) -> b
     }
 }
 
+/// Why `validate` rejects a combination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChordError {
+    /// Empty, more than `MAX_KEYS` keys, an out-of-range code or the same key twice.
+    Invalid,
+    Escape,
+    LockKey,
+}
+
 /// Rejects what the hook cannot honour. `lock_vk` 0 means no lock key.
-pub fn validate(keys: &[u32], lock_vk: u32) -> Result<(), String> {
-    if keys.is_empty() {
-        return Err("choisissez un raccourci".into());
-    }
-    if keys.len() > MAX_KEYS {
-        return Err(format!("un raccourci compte au plus {MAX_KEYS} touches"));
-    }
-    if keys.iter().any(|&k| k == 0 || k > 0xFE) || normalize(keys).len() != keys.len() {
-        return Err("raccourci invalide".into());
+pub fn validate(keys: &[u32], lock_vk: u32) -> Result<(), ChordError> {
+    if keys.is_empty()
+        || keys.len() > MAX_KEYS
+        || keys.iter().any(|&k| k == 0 || k > 0xFE)
+        || normalize(keys).len() != keys.len()
+    {
+        return Err(ChordError::Invalid);
     }
     if keys.contains(&VK_ESCAPE) {
-        return Err("Échap ne peut pas faire partie du raccourci".into());
+        return Err(ChordError::Escape);
     }
     // Side-aware: in `Ctrl + A`, « Ctrl droit » as the lock key would always be read as part of the combination.
     if contains(pack(keys), lock_vk) {
-        return Err("la touche de verrouillage ne peut pas faire partie du raccourci".into());
+        return Err(ChordError::LockKey);
     }
     Ok(())
-}
-
-/// Combinations Windows keeps for itself: they still work as a trigger, but with a side effect.
-pub fn reserved_warning(keys: &[u32]) -> Option<&'static str> {
-    let has = |group: &[u32]| keys.iter().any(|k| group.contains(k));
-    let only = |groups: &[&[u32]]| keys.iter().all(|k| groups.iter().any(|g| g.contains(k)));
-    if has(&WIN) && keys.contains(&VK_L) {
-        return Some("Windows réserve Win + L (verrouillage de session) : ce raccourci ne peut pas être intercepté.");
-    }
-    if keys.len() == 2 && has(&ALT) && has(&SHIFT) && only(&[&ALT, &SHIFT]) {
-        return Some("Windows peut utiliser Alt + Maj pour changer la langue du clavier.");
-    }
-    if keys.len() == 2 && has(&CTRL) && has(&SHIFT) && only(&[&CTRL, &SHIFT]) {
-        return Some("Windows peut utiliser Ctrl + Maj pour changer la disposition du clavier.");
-    }
-    None
 }
 
 /// Packs a validated combination into one `u32` (0 = none).
@@ -273,41 +263,16 @@ mod tests {
 
     #[test]
     fn validate_rejects_bad_combinations() {
-        assert_eq!(validate(&[], SPACE), Err("choisissez un raccourci".into()));
-        assert_eq!(
-            validate(&[LCTRL, LSHIFT, LALT, LWIN, A], SPACE),
-            Err("un raccourci compte au plus 4 touches".into())
-        );
-        assert_eq!(validate(&[0], SPACE), Err("raccourci invalide".into()));
-        assert_eq!(validate(&[0xFF], SPACE), Err("raccourci invalide".into()));
-        assert_eq!(validate(&[A, A], SPACE), Err("raccourci invalide".into()));
-        assert_eq!(validate(&[LCTRL, RCTRL, A], SPACE), Err("raccourci invalide".into()), "Ctrl twice");
-        assert_eq!(validate(&[LCTRL, VK_ESCAPE], SPACE), Err("Échap ne peut pas faire partie du raccourci".into()));
-        assert_eq!(
-            validate(&[LCTRL, SPACE], SPACE),
-            Err("la touche de verrouillage ne peut pas faire partie du raccourci".into())
-        );
-        assert_eq!(
-            validate(&[LCTRL, A], RCTRL),
-            Err("la touche de verrouillage ne peut pas faire partie du raccourci".into()),
-            "Ctrl is side-less in a combination"
-        );
+        assert_eq!(validate(&[], SPACE), Err(ChordError::Invalid));
+        assert_eq!(validate(&[LCTRL, LSHIFT, LALT, LWIN, A], SPACE), Err(ChordError::Invalid));
+        assert_eq!(validate(&[0], SPACE), Err(ChordError::Invalid));
+        assert_eq!(validate(&[0xFF], SPACE), Err(ChordError::Invalid));
+        assert_eq!(validate(&[A, A], SPACE), Err(ChordError::Invalid));
+        assert_eq!(validate(&[LCTRL, RCTRL, A], SPACE), Err(ChordError::Invalid), "Ctrl twice");
+        assert_eq!(validate(&[LCTRL, VK_ESCAPE], SPACE), Err(ChordError::Escape));
+        assert_eq!(validate(&[LCTRL, SPACE], SPACE), Err(ChordError::LockKey));
+        assert_eq!(validate(&[LCTRL, A], RCTRL), Err(ChordError::LockKey), "Ctrl is side-less in a combination");
         assert_eq!(validate(&[LCTRL], RCTRL), Ok(()), "a single key keeps its side");
-    }
-
-    #[test]
-    fn reserved_combinations_are_flagged() {
-        assert!(reserved_warning(&[LWIN, 0x4C]).unwrap().contains("Win + L"));
-        assert!(reserved_warning(&[0x5C, 0x4C, LCTRL]).unwrap().contains("Win + L"));
-        assert!(reserved_warning(&[LSHIFT, LALT]).unwrap().contains("Alt + Maj"));
-        assert!(reserved_warning(&[0xA1, 0xA5]).unwrap().contains("Alt + Maj"));
-        assert!(reserved_warning(&[LCTRL, 0xA1]).unwrap().contains("Ctrl + Maj"));
-        assert_eq!(reserved_warning(&[LCTRL, LSHIFT, A]), None, "Ctrl + Maj + A is not a layout switch");
-        assert_eq!(reserved_warning(&[LALT, LSHIFT, A]), None);
-        assert_eq!(reserved_warning(&[LALT, LWIN]), None);
-        assert_eq!(reserved_warning(&[0x4C]), None, "L alone");
-        assert_eq!(reserved_warning(&[LALT, LALT]), None, "two keys but no Maj");
-        assert_eq!(reserved_warning(&[RCTRL]), None);
     }
 
     #[test]

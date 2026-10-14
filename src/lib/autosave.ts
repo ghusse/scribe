@@ -1,4 +1,5 @@
 import type { Settings } from "./api";
+import { t } from "./i18n";
 
 export type SaveState = "saved" | "pending" | "saving" | "invalid" | "failed";
 
@@ -58,20 +59,21 @@ export interface StatusView {
  * during the SAVED_FADE_MS after a save), errors that stay until fixed.
  */
 export function statusView(state: SaveState, error: string | null, flashing: boolean): StatusView {
+  const m = t.value.settings.status;
   const base = { alert: false, retry: false, details: null, visible: true };
   switch (state) {
     case "pending":
     case "saving":
-      return { ...base, tone: "muted", text: "Enregistrement…" };
+      return { ...base, tone: "muted", text: m.saving };
     case "saved":
       // The text stays while hidden so the bar fades out with the message still in it.
-      return { ...base, tone: "success", text: "✓ Réglages enregistrés", visible: flashing };
+      return { ...base, tone: "success", text: m.saved, visible: flashing };
     case "invalid":
-      return { ...base, tone: "danger", text: `⚠ Non enregistré\u00a0: ${error ?? "valeur invalide"}`, alert: true };
+      return { ...base, tone: "danger", text: m.notSaved(error ?? m.invalidValue), alert: true };
     case "failed": {
-      const full = error ?? "erreur inconnue";
+      const full = error ?? m.unknownError;
       const first = full.split("\n")[0];
-      return { tone: "danger", text: `⚠ Non enregistré\u00a0: ${first}`, alert: true, retry: true, details: full, visible: true };
+      return { tone: "danger", text: m.notSaved(first), alert: true, retry: true, details: full, visible: true };
     }
   }
 }

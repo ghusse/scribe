@@ -35,7 +35,7 @@ impl Drop for HookHandle {
 pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, String> {
     SHARED
         .set(Shared { on_key, cfg, filter: Mutex::new(KeyFilter::new()) })
-        .map_err(|_| "le hook clavier est déjà démarré".to_string())?;
+        .map_err(|_| "the keyboard hook is already running".to_string())?;
     let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
     std::thread::Builder::new()
         .name("scribe-keyboard-hook".into())
@@ -50,7 +50,7 @@ pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, St
                     let _ = UnhookWindowsHookEx(hook);
                 }
                 Err(e) => {
-                    let _ = ready_tx.send(Err(format!("installation du hook clavier impossible : {e}")));
+                    let _ = ready_tx.send(Err(format!("cannot install the keyboard hook: {e}")));
                 }
             }
         })

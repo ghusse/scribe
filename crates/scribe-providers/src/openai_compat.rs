@@ -52,7 +52,7 @@ impl Transcriber for OpenAiCompatTranscriber {
         let part = Part::bytes(wav.to_vec())
             .file_name("audio.wav")
             .mime_str("audio/wav")
-            .map_err(|e| ProviderError::Config(e.to_string()))?;
+            .map_err(|e| ProviderError::Config { detail: e.to_string() })?;
         let mut form = Form::new().part("file", part).text("model", self.model.clone()).text("response_format", "json");
         if !hints.is_empty() {
             form = form.text("prompt", transcriber_prompt(hints));
@@ -67,7 +67,8 @@ impl Transcriber for OpenAiCompatTranscriber {
             .await
             .map_err(map_send_error)?;
         let resp = map_status(resp).await?;
-        let body: TranscriptionResponse = resp.json().await.map_err(|e| ProviderError::Malformed(e.to_string()))?;
+        let body: TranscriptionResponse =
+            resp.json().await.map_err(|e| ProviderError::Malformed { detail: e.to_string() })?;
         Ok(body.text)
     }
 }
@@ -135,7 +136,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("nope"))
             .mount(&server)
             .await;
-        assert!(matches!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Malformed(_))));
+        assert!(matches!(client(&server).transcribe(b"x", &[]).await, Err(ProviderError::Malformed { .. })));
     }
 
     #[tokio::test]

@@ -68,6 +68,6 @@ impl SystemPermissions for MacPermissions {
             .arg(format!("x-apple.systempreferences:com.apple.preference.security?{pane}"))
             .status()
             .map_err(|e| e.to_string())
-            .and_then(|s| if s.success() { Ok(()) } else { Err(format!("ouverture des Réglages impossible ({s})")) })
+            .and_then(|s| if s.success() { Ok(()) } else { Err(format!("cannot open System Settings ({s})")) })
     }
 }

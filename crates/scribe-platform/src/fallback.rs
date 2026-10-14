@@ -15,7 +15,7 @@ use crate::{HookConfig, KeyCallback};
 pub struct HookHandle;
 
 pub fn start_keyboard_hook(_cfg: Arc<HookConfig>, _on_key: KeyCallback) -> Result<HookHandle, String> {
-    Err("hook clavier non disponible sur cette plateforme (Plan 3)".into())
+    Err("keyboard hook not available on this platform".into())
 }
 
 struct UnknownFocus;
@@ -34,7 +34,7 @@ struct NoKeys;
 
 impl KeySender for NoKeys {
     fn send_paste(&self) -> Result<(), String> {
-        Err("simulation clavier non disponible sur cette plateforme".into())
+        Err("simulation clavier not available on this platform".into())
     }
 }
 
@@ -68,10 +68,10 @@ impl OutputBackend for NoOutputs {
         Ok(Vec::new())
     }
     fn is_muted(&self, id: &str) -> Result<bool, String> {
-        Err(format!("sortie audio {id} inconnue"))
+        Err(format!("unknown audio output {id}"))
     }
     fn set_muted(&self, id: &str, _muted: bool) -> Result<(), String> {
-        Err(format!("sortie audio {id} inconnue"))
+        Err(format!("unknown audio output {id}"))
     }
 }
 
@@ -99,7 +99,7 @@ impl SystemPermissions for NoPermissions {
     }
     fn request(&self, _permission: Permission) {}
     fn open_settings(&self, _permission: Permission) -> Result<(), String> {
-        Err("aucun réglage d'autorisation sur cette plateforme".into())
+        Err("no permission settings on this platform".into())
     }
 }
 
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn keyboard_hook_is_unavailable() {
         let r = start_keyboard_hook(Arc::new(HookConfig::new(&[0xA3], 0x20)), Box::new(|_| {}));
-        assert_eq!(r.err(), Some("hook clavier non disponible sur cette plateforme (Plan 3)".to_string()));
+        assert_eq!(r.err(), Some("keyboard hook not available on this platform".to_string()));
     }
 
     #[test]
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn paste_simulation_fails_so_the_text_stays_in_the_clipboard() {
-        assert_eq!(key_sender().send_paste(), Err("simulation clavier non disponible sur cette plateforme".into()));
+        assert_eq!(key_sender().send_paste(), Err("simulation clavier not available on this platform".into()));
     }
 
     #[test]

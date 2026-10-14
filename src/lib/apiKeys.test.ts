@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Provider } from "./api";
-import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, needsSetup, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
+import { lang } from "./i18n";
+import { canSaveKey, keyPlaceholder, keyState, keyStateLabel, keyUsage, listParts, listText, missingKeys, missingKeyWarning, needsSetup, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
 
 const p = (id: string, label: string): Provider => ({ id, label, base_url: "", stt_models: [], llm_api: null, llm_models: [] });
 const providers = [p("openai", "OpenAI"), p("anthropic", "Anthropic"), p("mistral", "Mistral")];
@@ -37,10 +38,11 @@ describe("key row helpers", () => {
     expect(canSaveKey("  ")).toBe(false);
     expect(canSaveKey("sk-1")).toBe(true);
   });
-  it("words the placeholder and the confirmation", () => {
+  it("words the placeholder", () => {
     expect(keyPlaceholder(false)).toBe("Coller la clé API…");
     expect(keyPlaceholder(true)).toBe("Remplacer la clé…");
-    expect(deleteKeyQuestion("Anthropic")).toBe("Supprimer la clé Anthropic ?");
+    lang.value = "en";
+    expect(keyPlaceholder(false)).toBe("Paste the API key…");
   });
 });
 
@@ -52,16 +54,33 @@ describe("unsaved drafts", () => {
     );
     expect(unsavedDraftMessage(unsavedDrafts({}, providers))).toBeNull();
   });
+  it("in English too", () => {
+    lang.value = "en";
+    expect(unsavedDraftMessage(unsavedDrafts({ openai: "a", anthropic: "b" }, providers))).toBe("OpenAI and Anthropic keys typed but not saved. Save them?");
+  });
 });
 
 describe("key status display", () => {
   it("words each state", () => {
-    expect(KEY_STATE_LABELS).toEqual({ saved: "✓ enregistrée", required: "✗ requise", unconfigured: "— non configurée" });
+    expect((["saved", "required", "unconfigured"] as const).map(keyStateLabel)).toEqual(["✓ enregistrée", "✗ requise", "— non configurée"]);
   });
   it("joins roles", () => {
     expect(rolesText(["correction"])).toBe("Correction");
     expect(rolesText(["transcription", "correction"])).toBe("Transcription et Correction");
     expect(rolesText(["transcription", "correction"], true)).toBe("transcription et correction");
+    lang.value = "en";
+    expect(rolesText(["transcription", "correction"])).toBe("Transcription and Correction");
+  });
+});
+
+describe("lists", () => {
+  it("joins items the way the UI language does, each item kept apart", () => {
+    expect(listText(["A", "B", "C"])).toBe("A, B et C");
+    expect(listParts(["A", "B"])).toEqual([
+      { type: "element", value: "A" }, { type: "literal", value: " et " }, { type: "element", value: "B" },
+    ]);
+    lang.value = "en";
+    expect(listText(["A", "B", "C"])).toBe("A, B, and C");
   });
 });
 
@@ -95,6 +114,8 @@ describe("setup banner and warnings", () => {
   it("words the inline warning per role", () => {
     expect(missingKeyWarning("Anthropic", "correction")).toBe("⚠ Aucune clé Anthropic : la correction échouera.");
     expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ Aucune clé OpenAI : la transcription échouera.");
+    lang.value = "en";
+    expect(missingKeyWarning("OpenAI", "transcription")).toBe("⚠ No OpenAI key: transcription will fail.");
   });
 });
 

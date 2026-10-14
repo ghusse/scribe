@@ -8,11 +8,11 @@ use crate::model::{Dictation, Level, NewDictation, Outcome, Term, TermSource, Tr
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
-    #[error("terme déjà présent dans le glossaire : {0}")]
+    #[error("term already in the glossary: {0}")]
     DuplicateTerm(String),
-    #[error("base de données : {0}")]
+    #[error("database: {0}")]
     Sql(#[from] turso::Error),
-    #[error("données invalides : {0}")]
+    #[error("invalid data: {0}")]
     Invalid(String),
 }
 
@@ -149,7 +149,7 @@ fn clean_variants(variants: &[String], term: &str) -> Vec<String> {
 fn validate_term(term: &str) -> Result<&str> {
     let term = term.trim();
     if term.is_empty() {
-        return Err(StorageError::Invalid("terme vide".into()));
+        return Err(StorageError::Invalid("empty term".into()));
     }
     Ok(term)
 }
@@ -191,8 +191,7 @@ async fn all<T>(
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
-        let path =
-            path.to_str().ok_or_else(|| StorageError::Invalid(format!("chemin non UTF-8 : {}", path.display())))?;
+        let path = path.to_str().ok_or_else(|| StorageError::Invalid(format!("non-UTF-8 path: {}", path.display())))?;
         let db = Self::init(path)?;
         db.all("PRAGMA journal_mode=WAL", (), |_| Ok(()))?;
         Ok(db)

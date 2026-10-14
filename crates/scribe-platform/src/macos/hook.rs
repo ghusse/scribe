@@ -60,7 +60,7 @@ impl Drop for HookHandle {
 pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, String> {
     SHARED
         .set(Shared { on_key, cfg, filter: Mutex::new(KeyFilter::new()) })
-        .map_err(|_| "le hook clavier est déjà démarré".to_string())?;
+        .map_err(|_| "the keyboard hook is already running".to_string())?;
     let state = Arc::new(HookState::default());
     let thread_state = state.clone();
     let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
@@ -86,14 +86,14 @@ pub fn start(cfg: Arc<HookConfig>, on_key: KeyCallback) -> Result<HookHandle, St
                 Some(tap_proc),
                 ptr::null_mut(),
             ) else {
-                let _ = ready_tx.send(Err("installation du hook clavier impossible".into()));
-                tracing::error!("installation du hook clavier impossible");
+                let _ = ready_tx.send(Err("cannot install the keyboard hook".into()));
+                tracing::error!("cannot install the keyboard hook");
                 return;
             };
             let (Some(source), Some(run_loop)) =
                 (CFMachPort::new_run_loop_source(None, Some(&tap), 0), CFRunLoop::current())
             else {
-                let _ = ready_tx.send(Err("installation du hook clavier impossible".into()));
+                let _ = ready_tx.send(Err("cannot install the keyboard hook".into()));
                 return;
             };
             run_loop.add_source(Some(&source), kCFRunLoopCommonModes);

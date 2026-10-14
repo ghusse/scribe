@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { lang } from "./i18n";
 import { chordContains, chordName, isModifier, keyName, reservedWarning } from "./keys";
 
 describe("keyName", () => {
@@ -79,5 +80,17 @@ describe("combinations", () => {
   it("flags nothing on macOS", () => {
     expect(reservedWarning([0x5b, 0x4c], "mac")).toBeNull();
     expect(reservedWarning([0xa2, 0xa1], "mac")).toBeNull();
+  });
+});
+
+describe("in English", () => {
+  it("names keys, combinations and reserved ones in the UI language", () => {
+    lang.value = "en";
+    expect([keyName(0), keyName(0xa3), keyName(0x20), keyName(0x88), keyName(0xa5, "mac")]).toEqual(["None", "Right Ctrl", "Space", "Key 0x88", "Right Option"]);
+    expect(chordName([])).toBe("None");
+    expect(chordName([0xa2, 0xa0, 0x41])).toBe("Ctrl + Shift + A");
+    expect(chordName([0xa0, 0x5b], "mac")).toBe("Shift + Cmd");
+    expect(reservedWarning([0xa0, 0xa4])).toBe("Windows may use Alt + Shift to switch the keyboard language.");
+    expect(reservedWarning([0x5b, 0x4c])).toContain("Windows reserves Win + L");
   });
 });

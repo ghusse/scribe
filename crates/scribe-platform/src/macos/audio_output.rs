@@ -66,7 +66,7 @@ pub(super) fn check(status: i32) -> Result<(), String> {
     if status == 0 {
         Ok(())
     } else {
-        Err(format!("erreur CoreAudio {status}"))
+        Err(format!("CoreAudio error {status}"))
     }
 }
 
@@ -132,7 +132,7 @@ fn uid(device: AudioObjectID) -> Result<String, String> {
     let mut address = prop(kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal);
     let mut raw: *const CFString = ptr::null();
     get(device, &mut address, &mut raw)?;
-    let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| format!("périphérique audio {device} sans UID"))?;
+    let raw = NonNull::new(raw.cast_mut()).ok_or_else(|| format!("audio device {device} has no UID"))?;
     // The UID follows the Create rule: +1 retain count, released when `uid` drops.
     let uid = unsafe { CFRetained::from_raw(raw) };
     Ok(uid.to_string())
@@ -145,7 +145,7 @@ fn find(id: &str) -> Result<AudioObjectID, String> {
             return Ok(device);
         }
     }
-    Err(format!("sortie audio {id} introuvable"))
+    Err(format!("audio output {id} not found"))
 }
 
 fn mute_address(device: AudioObjectID) -> Result<AudioObjectPropertyAddress, String> {
@@ -153,7 +153,7 @@ fn mute_address(device: AudioObjectID) -> Result<AudioObjectPropertyAddress, Str
     if unsafe { AudioObjectHasProperty(device, NonNull::from(&address)) } {
         Ok(address)
     } else {
-        Err(format!("la sortie audio {device} n'a pas de réglage muet"))
+        Err(format!("audio output {device} has no mute control"))
     }
 }
 

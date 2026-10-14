@@ -13,7 +13,7 @@ use scribe_platform::HookEvent;
 
 use crate::audio_mute::MuteGuard;
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
-use crate::overlay::{OverlayEvent, ToastLevel};
+use crate::overlay::{Notice, OverlayEvent, RecordingWarning, ToastLevel};
 use crate::services::{Services, UiSink};
 
 pub enum ControllerMsg {
@@ -93,11 +93,9 @@ pub fn level_emitter(ui: Arc<dyn UiSink>, clock: Clock, min_interval_ms: u64) ->
 
 const LEVEL_INTERVAL_MS: u64 = 50;
 
-pub const SHARED_MICROPHONE_WARNING: &str = "Micro non exclusif : les autres applications vous entendent";
-
 /// The overlay warning of a recording: exclusive access was asked for but not obtained.
-pub fn microphone_warning(options: RecordOptions, started: RecordingStart) -> Option<String> {
-    (options.exclusive_microphone && !started.exclusive_microphone).then(|| SHARED_MICROPHONE_WARNING.to_string())
+pub fn microphone_warning(options: RecordOptions, started: RecordingStart) -> Option<RecordingWarning> {
+    (options.exclusive_microphone && !started.exclusive_microphone).then_some(RecordingWarning::SharedMicrophone)
 }
 
 /// A recording in progress, with what it holds until it ends.
@@ -110,7 +108,7 @@ struct Active {
     /// microphone is stopped.
     mute: Option<MuteGuard>,
     /// Kept on the pill when the recording locks.
-    warning: Option<String>,
+    warning: Option<RecordingWarning>,
 }
 
 pub struct Controller {
@@ -272,22 +270,22 @@ impl Controller {
                         (self.svc.warm_up)(&self.svc.settings.read().unwrap());
                         self.mode = Mode::Hold;
                         let warning = microphone_warning(options, handle.started());
-                        overlay.emit(OverlayEvent::Recording { locked: false, warning: warning.clone() });
+                        overlay.emit(OverlayEvent::Recording { locked: false, warning });
                         let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
                         let mute = mute_on.then(|| self.svc.audio_mute.guard());
                         let focus_start = spawn_focus_snapshot(&self.svc);
                         self.recording = Some(Active { handle, focus_start, mute, warning });
                     }
-                    Err(e) => {
+                    Err(detail) => {
                         self.session.abort();
                         self.gesture.reset();
-                        overlay.toast(ToastLevel::Error, format!("Micro indisponible : {e}"), None, None);
+                        overlay.toast(ToastLevel::Error, Notice::MicrophoneUnavailable { detail }, None, None);
                     }
                 }
             }
             SessionAction::SetMode(mode) => {
                 self.mode = mode;
-                let warning = self.recording.as_ref().and_then(|a| a.warning.clone());
+                let warning = self.recording.as_ref().and_then(|a| a.warning);
                 overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, warning });
             }
             SessionAction::DiscardRecording => {
@@ -311,9 +309,9 @@ impl Controller {
                         let job = Job { clip, mode: self.mode, focus_start };
                         (self.deps.spawn_processing)(self.svc.clone(), job, self.tx.clone());
                     }
-                    Err(e) => {
+                    Err(detail) => {
                         self.session.on_processing_done();
-                        overlay.toast(ToastLevel::Error, format!("Enregistrement perdu : {e}"), None, None);
+                        overlay.toast(ToastLevel::Error, Notice::RecordingLost { detail }, None, None);
                     }
                 }
             }

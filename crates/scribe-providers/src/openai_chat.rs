@@ -55,8 +55,8 @@ impl OpenAiChatCorrector {
 
 #[async_trait]
 impl Corrector for OpenAiChatCorrector {
-    fn name(&self) -> String {
-        self.model.clone()
+    fn name(&self) -> Option<String> {
+        Some(self.model.clone())
     }
 
     async fn correct(&self, prompt: &CorrectionPrompt) -> Result<String, ProviderError> {
@@ -69,14 +69,15 @@ impl Corrector for OpenAiChatCorrector {
             .send()
             .await
             .map_err(map_send_error)?;
-        let v: Value = map_status(resp).await?.json().await.map_err(|e| ProviderError::Malformed(e.to_string()))?;
+        let v: Value =
+            map_status(resp).await?.json().await.map_err(|e| ProviderError::Malformed { detail: e.to_string() })?;
         let choice = &v["choices"][0];
         if choice["finish_reason"] == "content_filter" || choice["message"]["refusal"].is_string() {
             return Err(ProviderError::Refusal);
         }
         match choice["message"]["content"].as_str() {
             Some(text) if !text.trim().is_empty() => Ok(text.to_string()),
-            _ => Err(ProviderError::Malformed("aucun texte dans la réponse".into())),
+            _ => Err(ProviderError::Malformed { detail: "no text in the response".into() }),
         }
     }
 }
@@ -148,7 +149,7 @@ mod tests {
         Mock::given(method("POST")).respond_with(ResponseTemplate::new(401)).up_to_n_times(1).mount(&server).await;
         assert_eq!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Auth));
         Mock::given(method("POST")).respond_with(reply(json!("  "), "stop")).mount(&server).await;
-        assert!(matches!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Malformed(_))));
+        assert!(matches!(corrector(&server, None).correct(&prompt()).await, Err(ProviderError::Malformed { .. })));
     }
 
     #[tokio::test]
@@ -159,7 +160,7 @@ mod tests {
             .mount(&server)
             .await;
         let c = OpenAiChatCorrector::new(server.uri(), "k", "gpt-6.1-sol", None, Duration::from_millis(100)).unwrap();
-        assert_eq!(c.name(), "gpt-6.1-sol");
+        assert_eq!(c.name().as_deref(), Some("gpt-6.1-sol"));
         assert_eq!(c.correct(&prompt()).await, Err(ProviderError::Timeout));
     }
 }

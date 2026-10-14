@@ -1,3 +1,12 @@
+/* Categories: side navigation, one pane shown at a time. */
+.layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); column-gap: 16px; align-items: start; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav button { border: 0; background: transparent; text-align: left; padding: 6px 10px; font-size: 14px; white-space: nowrap; }
+.nav button[aria-current="page"] { background: color-mix(in srgb, var(--accent) 14%, var(--card)); font-weight: 600; }
+.dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: middle; }
+.pane[hidden] { display: none; }
+.paneTitle { font-size: 18px; margin: 4px 0 12px; }
+
 .section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
 .heading { font-size: 15px; margin: 0 0 10px; }
 .subheading { font-size: 14px; margin: 16px 0 4px; color: var(--muted); font-weight: 600; }
@@ -82,6 +91,12 @@
 .spinner { width: 12px; height: 12px; flex: none; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.35); opacity: 1; } 100% { transform: scale(1); } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Narrow window: the categories go on top, in a row, so the panes keep the full width. */
+@media (max-width: 720px) {
+  .layout { grid-template-columns: minmax(0, 1fr); row-gap: 12px; }
+  .nav { flex-direction: row; overflow-x: auto; }
+}
 
 @media (max-width: 640px) {
   .row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
