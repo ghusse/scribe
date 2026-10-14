@@ -42,7 +42,7 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Type check (svelte-check)
+      - name: Type check (bun check)
         run: bun run check
 
       # Also produces dist/, which the Tauri crate embeds at compile time.
@@ -51,7 +51,7 @@ jobs:
         run: bun run build
 
       # Two independent gates: a failing UI gate must not hide the Rust one (it runs whenever the build passed).
-      - name: Coverage gate UI (>= 95 % lines, TypeScript and Svelte each)
+      - name: Coverage gate UI (>= 95 % lines, TypeScript and TSX each)
         run: bun run coverage:ui
 
       - name: Coverage gate Rust (>= 95 % lines)

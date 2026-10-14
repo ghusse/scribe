@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import preact from "@preact/preset-vite";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [preact()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   build: {

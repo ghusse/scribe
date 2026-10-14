@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/preact";
 import type { Term } from "../lib/api";
 import { calls, commands, resetTauri } from "../../tests/tauri";
-import Glossary from "./Glossary.svelte";
+import Glossary from "./Glossary";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 
@@ -31,7 +31,7 @@ const type = (el: HTMLElement, value: string) => fireEvent.input(el, { target: {
 
 describe("Glossary", () => {
   it("lists the terms with their variants, note and usage count", async () => {
-    render(Glossary);
+    render(<Glossary />);
     expect(await screen.findByText("Kubernetes")).toBeTruthy();
     const cells = within(rows()[0]).getAllByRole("cell").map((c) => c.textContent);
     expect(cells.slice(0, 4)).toEqual(["Kubernetes", "cube, ku ber netes", "infra", "2"]);
@@ -39,18 +39,18 @@ describe("Glossary", () => {
 
   it("shows the empty state", async () => {
     terms = [];
-    render(Glossary);
+    render(<Glossary />);
     expect(await screen.findByText(/Glossaire vide/)).toBeTruthy();
   });
 
   it("shows a load error", async () => {
     commands({ list_terms: () => Promise.reject("base verrouillée") });
-    render(Glossary);
+    render(<Glossary />);
     expect(await screen.findByText("base verrouillée")).toBeTruthy();
   });
 
   it("adds a term with split variants and no note, clears the form and reloads", async () => {
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Kubernetes");
     const termInput = screen.getByPlaceholderText("Terme (ex. Kubernetes)") as HTMLInputElement;
     const variantsInput = screen.getByPlaceholderText(/Mal entendu/) as HTMLInputElement;
@@ -66,7 +66,7 @@ describe("Glossary", () => {
 
   it("keeps the form and shows the error when adding fails, clears it on the next success", async () => {
     commands({ add_term: () => Promise.reject("terme en double") });
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Kubernetes");
     const termInput = screen.getByPlaceholderText("Terme (ex. Kubernetes)") as HTMLInputElement;
     await type(termInput, "Kubernetes");
@@ -82,7 +82,7 @@ describe("Glossary", () => {
   });
 
   it("edits a term in place and saves it", async () => {
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Kubernetes");
     await fireEvent.click(screen.getByText("Modifier"));
     const [t, v, n] = within(rows()[0]).getAllByRole("textbox") as HTMLInputElement[];
@@ -97,7 +97,7 @@ describe("Glossary", () => {
 
   it("edits a term without note and cancels", async () => {
     terms = [term(1, "Rust", [])];
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Rust");
     await fireEvent.click(screen.getByText("Modifier"));
     const [, , n] = within(rows()[0]).getAllByRole("textbox") as HTMLInputElement[];
@@ -109,7 +109,7 @@ describe("Glossary", () => {
 
   it("keeps the editor open when saving fails", async () => {
     commands({ update_term: () => Promise.reject("terme vide") });
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Kubernetes");
     await fireEvent.click(screen.getByText("Modifier"));
     await fireEvent.click(screen.getByText("OK"));
@@ -118,7 +118,7 @@ describe("Glossary", () => {
   });
 
   it("deletes a term and reports a failed delete", async () => {
-    render(Glossary);
+    render(<Glossary />);
     await screen.findByText("Kubernetes");
     commands({ delete_term: () => Promise.reject("introuvable") });
     await fireEvent.click(screen.getByText("Supprimer"));

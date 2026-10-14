@@ -1,0 +1,5 @@
+.section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
+.section h2 { font-size: 15px; margin: 0 0 10px; }
+.check { display: flex; gap: 8px; align-items: center; }
+.help { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.error { color: var(--danger); font-size: 13px; margin: 6px 0 0; }

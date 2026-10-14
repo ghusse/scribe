@@ -4,11 +4,11 @@
   "version": "0.4.2",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.3",
   "scripts": {
     "dev": "bun --bun vite",
     "build": "bun --bun vite build",
-    "check": "bun --bun svelte-check --tsconfig ./tsconfig.json",
+    "check": "bun check",
     "tauri": "bun --bun node_modules/@tauri-apps/cli/tauri.js",
     "test": "bun --bun vitest run",
     "coverage:ui": "bun --bun vitest run --coverage",
@@ -19,28 +19,27 @@
     "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
     "@semantic-release/github": "12.0.10",
     "@semantic-release/release-notes-generator": "14.1.1",
-    "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tauri-apps/cli": "^2.12.1",
-    "@testing-library/svelte": "^5.4.2",
-    "@tsconfig/svelte": "^5.0.8",
+    "@testing-library/preact": "^3.2.4",
     "@vitest/coverage-istanbul": "^5.0.3",
     "conventional-changelog-conventionalcommits": "9.3.1",
     "happy-dom": "^20.14.5",
     "semantic-release": "25.0.9",
-    "svelte": "^5.57.1",
-    "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.1"
+    "@preact/signals": "^2.11.3",
+    "@tauri-apps/api": "^2.12.1",
+    "preact": "^11.0.1"
   },
   "patchedDependencies": {
     "happy-dom@20.14.5": "patches/happy-dom@20.14.5.patch"

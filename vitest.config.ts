@@ -1,8 +1,7 @@
 import { defineConfig, mergeConfig } from "vitest/config";
-import { svelteTesting } from "@testing-library/svelte/vite";
 import viteConfig from "./vite.config.ts";
 
-// Coverage rule (see CLAUDE.md): >= 95 % of lines for TypeScript AND for Svelte components, each gated on
+// Coverage rule (see CLAUDE.md): >= 95 % of lines for TypeScript AND for Preact components (.tsx), each gated on
 // its own (a per-glob threshold), so one language cannot hide the other behind a combined total.
 // Excludes and thresholds must stay in sync with CLAUDE.md: tests/coverage-policy.test.ts checks it.
 // The tests run on the bun runtime (`bun --bun vitest`): hence happy-dom (jsdom fails to start under bun) and
@@ -10,20 +9,22 @@ import viteConfig from "./vite.config.ts";
 export default mergeConfig(
   viteConfig,
   defineConfig({
-    plugins: [svelteTesting()],
     test: {
       environment: "happy-dom",
-      include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
+      setupFiles: ["tests/setup.ts"],
+      // Real CSS modules: the default stub invents a class for any key, so a missing class could not fail a test.
+      css: { include: /\.module\.css$/ },
+      include: ["src/**/*.test.{ts,tsx}", "tests/**/*.test.ts"],
       coverage: {
         provider: "istanbul",
-        include: ["src/**/*.{ts,svelte}"],
-        exclude: ["src/**/*.test.ts", "src/main/main.ts", "src/overlay/overlay.ts", "preview/**"],
+        include: ["src/**/*.{ts,tsx}"],
+        exclude: ["src/**/*.test.{ts,tsx}", "src/main/main.tsx", "src/overlay/main.tsx", "preview/**"],
         reporter: [["text", { skipFull: false }], "html", "lcov"],
         reportsDirectory: "coverage/ui",
         thresholds: {
           lines: 95,
           "src/**/*.ts": { lines: 95 },
-          "src/**/*.svelte": { lines: 95 },
+          "src/**/*.tsx": { lines: 95 },
         },
       },
     },

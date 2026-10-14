@@ -2,9 +2,9 @@
 
 ## Coverage rule (mandatory)
 
-At least **95 % line coverage on every language**: Rust, TypeScript and Svelte components. Each language has
+At least **95 % line coverage on every language**: Rust, TypeScript and Preact components (TSX). Each language has
 its own gate: the Rust workspace total (cargo-llvm-cov), and in vitest one threshold per glob (`src/**/*.ts`,
-`src/**/*.svelte`) on top of the UI total, so a well-covered language cannot hide a poorly covered one. CI
+`src/**/*.tsx`) on top of the UI total, so a well-covered language cannot hide a poorly covered one. CI
 fails below any of them.
 
 ```bash
@@ -16,11 +16,11 @@ bun run coverage        # both, locally (CI runs them as two independent steps)
 Reports: UI in `coverage/ui/` (html + lcov); Rust in the terminal (`cargo llvm-cov --workspace --html` for html).
 Prerequisites: `rustup component add llvm-tools-preview` and `cargo install cargo-llvm-cov`.
 
-Svelte components are covered through component tests (`@testing-library/svelte` + happy-dom, see
-`src/main/ModelPicker.test.ts`, which also shows how to observe a `$bindable` prop through a props object with
-a getter/setter); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
+Preact components are covered through component tests (`@testing-library/preact` + happy-dom, see
+`src/main/ModelPicker.test.tsx`, which also shows how to observe a controlled `value` / `onValueChange` prop pair); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
 with `vi.mock` and the shared doubles in `tests/tauri.ts` (`commands({...})` answers each command, `emit` fires
-an event, `calls` lists a command's arguments), with settings and providers from `tests/fixtures.ts`. Decision logic
+an event, `calls` lists a command's arguments), with settings and providers from `tests/fixtures.ts`; `tests/setup.ts` unmounts every render after each test.
+Shared component hooks (`useTick`, `useSyncEffect`) and `cx` live in `src/lib/ui.ts`. Decision logic
 stays out of components (`src/overlay/model.ts`, `src/lib/history.ts`, `src/lib/glossary.ts`, ...) and is tested
 there as plain functions.
 
@@ -53,9 +53,9 @@ thresholds, and the two CI coverage steps.
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
   `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
   `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
-- UI excludes (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.ts`, `src/main/main.ts`,
-  `src/overlay/overlay.ts`, `preview/**`
-- UI per-language thresholds (`vitest.config.ts` > `coverage.thresholds`): `src/**/*.ts`, `src/**/*.svelte`
+- UI excludes (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.{ts,tsx}`, `src/main/main.tsx`,
+  `src/overlay/main.tsx`, `preview/**`
+- UI per-language thresholds (`vitest.config.ts` > `coverage.thresholds`): `src/**/*.ts`, `src/**/*.tsx`
 
 | Excluded | Why |
 |---|---|
@@ -65,8 +65,8 @@ thresholds, and the two CI coverage steps.
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
 | `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/AppKit/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
-| `src/main/main.ts`, `src/overlay/overlay.ts` | UI entry files: a single `mount(...)` call. |
-| `src/**/*.test.ts`, `preview/**` | Tests themselves; local design previews (not shipped). |
+| `src/main/main.tsx`, `src/overlay/main.tsx` | UI entry files: a single `render(...)` call and the global stylesheet import. |
+| `src/**/*.test.{ts,tsx}`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
 What is left in excluded files is wiring only; every decision lives in a tested module:
 - `windows/hook.rs::hook_proc` decodes `KBDLLHOOKSTRUCT` and calls `scribe_platform::key_filter::KeyFilter`

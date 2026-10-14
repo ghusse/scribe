@@ -54,7 +54,7 @@ export interface OverlayDeps {
 }
 
 /**
- * The overlay's behaviour, without Svelte: `render` receives every new view.
+ * The overlay's behaviour, independent of the UI framework: `render` receives every new view.
  *
  * Every incoming event bumps a generation; an action that awaits the backend (« Copier ») only
  * dismisses if no event arrived meanwhile, so a toast copied just as a new dictation starts never

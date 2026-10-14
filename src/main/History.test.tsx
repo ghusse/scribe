@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Dictation } from "../lib/api";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
 import { COPY_FEEDBACK_MS } from "../lib/history";
-import History from "./History.svelte";
+import History, { type HistoryProps } from "./History";
+import styles from "./History.module.css";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
@@ -34,8 +35,8 @@ beforeEach(() => {
 const card = (id: number) => document.getElementById(`d-${id}`)!;
 const button = (id: number, name: string | RegExp) => within(card(id)).getByRole("button", { name });
 
-async function mount(props: Record<string, unknown> = {}) {
-  const r = render(History, { props });
+async function mount(props: HistoryProps = {}) {
+  const r = render(<History {...props} />);
   await screen.findByText("final 1");
   return r;
 }
@@ -64,7 +65,7 @@ describe("History", () => {
   it("shows the empty state and a load error", async () => {
     rows = [];
     commands({ list_dictations: () => Promise.reject("base indisponible") });
-    render(History);
+    render(<History />);
     expect(await screen.findByText("base indisponible")).toBeTruthy();
     expect(screen.getByText(/Aucune dictée/)).toBeTruthy();
   });
@@ -111,7 +112,7 @@ describe("History", () => {
 
   it("edits from the shown text and saves the correction", async () => {
     rows = [dictation(1, { edited_text: "ma version" })];
-    render(History);
+    render(<History />);
     await screen.findByText("ma version");
     await fireEvent.click(button(1, "Corriger"));
     const area = within(card(1)).getByRole("textbox") as HTMLTextAreaElement;
@@ -144,9 +145,9 @@ describe("History", () => {
       await mount();
       await fireEvent.click(button(1, "Copier"));
       expect(calls("copy_dictation")).toEqual([{ id: 1 }]);
-      await waitFor(() => expect(button(1, "✓ Copié").classList.contains("copied")).toBe(true));
-      expect(card(1).classList.contains("just-copied")).toBe(true);
-      expect(card(2).classList.contains("just-copied")).toBe(false);
+      await waitFor(() => expect(button(1, "✓ Copié").classList.contains(styles.copied)).toBe(true));
+      expect(card(1).classList.contains(styles.justCopied)).toBe(true);
+      expect(card(2).classList.contains(styles.justCopied)).toBe(false);
       expect(screen.getByText("Texte copié").getAttribute("aria-live")).toBe("polite");
       // Copying again restarts the confirmation instead of ending it with the first timer.
       vi.advanceTimersByTime(COPY_FEEDBACK_MS - 100);
@@ -155,8 +156,8 @@ describe("History", () => {
       vi.advanceTimersByTime(200);
       await waitFor(() => expect(button(1, "✓ Copié")).toBeTruthy());
       vi.advanceTimersByTime(COPY_FEEDBACK_MS);
-      await waitFor(() => expect(button(1, "Copier").classList.contains("copied")).toBe(false));
-      expect(card(1).classList.contains("just-copied")).toBe(false);
+      await waitFor(() => expect(button(1, "Copier").classList.contains(styles.copied)).toBe(false));
+      expect(card(1).classList.contains(styles.justCopied)).toBe(false);
       expect(screen.queryByText("Texte copié")).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -169,7 +170,7 @@ describe("History", () => {
     await fireEvent.click(button(1, "Copier"));
     expect(await screen.findByText("presse-papier occupé")).toBeTruthy();
     expect(button(1, "Copier")).toBeTruthy();
-    expect(card(1).classList.contains("just-copied")).toBe(false);
+    expect(card(1).classList.contains(styles.justCopied)).toBe(false);
     commands({ copy_dictation: () => undefined });
     await fireEvent.click(button(1, "Copier"));
     await waitFor(() => expect(screen.queryByText("presse-papier occupé")).toBeNull());
@@ -190,7 +191,7 @@ describe("History", () => {
 
   it("shows and hides the details", async () => {
     rows = [dictation(1, { edited_text: "édité" }), dictation(2, { raw_text: null, final_text: null, transcriber: null, corrector: null })];
-    render(History);
+    render(<History />);
     await screen.findByText("édité");
     await fireEvent.click(button(1, "Détails"));
     expect(within(card(1)).getByText("Votre correction")).toBeTruthy();
@@ -226,21 +227,21 @@ describe("History", () => {
 
   it("opened on a dictation: loads, highlights and scrolls to it, then acknowledges", async () => {
     const onfocused = vi.fn();
-    render(History, { props: { focus: { id: 2 }, onfocused } });
+    render(<History focus={{ id: 2 }} onFocused={onfocused} />);
     await waitFor(() => expect(onfocused).toHaveBeenCalledTimes(1));
     expect(calls("list_dictations")).toHaveLength(1); // no second load from onMount
-    expect(card(2).classList.contains("highlighted")).toBe(true);
-    expect(card(1).classList.contains("highlighted")).toBe(false);
+    expect(card(2).classList.contains(styles.highlighted)).toBe(true);
+    expect(card(1).classList.contains(styles.highlighted)).toBe(false);
     expect(scrolled).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
   });
 
   it("a focus request clears the search", async () => {
-    const { rerender } = render(History, { props: { focus: null } });
+    const { rerender } = render(<History focus={null} />);
     await screen.findByText("final 1");
     const search = screen.getByPlaceholderText(/Rechercher/) as HTMLInputElement;
     await fireEvent.input(search, { target: { value: "xyz" } });
-    await rerender({ focus: { id: 1 } });
-    await waitFor(() => expect(card(1).classList.contains("highlighted")).toBe(true));
+    rerender(<History focus={{ id: 1 }} />);
+    await waitFor(() => expect(card(1).classList.contains(styles.highlighted)).toBe(true));
     expect(search.value).toBe("");
     expect(calls("list_dictations").at(-1)).toEqual({ query: null, limit: 50, offset: 0 });
   });

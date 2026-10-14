@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/preact";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import type { PermissionStatus } from "../lib/api";
-import Permissions from "./Permissions.svelte";
+import Permissions from "./Permissions";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
@@ -31,13 +31,13 @@ const panel = () => screen.queryByRole("region", { name: "Autorisations manquant
 describe("Permissions", () => {
   it("shows nothing when every permission is granted (or on Windows, which asks for none)", async () => {
     statuses = [];
-    render(Permissions);
+    render(<Permissions />);
     await vi.waitFor(() => expect(calls("permissions")).toHaveLength(1));
     expect(panel()).toBeNull();
   });
 
   it("explains each missing permission with its actions", async () => {
-    render(Permissions);
+    render(<Permissions />);
     expect(await screen.findByText("Accessibilité")).toBeTruthy();
     expect(screen.getByText("Micro")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Autoriser" })).toHaveLength(1);
@@ -45,7 +45,7 @@ describe("Permissions", () => {
   });
 
   it("asks the OS, opens its settings, and hides once granted", async () => {
-    render(Permissions);
+    render(<Permissions />);
     await fireEvent.click(await screen.findByRole("button", { name: "Autoriser" }));
     expect(calls("request_permission")).toEqual([{ permission: "accessibility" }]);
     await fireEvent.click(screen.getAllByRole("button", { name: "Ouvrir les Réglages Système" })[1]);
@@ -57,7 +57,7 @@ describe("Permissions", () => {
 
   it("polls while something is missing, so a grant in System Settings shows up; a failed read keeps the state", async () => {
     vi.useFakeTimers();
-    render(Permissions);
+    render(<Permissions />);
     await vi.advanceTimersByTimeAsync(0);
     expect(calls("permissions")).toHaveLength(1);
     commands({ permissions: () => { throw new Error("ipc"); } });
@@ -72,7 +72,7 @@ describe("Permissions", () => {
   });
 
   it("reports failed actions", async () => {
-    render(Permissions);
+    render(<Permissions />);
     await screen.findByText("Accessibilité");
     commands({
       request_permission: () => { throw new Error("refus"); },

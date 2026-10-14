@@ -1,0 +1,33 @@
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.search { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+.card.highlighted { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.card.justCopied { animation: copied-flash 0.9s ease-out; }
+@keyframes copied-flash {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.55); border-color: #16a34a; }
+  100% { box-shadow: 0 0 0 10px rgba(22, 163, 74, 0); }
+}
+button.copy { min-width: 6.5em; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
+button.copy.copied { background: #dcfce7; color: #166534; border-color: #16a34a; animation: copied-pop 0.25s ease-out; }
+@keyframes copied-pop {
+  0% { transform: scale(0.92); }
+  60% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.justCopied, button.copy.copied { animation: none; }
+}
+.card header { display: flex; gap: 8px; align-items: center; font-size: 13px; flex-wrap: wrap; }
+.right { margin-left: auto; }
+.muted { color: var(--muted); }
+.text { white-space: pre-wrap; margin: 8px 0; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.card textarea { width: 100%; box-sizing: border-box; margin-top: 8px; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #e0e7ff; color: #3730a3; }
+.badge.error { background: #fee2e2; color: #991b1b; }
+.badge.pasted_uncertain { background: #fef3c7; color: #92400e; }
+.error { color: var(--danger); }
+.small { font-size: 13px; }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.card dt { color: var(--muted); }
+.card dd { margin: 0; white-space: pre-wrap; }
