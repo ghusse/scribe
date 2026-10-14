@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1](https://github.com/ghusse/scribe/compare/v0.4.0...v0.4.1) (2026-10-14)
+
+### Corrections
+
+* **macos:** empêcher Meet de basculer sur un autre micro pendant la dictée ([#15](https://github.com/ghusse/scribe/issues/15)) ([dc1d749](https://github.com/ghusse/scribe/commit/dc1d74990fdbfaee5802c39b0747d0b2b16f6192))
+
 ## [0.4.0](https://github.com/ghusse/scribe/compare/v0.3.2...v0.4.0) (2026-10-09)
 
 ### Fonctionnalités
