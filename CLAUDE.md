@@ -49,7 +49,7 @@ thresholds, and the two CI coverage steps.
 
 - Threshold (lines, every language): `95`
 - Rust ignore regex (`package.json` > `coverage:rust`):
-  `crates.scribe-platform.src.windows.|crates.scribe-platform.src.macos.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.adapters[.]rs`
+  `crates.scribe-platform.src.windows.|crates.scribe-platform.src.macos.|crates.scribe-platform.src.device.|src-tauri.src.main[.]rs|src-tauri.src.tray[.]rs|src-tauri.src.menu[.]rs|src-tauri.src.adapters[.]rs`
   (`.` instead of a path separator so the regex works with both `\` and `/`).
 - Rust files excluded by that regex: `crates/scribe-platform/src/device/clipboard.rs`,
   `crates/scribe-platform/src/macos/audio_input.rs`, `crates/scribe-platform/src/macos/audio_output.rs`, `crates/scribe-platform/src/macos/focus.rs`, `crates/scribe-platform/src/macos/hook.rs`,
@@ -60,7 +60,7 @@ thresholds, and the two CI coverage steps.
   `crates/scribe-platform/src/windows/focus.rs`,
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
   `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
-  `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
+  `src-tauri/src/tray.rs`, `src-tauri/src/menu.rs`, `src-tauri/src/adapters.rs`
 - UI excludes (`scripts/coverage-gate.ts` > `EXCLUDES`): `src/**/*.d.ts`, `src/**/*.test.{ts,tsx}`,
   `src/main/main.tsx`, `src/overlay/main.tsx`, `preview/**`
 - UI per-language thresholds (`scripts/coverage-gate.ts` > `GLOBS`): `src/**/*.ts`, `src/**/*.tsx`
@@ -71,8 +71,9 @@ thresholds, and the two CI coverage steps.
 | `crates/scribe-platform/src/macos/` (`audio_input.rs`, `audio_output.rs`, `focus.rs`, `hook.rs`, `keys.rs`, `permissions.rs`, `window.rs`, `mod.rs`) | Raw macOS FFI (`CGEventTap`, `CGEventPost`, AX API, AVFoundation authorization, `NSPanel`, CoreAudio `AudioObject*` properties, hog mode); needs a live desktop session and the Accessibility permission. Compiled on macOS only, so the Windows CI never sees it. |
 | `crates/scribe-platform/src/device/` (`microphone.rs`, `clipboard.rs`, `mod.rs`) | Device glue: cpal (default input device, stream per sample format) and arboard (one call per `ClipboardBackend` method). Needs a microphone / the real system clipboard. |
 | `src-tauri/src/main.rs` | Tauri bootstrap: builds `Services`, registers commands, starts threads. |
-| `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
-| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/AppKit/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
+| `src-tauri/src/tray.rs` | Tauri tray icon and menu construction and relabelling; each menu item calls one tested function, labels come from `locale::tray_labels`. |
+| `src-tauri/src/menu.rs` | macOS menu bar (app, Edit, Window menus) built from predefined items; labels are `locale::app_menu_labels`. Compiled on macOS only. |
+| `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/AppKit/cpal: `TauriUi` (`UiSink`: `emit_to`; a language change is emitted as `language` to every window and relabels the tray through `tray::TrayMenu`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.tsx`, `src/overlay/main.tsx` | UI entry files: a single `render(...)` call and the global stylesheet import. |
 | `src/**/*.d.ts` | Type declarations (CSS module typing): no runtime code. |
 | `src/**/*.test.{ts,tsx}`, `preview/**` | Tests themselves; local design previews (not shipped). |
@@ -133,8 +134,11 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   `ClipboardContent` are `clipboard::BackendClipboard`. Remaining branches: arboard error mapping (`?`).
 - `windows/keys.rs`, `windows/window.rs`, `windows/mod.rs`: Win32 calls and re-exports only. `show_overlay`/`hide_overlay` must stay
   non-blocking across threads (`ShowWindowAsync`, `SWP_ASYNCWINDOWPOS`): see the next point.
-- `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`. Remaining branches: the menu-id
-  `match` and the left-click filter.
+- `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`; labels per language =
+  `locale::tray_labels` (relabelled by `TrayMenu::relabel` when `save_settings` reports a new language). Remaining
+  branches: the menu-id `match` and the left-click filter.
+- `menu.rs`: labels per language = `locale::app_menu_labels`; the whole menu is rebuilt by `TauriUi::language_changed`.
+  No branch: one predefined item per entry.
 - `adapters.rs`: overlay state/dismiss rules are `overlay::Overlay`, placement is `overlay::overlay_position`, the
   level throttle is `controller::level_emitter`. Remaining branches: cached native window `Some` (Win32/AppKit
   show/hide) / `None` (webview show/hide), the per-OS `raw_window` `cfg`s and the `if let Some(window)` guards. `TauriOverlayWindow` methods run with the `Overlay`
@@ -145,8 +149,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
   (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
-  `bootstrap::hides_on_close`, `bootstrap::hook_unavailable_message`, `audio_mute::recover` (sound left muted by a crash, queued on the mute worker), `AudioMute::restore_before_exit` (sound muted by a recording when Scribe quits). Remaining branches: `?` on setup steps,
-  the delayed `update::check_at_startup` spawn, the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + toast) dispatch, `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
+  `bootstrap::hides_on_close`, `audio_mute::recover` (sound left muted by a crash, queued on the mute worker), `AudioMute::restore_before_exit` (sound muted by a recording when Scribe quits). Remaining branches: `?` on setup steps,
+  the delayed `update::check_at_startup` spawn, the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + `Notice::HookUnavailable` toast) dispatch, the OS languages
+  read with `sys-locale` (resolution: `locale::resolve`), `if shows_main_at_launch(..) { show_main }` (rule: `bootstrap::shows_main_at_launch`), and the
   `CloseRequested` match before `prevent_close` + `hide`, the `RunEvent::Exit` match and the `try_state` guard before
   `restore_before_exit`.
 

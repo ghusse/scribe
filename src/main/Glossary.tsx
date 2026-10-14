@@ -1,6 +1,8 @@
 import { useSignal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { api, type Term } from "../lib/api";
+import { errorText } from "../lib/errors";
+import { t as i18n } from "../lib/i18n";
 import { joinVariants, noteOrNull, splitVariants } from "../lib/glossary";
 import styles from "./Glossary.module.css";
 
@@ -23,7 +25,7 @@ export default function Glossary(_props: GlossaryProps) {
     try {
       terms.value = await api.listTerms();
     } catch (err) {
-      error.value = String(err);
+      error.value = errorText(err);
     }
   }
 
@@ -35,7 +37,7 @@ export default function Glossary(_props: GlossaryProps) {
       error.value = null;
       await load();
     } catch (err) {
-      error.value = String(err);
+      error.value = errorText(err);
     }
   }
 
@@ -56,7 +58,7 @@ export default function Glossary(_props: GlossaryProps) {
       error.value = null;
       await load();
     } catch (err) {
-      error.value = String(err);
+      error.value = errorText(err);
     }
   }
 
@@ -66,7 +68,7 @@ export default function Glossary(_props: GlossaryProps) {
       error.value = null;
       await load();
     } catch (err) {
-      error.value = String(err);
+      error.value = errorText(err);
     }
   }
 
@@ -74,27 +76,28 @@ export default function Glossary(_props: GlossaryProps) {
     void load();
   }, []);
 
+  const m = i18n.value.glossary;
   return (
     <>
       <form class={styles.form} onSubmit={add}>
         <input
-          placeholder="Terme (ex. Kubernetes)"
+          placeholder={m.termPlaceholder}
           value={term.value}
           onInput={(e) => (term.value = inputValue(e))}
           required
         />
         <input
-          placeholder="Mal entendu (séparés par des virgules)"
+          placeholder={m.variantsPlaceholder}
           value={variants.value}
           onInput={(e) => (variants.value = inputValue(e))}
         />
         <input
-          placeholder="Note / contexte (optionnel)"
+          placeholder={m.notePlaceholder}
           value={note.value}
           onInput={(e) => (note.value = inputValue(e))}
         />
         <button class="primary" type="submit">
-          Ajouter
+          {m.add}
         </button>
       </form>
       {error.value && <p class={styles.error}>{error.value}</p>}
@@ -102,10 +105,10 @@ export default function Glossary(_props: GlossaryProps) {
       <table class={styles.table}>
         <thead>
           <tr>
-            <th>Terme</th>
-            <th>Entendu</th>
-            <th>Note</th>
-            <th>Usages</th>
+            <th>{m.columns.term}</th>
+            <th>{m.columns.heard}</th>
+            <th>{m.columns.note}</th>
+            <th>{m.columns.uses}</th>
             <th></th>
           </tr>
         </thead>
@@ -113,7 +116,7 @@ export default function Glossary(_props: GlossaryProps) {
           {terms.value.length === 0 ? (
             <tr>
               <td colSpan={5} class={styles.muted}>
-                Glossaire vide : ajoutez les noms propres et le jargon de vos domaines.
+                {m.empty}
               </td>
             </tr>
           ) : (
@@ -133,9 +136,9 @@ export default function Glossary(_props: GlossaryProps) {
                     <td>{t.use_count}</td>
                     <td>
                       <button class="primary" onClick={() => saveEdit(t.id)}>
-                        OK
+                        {m.save}
                       </button>{" "}
-                      <button onClick={() => (editId.value = null)}>Annuler</button>
+                      <button onClick={() => (editId.value = null)}>{m.cancel}</button>
                     </td>
                   </>
                 ) : (
@@ -147,9 +150,9 @@ export default function Glossary(_props: GlossaryProps) {
                     <td>{t.note ?? ""}</td>
                     <td>{t.use_count}</td>
                     <td>
-                      <button onClick={() => startEdit(t)}>Modifier</button>{" "}
+                      <button onClick={() => startEdit(t)}>{m.edit}</button>{" "}
                       <button class="danger" onClick={() => remove(t.id)}>
-                        Supprimer
+                        {m.delete}
                       </button>
                     </td>
                   </>

@@ -1,16 +1,34 @@
 import { describe, expect, it } from "bun:test";
-import { effortLabel, keysHelp, LEVEL_OPTIONS } from "./settingsCopy";
+import { lang } from "./i18n";
+import { effortLabel, keysHelp, languageOptions, levelOptions } from "./settingsCopy";
 
 describe("effortLabel", () => {
   it("translates the known levels and keeps unknown ones", () => {
     expect(["low", "medium", "high"].map(effortLabel)).toEqual(["Faible (rapide, recommandé)", "Moyenne", "Élevée (plus lent, plus cher)"]);
     expect(effortLabel("max")).toBe("max");
   });
+  it("follows the UI language", () => {
+    lang.value = "en";
+    expect(effortLabel("low")).toBe("Low (fast, recommended)");
+  });
 });
 
-describe("LEVEL_OPTIONS", () => {
-  it("covers every level once", () => {
-    expect(LEVEL_OPTIONS.map((o) => o.value)).toEqual(["raw", "clean", "formatted"]);
+describe("levelOptions", () => {
+  it("covers every level once, labelled in the UI language", () => {
+    expect(levelOptions().map((o) => o.value)).toEqual(["raw", "clean", "formatted"]);
+    expect(levelOptions()[0].label).toBe("Aucune (texte brut)");
+    lang.value = "en";
+    expect(levelOptions()[0].label).toBe("None (raw text)");
+  });
+});
+
+describe("languageOptions", () => {
+  it("offers the system language, then each language in its own name", () => {
+    expect(languageOptions()).toEqual([
+      { value: "system", label: "Système" }, { value: "en", label: "English" }, { value: "fr", label: "Français" },
+    ]);
+    lang.value = "en";
+    expect(languageOptions().map((o) => o.label)).toEqual(["System", "English", "Français"]);
   });
 });
 
@@ -18,5 +36,7 @@ describe("keysHelp", () => {
   it("names the OS secret store", () => {
     expect(keysHelp("mac")).toMatch(/^Stockées dans le trousseau macOS\./);
     expect(keysHelp("windows")).toMatch(/^Stockées dans le coffre Windows\./);
+    lang.value = "en";
+    expect(keysHelp("mac")).toMatch(/^Stored in the macOS Keychain\./);
   });
 });

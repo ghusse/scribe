@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { canCopy, canRetranscribe, currentText, displayText, editDraft, editPayload, latestOnly, OUTCOME_BADGES, STALE, timingLine } from "./history";
+import { canCopy, canRetranscribe, currentText, displayText, editDraft, editPayload, latestOnly, STALE, timingLine } from "./history";
 
 const texts = (raw: string | null, final: string | null, edited: string | null) => ({ raw_text: raw, final_text: final, edited_text: edited });
 
@@ -38,11 +38,12 @@ describe("history texts", () => {
     expect(editPayload(" texte ")).toBe(" texte ");
   });
 
-  it("words the badges and timings", () => {
-    expect(OUTCOME_BADGES.pasted_uncertain).toBe("Inséré ?");
-    expect(timingLine({ duration_ms: 4200, stt_ms: null, llm_ms: null })).toBe("4.2 s");
-    expect(timingLine({ duration_ms: 4200, stt_ms: 812, llm_ms: 640 })).toBe("4.2 s · STT 812 ms · LLM 640 ms");
-    expect(timingLine({ duration_ms: 50, stt_ms: null, llm_ms: 3 })).toBe("0.1 s · LLM 3 ms");
+  it("words the timings in the locale's number format", () => {
+    expect(timingLine({ duration_ms: 4200, stt_ms: null, llm_ms: null }, "en")).toBe("4.2 s");
+    expect(timingLine({ duration_ms: 4200, stt_ms: 812, llm_ms: 640 }, "en")).toBe("4.2 s · STT 812 ms · LLM 640 ms");
+    expect(timingLine({ duration_ms: 50, stt_ms: null, llm_ms: 3 }, "en")).toBe("0.1 s · LLM 3 ms");
+    expect(timingLine({ duration_ms: 4000, stt_ms: 1234, llm_ms: null }, "en")).toBe("4.0 s · STT 1,234 ms");
+    expect(timingLine({ duration_ms: 4200, stt_ms: 812, llm_ms: 640 }, "fr")).toBe("4,2 s · STT 812 ms · LLM 640 ms");
   });
 });
 

@@ -13,7 +13,7 @@ pub fn shared_client() -> Result<reqwest::Client, ProviderError> {
     CLIENT
         .get_or_init(|| reqwest::Client::builder().build().map_err(|e| e.to_string()))
         .clone()
-        .map_err(ProviderError::Config)
+        .map_err(|detail| ProviderError::Config { detail })
 }
 
 /// Opens a pooled connection to `base_url` while the user is still speaking, so the transcription and correction
@@ -28,7 +28,7 @@ pub fn map_send_error(e: reqwest::Error) -> ProviderError {
     if e.is_timeout() {
         ProviderError::Timeout
     } else {
-        ProviderError::Network(e.to_string())
+        ProviderError::Network { detail: e.to_string() }
     }
 }
 
@@ -79,7 +79,7 @@ mod tests {
     async fn an_unreachable_server_is_a_retryable_network_error() {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let err = send(&reqwest::Client::new(), &format!("http://127.0.0.1:{port}/")).await.unwrap_err();
-        assert!(matches!(err, ProviderError::Network(_)), "{err:?}");
+        assert!(matches!(err, ProviderError::Network { .. }), "{err:?}");
         assert!(err.is_retryable());
     }
 

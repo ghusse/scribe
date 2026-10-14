@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
+import { lang } from "../lib/i18n";
 import ModelPicker from "./ModelPicker";
 
 const CUSTOM_LABEL = "Identifiant du modèle personnalisé";
@@ -74,6 +75,8 @@ describe("ModelPicker", () => {
     await fireEvent.change(input, { target: { value: "   " } });
     expect(screen.getByRole("alert").textContent).toBe("Identifiant du modèle : ne peut pas être vide");
     expect(input.getAttribute("aria-invalid")).toBe("true");
+    lang.value = "en";
+    expect((await screen.findByRole("alert")).textContent).toBe("Model id: cannot be empty");
     expect(props.value).toBe("my-model");
     expect(props.onChange).not.toHaveBeenCalled();
   });
@@ -105,5 +108,12 @@ describe("ModelPicker", () => {
     const input = screen.getByLabelText(CUSTOM_LABEL) as HTMLInputElement;
     await fireEvent.change(input, { target: { value: "   " } });
     expect(input.value).toBe("   ");
+  });
+
+  it("speaks English", () => {
+    lang.value = "en";
+    setup(["a-2"], "my-model");
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["a-2 (latest, default)", "Other…"]);
+    expect(screen.getByLabelText("Custom model id")).toBeTruthy();
   });
 });

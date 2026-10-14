@@ -19,7 +19,7 @@ pub fn get_key(store: &dyn SecretStore, provider: &str) -> Option<String> {
 /// An empty key deletes the stored credential.
 pub fn set_key(store: &dyn SecretStore, provider: &str, key: &str) -> Result<(), String> {
     if scribe_providers::catalog::provider(provider).is_none() {
-        return Err(format!("fournisseur inconnu : {provider}"));
+        return Err(format!("unknown provider: {provider}"));
     }
     if key.trim().is_empty() {
         store.delete(provider)
@@ -127,7 +127,7 @@ mod tests {
         set_key(&store, "openai", "  sk-abc \n").unwrap();
         assert_eq!(store.keys.lock().unwrap().get("openai").map(String::as_str), Some("sk-abc"));
         let err = set_key(&store, "nope", "sk").unwrap_err();
-        assert_eq!(err, "fournisseur inconnu : nope");
+        assert_eq!(err, "unknown provider: nope");
         assert!(!store.keys.lock().unwrap().contains_key("nope"));
     }
 

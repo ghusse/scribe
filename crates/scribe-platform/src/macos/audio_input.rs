@@ -22,7 +22,7 @@ impl HogBackend for CoreAudioHog {
         let mut address = prop(kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal);
         get(kAudioObjectSystemObject as AudioObjectID, &mut address, &mut device)?;
         if device == 0 {
-            Err("aucun micro détecté".into())
+            Err("no microphone found".into())
         } else {
             Ok(device)
         }

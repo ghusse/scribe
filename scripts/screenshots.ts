@@ -11,7 +11,7 @@ const SHOTS: { file: string; path: string; size: [number, number] }[] = [
   { file: "history.png", path: "/main.html?tab=Historique", size: [980, 700] },
   { file: "glossary.png", path: "/main.html?tab=Vocabulaire", size: [980, 440] },
   { file: "settings.png", path: "/main.html?tab=Réglages", size: [980, 700] },
-  { file: "setup.png", path: "/main.html?tab=Réglages&section=Fournisseurs et modèles", size: [980, 700] },
+  { file: "setup.png", path: "/main.html?tab=Réglages&section=Modèles", size: [980, 700] },
 ];
 
 const CHROMES = [

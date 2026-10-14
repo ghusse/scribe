@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { lang } from "./i18n";
 import { editAction, needsAttention, staleGuard, statusView, testSignature, type SaveState } from "./autosave";
 
 describe("editAction", () => {
@@ -67,5 +68,12 @@ describe("statusView", () => {
     expect(statusView("failed", "disque plein\nos error 112", false)).toEqual({
       tone: "danger", text: "⚠ Non enregistré : disque plein", alert: true, retry: true, details: "disque plein\nos error 112", visible: true,
     });
+  });
+  it("words the bar in the UI language", () => {
+    lang.value = "en";
+    expect(statusView("saving", null, false).text).toBe("Saving…");
+    expect(statusView("saved", null, true).text).toBe("✓ Settings saved");
+    expect(statusView("invalid", null, false).text).toBe("⚠ Not saved: invalid value");
+    expect(statusView("failed", null, false)).toMatchObject({ text: "⚠ Not saved: unknown error", details: "unknown error" });
   });
 });

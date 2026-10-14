@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::overlay::ToastLevel;
+use crate::error::AppError;
+use crate::overlay::{Notice, ToastLevel};
 use crate::services::{AvailableUpdate, Services};
 
 /// The startup check waits a little: the network may not be up yet right after login.
@@ -17,20 +18,18 @@ pub struct UpdateStatus {
     pub available: Option<AvailableUpdate>,
 }
 
-pub async fn status(svc: &Services) -> Result<UpdateStatus, String> {
+pub async fn status(svc: &Services) -> Result<UpdateStatus, AppError> {
     let available = svc.updater.check().await?;
     Ok(UpdateStatus { current: svc.updater.current_version(), available })
-}
-
-pub fn available_message(update: &AvailableUpdate) -> String {
-    format!("Scribe {} est disponible : Réglages > Mises à jour", update.version)
 }
 
 /// At startup: a toast when a newer version exists. No network, no release yet or a broken manifest stay
 /// silent (logged): the user did not ask.
 pub async fn check_at_startup(svc: Arc<Services>) {
     match svc.updater.check().await {
-        Ok(Some(update)) => svc.overlay.toast(ToastLevel::Info, available_message(&update), None, None),
+        Ok(Some(AvailableUpdate { version, .. })) => {
+            svc.overlay.toast(ToastLevel::Info, Notice::UpdateAvailable { version }, None, None)
+        }
         Ok(None) => {}
         Err(e) => tracing::info!("vérification des mises à jour impossible : {e}"),
     }
@@ -56,7 +55,10 @@ mod tests {
         *f.updater.available.lock().unwrap() = Some(update("0.2.0"));
         assert_eq!(tauri::async_runtime::block_on(status(&f.svc)).unwrap().available, Some(update("0.2.0")));
         *f.updater.fail.lock().unwrap() = Some("réseau indisponible".into());
-        assert_eq!(tauri::async_runtime::block_on(status(&f.svc)), Err("réseau indisponible".into()));
+        assert_eq!(
+            tauri::async_runtime::block_on(status(&f.svc)),
+            Err(AppError::System { detail: "réseau indisponible".into() })
+        );
     }
 
     #[test]
@@ -74,7 +76,7 @@ mod tests {
             f.window.last_event(),
             Some(OverlayEvent::Toast {
                 level: ToastLevel::Info,
-                message: "Scribe 0.2.0 est disponible : Réglages > Mises à jour".into(),
+                message: Notice::UpdateAvailable { version: "0.2.0".into() },
                 preview: None,
                 dictation_id: None,
             })

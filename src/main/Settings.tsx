@@ -1,30 +1,31 @@
 import { untracked, useComputed, useSignal } from "@preact/signals";
-import { Fragment } from "preact";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { api, effortLevels, type Provider, type ProviderTest, type Settings as SettingsT } from "../lib/api";
+import { Fragment, type ComponentChildren } from "preact";
+import { useEffect, useLayoutEffect, useState } from "preact/hooks";
+import { api, effortLevels, type LanguagePref, type Provider, type ProviderTest, type Settings as SettingsT } from "../lib/api";
 import { chordName, keyName } from "../lib/keys";
 import { editAction, SAVED_FADE_MS, staleGuard, statusView, testSignature, type SaveState } from "../lib/autosave";
-import { checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, retentionOptions, type NumberFieldId } from "../lib/validation";
+import { errorText } from "../lib/errors";
+import { t } from "../lib/i18n";
+import { checkNumbers, fieldText, retentionOptions, type NumberFieldId } from "../lib/validation";
 import {
   assignHotkey,
   captureOutcome,
-  CAPTURE_TIMEOUT_MESSAGE,
   normalizeLock,
   pendingSummary,
   swallowsKey,
-  TYPING_KEY_WARNING,
   type Assignment,
   type HotkeyRole,
 } from "../lib/hotkeys";
 import {
   canSaveKey,
-  deleteKeyQuestion,
-  KEY_STATE_LABELS,
   keyPlaceholder,
   keyState,
+  keyStateLabel,
   keyUsage,
+  listParts,
   missingKeys,
   missingKeyWarning,
+  roleLabel,
   rolesText,
   setupBannerParts,
   splitProviders,
@@ -32,9 +33,12 @@ import {
   unsavedDrafts,
   type KeyRole,
 } from "../lib/apiKeys";
-import { testLine, translateProviderError } from "../lib/providerTest";
-import { effortLabel, HOTKEY_HELP, keysHelp, LEVEL_OPTIONS, RAW_LEVEL_NOTE } from "../lib/settingsCopy";
+import { testFailure, testLine } from "../lib/providerTest";
+import { effortLabel, keysHelp, languageOptions, levelOptions } from "../lib/settingsCopy";
 import ModelPicker from "./ModelPicker";
+import NumberField from "./NumberField";
+import SaveStatusBar from "./SaveStatusBar";
+import SettingsNav, { type Category } from "./SettingsNav";
 import Startup from "./Startup";
 import Updates from "./Updates";
 import { cx, useSyncEffect, useTick } from "../lib/ui";
@@ -47,76 +51,45 @@ export interface SettingsProps {
   onStatusChange?: (next: SaveState) => void;
 }
 
-type Accepted = Extract<Assignment, { ok: true }>;
+/** `noteOf` re-runs the assignment so its note is rendered in the current language. */
+type Accepted = Extract<Assignment, { ok: true }> & { noteOf: () => string | null };
+type KeyFeedback = { done: "saved" | "deleted" } | { error: unknown };
+type TestError = { kind: "unsaved" } | { kind: "failed"; error: unknown };
 
 // Stable identity: a new function each render would refocus the element on every render.
 const autofocus = (el: HTMLElement | null) => el?.focus();
 
-interface NumberFieldProps {
-  id: NumberFieldId;
-  value: number;
-  invalid: boolean;
-  onCommit: (n: number) => void;
-}
-
-function NumberField({ id, value, invalid, onCommit }: NumberFieldProps) {
-  const f = NUMBER_FIELDS[id];
-  const input = useRef<HTMLInputElement>(null);
-  // Written only when the value changes: a re-render must not wipe a number being typed.
-  useLayoutEffect(() => {
-    input.current!.value = String(value);
-  }, [value]);
-  return (
-    <label class={cx(styles.row, styles.field)}>
-      <span>{f.label}</span>
-      <span class={styles.num}>
-        <input
-          ref={input}
-          type="number"
-          min={f.min}
-          max={f.max}
-          step="1"
-          aria-invalid={invalid}
-          aria-describedby={`help-${id}`}
-          onChange={(e) => onCommit(parseNumber(e.currentTarget.value))}
-        />
-        <span class={styles.unit}>{f.unit}</span>
-      </span>
-      <span class={styles.help} id={`help-${id}`}>
-        {fieldHelp(f)}
-      </span>
-    </label>
-  );
-}
-
 export default function Settings({ active = true, onStatusChange }: SettingsProps) {
   const s = useSignal<SettingsT | null>(null);
-  const loadError = useSignal<string | null>(null);
+  const loadError = useSignal<unknown>(null);
   const providers = useSignal<Provider[]>([]);
   const keyStatus = useSignal<Record<string, boolean>>({});
   const keyDrafts = useSignal<Record<string, string>>({});
-  const error = useSignal<string | null>(null);
+  // One category shown at a time; the others stay mounted so drafts and the autosave go on.
+  const category = useSignal<Category>("general");
 
   // Autosave: every change is persisted ~500 ms after the last edit; the bar shows the outcome.
   // Number fields and the hand-typed model id only change `s` when committed (blur or Entrée).
   const saveState = useSignal<SaveState>("saved");
-  const saveError = useSignal<string | null>(null);
+  // Why the last save failed (the rejection, translated when shown).
+  const saveError = useSignal<unknown>(null);
   const savedFlash = useSignal(0);
   // « ✓ Réglages enregistrés » fades out after SAVED_FADE_MS; errors stay until fixed.
   const flashing = useSignal(false);
-  const showDetails = useSignal(false);
 
   const keyBusy = useSignal<Record<string, boolean>>({});
-  const keyFeedback = useSignal<Record<string, { ok: boolean; text: string }>>({});
+  const keyFeedback = useSignal<Record<string, KeyFeedback>>({});
   const confirmDelete = useSignal<string | null>(null);
   const othersOpen = useSignal(false);
 
   const test = useSignal<ProviderTest | null>(null);
   const testing = useSignal(false);
-  const testBlock = useSignal<string | null>(null);
+  // Messages kept as thunks are translated at render, so they follow a language change.
+  const testBlock = useSignal<(() => string) | null>(null);
+  const testError = useSignal<TestError | null>(null);
 
   const capturing = useSignal<HotkeyRole | null>(null);
-  const hotkeyNote = useSignal<string | null>(null);
+  const hotkeyNote = useSignal<(() => string | null) | null>(null);
   const pendingAssign = useSignal<Accepted | null>(null);
 
   const [m] = useState(() => ({
@@ -151,7 +124,12 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   const banner = useComputed(() => setupBannerParts(missing.value, labelOf));
   const raw = useComputed(() => s.value?.level === "raw");
   const numberIssue = useComputed(() => (s.value ? checkNumbers(s.value) : null));
-  const bar = useComputed(() => statusView(saveState.value, saveError.value, flashing.value));
+  const bar = useComputed(() => {
+    const st = saveState.value;
+    const why = st === "failed" ? errorText(saveError.value) : st === "invalid" ? (numberIssue.value?.message ?? null) : null;
+    return statusView(st, why, flashing.value);
+  });
+  const attention = useComputed(() => ({ models: missing.value.length > 0, advanced: numberIssue.value !== null }));
   const testSig = useComputed(() => (s.value ? testSignature(s.value) : ""));
 
   useSyncEffect(() => {
@@ -177,8 +155,10 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       providers.value = pr;
       keyStatus.value = ks;
       s.value = shown;
+      // First launch: start where the missing keys are added.
+      if (missingKeys(shown, ks).length > 0) category.value = "models";
     } catch (e) {
-      loadError.value = String(e);
+      loadError.value = e;
     }
   }
 
@@ -249,10 +229,10 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       max_recording_ms: Math.round(cur.max_recording_ms),
       llm_timeout_base_ms: Math.round(cur.llm_timeout_base_ms),
     };
-    const invalid = checkNumbers(snap);
-    if (invalid) {
+    if (checkNumbers(snap)) {
+      // The bar quotes `numberIssue`, which follows the language.
       saveState.value = "invalid";
-      saveError.value = invalid.message;
+      saveError.value = null;
       return Promise.resolve();
     }
     m.lastAttempted = json;
@@ -269,7 +249,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
         m.flashTimer = setTimeout(() => (flashing.value = false), SAVED_FADE_MS);
       } catch (e) {
         saveState.value = "failed";
-        saveError.value = String(e);
+        saveError.value = e;
       } finally {
         m.inFlight = null;
       }
@@ -284,12 +264,11 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   // « Réessayer »: send again the payload that failed (flush never retries it by itself).
   function retrySave() {
     m.lastAttempted = "";
-    showDetails.value = false;
     flush();
   }
 
   // ---- API keys: saved explicitly, one row at a time. ----
-  async function writeKey(id: string, key: string, done: string): Promise<boolean> {
+  async function writeKey(id: string, key: string, done: "saved" | "deleted"): Promise<boolean> {
     keyBusy.value = { ...keyBusy.value, [id]: true };
     test.value = null;
     m.testGuard.invalidate(); // a test still running used the old key
@@ -298,14 +277,14 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       await api.setApiKey(id, key);
       keyDrafts.value = { ...keyDrafts.value, [id]: "" };
       keyStatus.value = await api.keyStatus();
-      keyFeedback.value = { ...keyFeedback.value, [id]: { ok: true, text: done } };
+      keyFeedback.value = { ...keyFeedback.value, [id]: { done } };
       m.feedbackTimers[id] = setTimeout(() => {
         const { [id]: _, ...rest } = keyFeedback.value;
         keyFeedback.value = rest;
       }, 2000);
       return true;
     } catch (e) {
-      keyFeedback.value = { ...keyFeedback.value, [id]: { ok: false, text: String(e) } };
+      keyFeedback.value = { ...keyFeedback.value, [id]: { error: e } };
       return false;
     } finally {
       keyBusy.value = { ...keyBusy.value, [id]: false };
@@ -316,14 +295,14 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   async function saveKey(id: string): Promise<boolean> {
     const draft = keyDrafts.value[id];
     if (!canSaveKey(draft) || keyBusy.value[id]) return false;
-    return writeKey(id, draft, "✓ Clé enregistrée");
+    return writeKey(id, draft, "saved");
   }
 
   async function deleteKey(id: string) {
     confirmDelete.value = null;
     await tick();
     m.keyInputs[id]?.focus();
-    await writeKey(id, "", "✓ Clé supprimée");
+    await writeKey(id, "", "deleted");
   }
 
   async function cancelDelete(id: string) {
@@ -341,6 +320,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
 
   // « Ajouter la clé » (banner / inline warning): bring the provider's key field into view.
   async function focusKey(id: string) {
+    category.value = "models";
     if (keyRows.value.others.some((p) => p.id === id)) othersOpen.value = true;
     if (confirmDelete.value === id) confirmDelete.value = null;
     await tick();
@@ -357,21 +337,24 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
 
   async function runTest() {
     test.value = null;
-    error.value = null;
-    testBlock.value = unsavedDraftMessage(unsavedDrafts(keyDrafts.value, providers.value));
-    if (testBlock.value) return;
+    testError.value = null;
+    const drafts = unsavedDrafts(keyDrafts.value, providers.value);
+    if (unsavedDraftMessage(drafts)) {
+      testBlock.value = () => unsavedDraftMessage(drafts) ?? "";
+      return;
+    }
     testing.value = true;
     try {
       await flush();
       if (saveState.value === "invalid" || saveState.value === "failed") {
-        error.value = "Réglages non enregistrés : corrigez l'erreur avant de tester.";
+        testError.value = { kind: "unsaved" };
         return;
       }
       const token = m.testGuard.token();
       const result = await api.testProviders();
       if (m.testGuard.isCurrent(token)) test.value = result;
     } catch (e) {
-      error.value = String(e);
+      testError.value = { kind: "failed", error: e };
     } finally {
       testing.value = false;
     }
@@ -394,15 +377,17 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       const keys = await api.captureKey();
       const outcome = captureOutcome(keys, m.captureCancelled);
       const cur = s.value;
-      if (outcome === "timeout") hotkeyNote.value = CAPTURE_TIMEOUT_MESSAGE;
+      if (outcome === "timeout") hotkeyNote.value = () => t.value.settings.hotkey.captureTimeout;
       else if (outcome === "keys" && cur) {
-        const a = assignHotkey(role, keys!, { trigger_keys: cur.trigger_keys, lock_vk: cur.lock_vk });
-        if (!a.ok) hotkeyNote.value = a.note;
-        else if (a.confirm) pendingAssign.value = a;
-        else applyKeys(a);
+        const prev = { trigger_keys: cur.trigger_keys, lock_vk: cur.lock_vk };
+        const noteOf = () => assignHotkey(role, keys!, prev).note;
+        const a = assignHotkey(role, keys!, prev);
+        if (!a.ok) hotkeyNote.value = noteOf;
+        else if (a.confirm) pendingAssign.value = { ...a, noteOf };
+        else applyKeys({ ...a, noteOf });
       }
     } catch (e) {
-      hotkeyNote.value = `Capture impossible : ${e}`;
+      hotkeyNote.value = () => t.value.settings.hotkey.captureFailed(errorText(e));
     } finally {
       m.captureEnded = { role, at: performance.now() };
       capturing.value = null;
@@ -426,7 +411,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       d.trigger_keys = a.keys.trigger_keys;
       d.lock_vk = a.keys.lock_vk;
     });
-    hotkeyNote.value = a.note;
+    hotkeyNote.value = a.note === null ? null : a.noteOf;
     pendingAssign.value = null;
   }
 
@@ -439,23 +424,24 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
     }
   }
 
-  // A capture must not keep listening while its tab is hidden.
+  // A capture must not keep listening while its tab or its category is hidden.
   useEffect(() => {
-    if (!active && capturing.value) cancelCapture();
-  }, [active, capturing.value]);
+    if ((!active || category.value !== "dictation") && capturing.value) cancelCapture();
+  }, [active, category.value, capturing.value]);
 
+  const tr = t.value.settings;
   const cur = s.value;
   if (!cur) {
-    if (loadError.value)
+    if (loadError.value !== null)
       return (
         <section class={cx(styles.section, styles.loadError)} role="alert">
-          <p>Impossible de charger les réglages&nbsp;: {loadError.value}</p>
-          <button onClick={load}>Réessayer</button>
+          <p>{tr.loadError(errorText(loadError.value))}</p>
+          <button onClick={load}>{tr.retry}</button>
         </section>
       );
     return (
       <p class={styles.loading} role="status">
-        Chargement…
+        {tr.loading}
       </p>
     );
   }
@@ -463,39 +449,35 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   const testLines =
     test.value !== null
       ? [
-          testLine("Transcription", sttProvider.value?.label ?? cur.stt_provider, cur.stt_model, test.value.stt),
-          testLine("Correction", llmProvider.value?.label ?? cur.llm_provider, cur.llm_model, test.value.llm),
+          testLine(roleLabel("transcription"), sttProvider.value?.label ?? cur.stt_provider, cur.stt_model, test.value.stt),
+          testLine(roleLabel("correction"), llmProvider.value?.label ?? cur.llm_provider, cur.llm_model, test.value.llm),
         ]
       : [];
-  const errorSummary = error.value ? translateProviderError(error.value, null) : null;
+  const failure = testError.value?.kind === "failed" ? testFailure(testError.value.error) : null;
   const locked = capturing.value !== null || pendingAssign.value !== null;
 
   const hotkeyButton = (role: HotkeyRole) => (
     <button
       onClick={() => (capturing.value === role ? cancelCapture() : capture(role))}
       aria-label={
-        capturing.value === role
-          ? "Annuler la capture"
-          : role === "trigger"
-            ? "Changer le raccourci de déclenchement"
-            : "Changer la touche de verrouillage"
+        capturing.value === role ? tr.hotkey.cancelCapture : role === "trigger" ? tr.hotkey.changeTrigger : tr.hotkey.changeLock
       }
       onKeyDown={(e) => hotkeyKeydown(e, role)}
       onKeyUp={hotkeyKeyup}
       disabled={(capturing.value !== null && capturing.value !== role) || pendingAssign.value !== null}
     >
-      {capturing.value === role ? "Annuler" : "Changer"}
+      {capturing.value === role ? tr.cancel : tr.hotkey.change}
     </button>
   );
 
   const keyLine = (id: string, role: KeyRole) =>
     keyStatus.value[id] ? (
-      <p class={cx(styles.keyLine, styles.ok)}>✓ Clé {labelOf(id)} enregistrée</p>
+      <p class={cx(styles.keyLine, styles.ok)}>{tr.models.keySaved(labelOf(id))}</p>
     ) : (
       <p class={cx(styles.keyLine, styles.warn)}>
         {missingKeyWarning(labelOf(id), role)}{" "}
         <button type="button" class={styles.link} onClick={() => focusKey(id)}>
-          Ajouter la clé
+          {tr.models.addKey}
         </button>
       </p>
     );
@@ -515,18 +497,18 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
       >
         <span class={styles.who}>
           <span class={styles.label}>{p.label}</span>
-          <span class={cx(styles.status, styles[st])}>{KEY_STATE_LABELS[st]}</span>
-          {usage.value[p.id] && <span class={styles.usage}>utilisée pour&nbsp;: {rolesText(usage.value[p.id])}</span>}
+          <span class={cx(styles.status, styles[st])}>{keyStateLabel(st)}</span>
+          {usage.value[p.id] && <span class={styles.usage}>{tr.apiKeys.usedFor(rolesText(usage.value[p.id]))}</span>}
         </span>
         {confirmDelete.value === p.id ? (
           <Fragment key="confirm">
-            <span class={styles.confirm}>{deleteKeyQuestion(p.label)}</span>
+            <span class={styles.confirm}>{tr.apiKeys.deleteQuestion(p.label)}</span>
             <span class={styles.actions}>
               <button type="button" class="danger" onClick={() => deleteKey(p.id)} onKeyDown={escCancelsDelete(p.id)}>
-                Supprimer
+                {tr.delete}
               </button>
               <button type="button" onClick={() => cancelDelete(p.id)} onKeyDown={escCancelsDelete(p.id)} ref={autofocus}>
-                Annuler
+                {tr.cancel}
               </button>
             </span>
           </Fragment>
@@ -535,7 +517,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
             <input
               type="password"
               placeholder={keyPlaceholder(keyStatus.value[p.id])}
-              aria-label={`Clé ${p.label}`}
+              aria-label={tr.apiKeys.field(p.label)}
               value={draft}
               onInput={(e) => (keyDrafts.value = { ...keyDrafts.value, [p.id]: e.currentTarget.value })}
               ref={(el) => {
@@ -544,7 +526,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
             />
             <span class={styles.actions}>
               <button type="submit" class={cx(canSaveKey(draft) && "primary")} disabled={!canSaveKey(draft) || keyBusy.value[p.id]}>
-                Enregistrer
+                {tr.save}
               </button>
               {keyStatus.value[p.id] && (
                 <button
@@ -556,15 +538,15 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
                     m.deleteButtons[p.id] = el;
                   }}
                 >
-                  Supprimer
+                  {tr.delete}
                 </button>
               )}
             </span>
           </Fragment>
         )}
         {feedback && (
-          <span class={cx(styles.keyFeedback, feedback.ok ? styles.ok : styles.error)} role="status">
-            {feedback.text}
+          <span class={cx(styles.keyFeedback, "done" in feedback ? styles.ok : styles.error)} role="status">
+            {"done" in feedback ? tr.apiKeys[feedback.done] : errorText(feedback.error)}
           </span>
         )}
       </form>
@@ -575,313 +557,323 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
     <NumberField id={id} value={value} invalid={numberIssue.value?.field === id} onCommit={(n) => edit((d) => set(d, n))} />
   );
 
+  const pane = (id: Category, children: ComponentChildren) => (
+    <div class={styles.pane} hidden={category.value !== id} aria-labelledby={`settings-${id}`} role="region">
+      <h2 class={styles.paneTitle} id={`settings-${id}`}>
+        {tr.nav[id]}
+      </h2>
+      {children}
+    </div>
+  );
+
   const sum = pendingAssign.value
     ? pendingSummary(pendingAssign.value.keys, { trigger_keys: cur.trigger_keys, lock_vk: cur.lock_vk })
     : null;
-  const b = bar.value;
 
   return (
     <>
       {banner.value.length > 0 && (
         <div class={styles.banner} role="note">
-          Pour commencer, ajoutez la clé{" "}
-          {banner.value.map((part, i) => (
-            <Fragment key={i}>
-              {i > 0 && (i === banner.value.length - 1 ? " et " : ", ")}
-              <button type="button" class={styles.link} onClick={() => focusKey(missing.value[i].provider)}>
-                {part.label}
-              </button>{" "}
-              ({part.roles})
-            </Fragment>
-          ))}
+          {tr.banner.intro}{" "}
+          {listParts(banner.value.map((_, i) => String(i))).map((part, i) => {
+            if (part.type === "literal") return part.value;
+            const n = Number(part.value);
+            return (
+              <Fragment key={i}>
+                <button type="button" class={styles.link} onClick={() => focusKey(missing.value[n].provider)}>
+                  {banner.value[n].label}
+                </button>{" "}
+                ({banner.value[n].roles})
+              </Fragment>
+            );
+          })}
           .
         </div>
       )}
 
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Raccourci</h2>
-        <p class={styles.help}>{HOTKEY_HELP}</p>
-        <div class={styles.hotkeys}>
-          <div class={styles.hotkey}>
-            <span class={styles.label}>Déclenchement</span>
-            <strong>
-              {capturing.value === "trigger"
-                ? "Appuyez sur la touche ou la combinaison, puis relâchez… (Échap pour annuler)"
-                : chordName(cur.trigger_keys)}
-            </strong>
-            {hotkeyButton("trigger")}
-          </div>
-          <label class={cx(styles.row, styles.check)}>
-            <input
-              type="checkbox"
-              checked={cur.gesture.double_tap_enabled}
-              onChange={(e) => edit((d) => (d.gesture.double_tap_enabled = e.currentTarget.checked))}
-            />{" "}
-            Double-tap pour verrouiller
-          </label>
-          <div class={styles.hotkey}>
-            <span class={styles.label}>Verrouillage (pendant le maintien)</span>
-            <strong>{capturing.value === "lock" ? "Appuyez sur une touche… (Échap pour annuler)" : keyName(cur.lock_vk)}</strong>
-            {hotkeyButton("lock")}
-            <button
-              onClick={() => edit((d) => (d.lock_vk = 0))}
-              aria-label="Désactiver la touche de verrouillage"
-              disabled={cur.lock_vk === 0 || locked}
-            >
-              Désactiver
-            </button>
-          </div>
-        </div>
-        {pendingAssign.value && sum && (
-          <p class={styles.inlineConfirm} role="status">
-            <span>
-              Déclenchement = <strong>{sum.trigger}</strong>
-              {sum.lock && (
-                <>
-                  , Verrouillage = <strong>{sum.lock}</strong>
-                </>
+      <div class={styles.layout}>
+        <SettingsNav current={category.value} attention={attention.value} onSelect={(c) => (category.value = c)} />
+
+        {pane(
+          "general",
+          <>
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.language.heading}</h3>
+              <label class={styles.row}>
+                {tr.language.label}
+                <select
+                  class={styles.short}
+                  value={cur.language}
+                  onChange={(e) => edit((d) => (d.language = e.currentTarget.value as LanguagePref))}
+                >
+                  {languageOptions().map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+            <Startup />
+            <Updates />
+          </>,
+        )}
+
+        {pane(
+          "dictation",
+          <>
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.hotkey.heading}</h3>
+              <p class={styles.help}>{tr.hotkey.help}</p>
+              <div class={styles.hotkeys}>
+                <div class={styles.hotkey}>
+                  <span class={styles.label}>{tr.hotkey.trigger}</span>
+                  <strong>{capturing.value === "trigger" ? tr.hotkey.pressCombination : chordName(cur.trigger_keys)}</strong>
+                  {hotkeyButton("trigger")}
+                </div>
+                <label class={cx(styles.row, styles.check)}>
+                  <input
+                    type="checkbox"
+                    checked={cur.gesture.double_tap_enabled}
+                    onChange={(e) => edit((d) => (d.gesture.double_tap_enabled = e.currentTarget.checked))}
+                  />{" "}
+                  {tr.hotkey.doubleTap}
+                </label>
+                <div class={styles.hotkey}>
+                  <span class={styles.label}>{tr.hotkey.lockRow}</span>
+                  <strong>{capturing.value === "lock" ? tr.hotkey.pressKey : keyName(cur.lock_vk)}</strong>
+                  {hotkeyButton("lock")}
+                  <button
+                    onClick={() => edit((d) => (d.lock_vk = 0))}
+                    aria-label={tr.hotkey.disableLock}
+                    disabled={cur.lock_vk === 0 || locked}
+                  >
+                    {tr.hotkey.disable}
+                  </button>
+                </div>
+              </div>
+              {pendingAssign.value && sum && (
+                <p class={styles.inlineConfirm} role="status">
+                  <span>
+                    {tr.hotkey.trigger} = <strong>{sum.trigger}</strong>
+                    {sum.lock && (
+                      <>
+                        , {tr.hotkey.lock} = <strong>{sum.lock}</strong>
+                      </>
+                    )}
+                    . {tr.hotkey.typingKeyWarning}
+                  </span>
+                  <button class="primary" onClick={() => applyKeys(pendingAssign.value!)}>
+                    {tr.hotkey.continue}
+                  </button>
+                  <button onClick={() => (pendingAssign.value = null)} ref={autofocus}>
+                    {tr.cancel}
+                  </button>
+                </p>
               )}
-              . {TYPING_KEY_WARNING}
-            </span>
-            <button class="primary" onClick={() => applyKeys(pendingAssign.value!)}>
-              Continuer
-            </button>
-            <button onClick={() => (pendingAssign.value = null)} ref={autofocus}>
-              Annuler
-            </button>
-          </p>
+              {hotkeyNote.value && (
+                <p class={styles.note} role="status">
+                  {hotkeyNote.value()}
+                </p>
+              )}
+            </section>
+
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.sound.heading}</h3>
+              <label class={cx(styles.row, styles.check)}>
+                <input
+                  type="checkbox"
+                  checked={cur.mute_audio_during_dictation}
+                  onChange={(e) => edit((d) => (d.mute_audio_during_dictation = e.currentTarget.checked))}
+                />{" "}
+                {tr.sound.mute}
+              </label>
+              <label class={cx(styles.row, styles.check)}>
+                <input
+                  type="checkbox"
+                  checked={cur.exclusive_microphone_during_dictation}
+                  onChange={(e) => edit((d) => (d.exclusive_microphone_during_dictation = e.currentTarget.checked))}
+                  aria-describedby="exclusive-mic-note"
+                />{" "}
+                {tr.sound.exclusiveMic}
+              </label>
+              <p class={styles.note} id="exclusive-mic-note">
+                {tr.sound.exclusiveMicNote}
+              </p>
+            </section>
+
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.correction.heading}</h3>
+              <label class={styles.row}>
+                {tr.correction.level}
+                <select
+                  value={cur.level}
+                  onChange={(e) => edit((d) => (d.level = e.currentTarget.value as SettingsT["level"]))}
+                >
+                  {levelOptions().map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+          </>,
         )}
-        {hotkeyNote.value && (
-          <p class={styles.note} role="status">
-            {hotkeyNote.value}
-          </p>
+
+        {pane(
+          "models",
+          <>
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.models.heading}</h3>
+              <h4 class={styles.subheading}>{tr.roles.transcription}</h4>
+              <label class={styles.row}>
+                {tr.models.provider}
+                <select value={cur.stt_provider} onChange={(e) => onSttProvider(e.currentTarget.value)}>
+                  {sttProviders.value.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {keyLine(cur.stt_provider, "transcription")}
+              <label class={styles.row} key={`stt-${cur.stt_provider}`}>
+                {tr.models.model}{" "}
+                <ModelPicker
+                  models={sttProvider.value?.stt_models ?? []}
+                  value={cur.stt_model}
+                  onValueChange={(v) => edit((d) => (d.stt_model = v))}
+                />
+              </label>
+
+              <h4 class={styles.subheading}>{tr.roles.correction}</h4>
+              {raw.value && <p class={cx(styles.note, styles.indent)}>{tr.models.rawNote}</p>}
+              <fieldset disabled={raw.value} class={cx(styles.fieldset, raw.value && styles.off)}>
+                <label class={styles.row}>
+                  {tr.models.provider}
+                  <select value={cur.llm_provider} onChange={(e) => onLlmProvider(e.currentTarget.value)}>
+                    {llmProviders.value.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!raw.value && keyLine(cur.llm_provider, "correction")}
+                <label class={styles.row} key={`llm-${cur.llm_provider}`}>
+                  {tr.models.model}{" "}
+                  <ModelPicker
+                    models={llmProvider.value?.llm_models.map((x) => x.id) ?? []}
+                    value={cur.llm_model}
+                    onValueChange={(v) => edit((d) => (d.llm_model = v))}
+                    onChange={() => edit(syncEffortOf)}
+                  />
+                </label>
+                {efforts.value.length > 0 && (
+                  <label class={styles.row}>
+                    {tr.models.effort}
+                    <select value={cur.llm_effort} onChange={(e) => edit((d) => (d.llm_effort = e.currentTarget.value))}>
+                      {efforts.value.map((x) => (
+                        <option key={x} value={x}>
+                          {effortLabel(x)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </fieldset>
+
+              <div class={styles.test}>
+                <button onClick={runTest} disabled={testing.value}>
+                  {testing.value ? tr.test.running : raw.value ? tr.test.runTranscription : tr.test.run}
+                </button>
+                {testBlock.value && (
+                  <p class={styles.inlineConfirm} role="status">
+                    {testBlock.value()}
+                    <button class="primary" onClick={saveDraftsAndTest}>
+                      {tr.save}
+                    </button>
+                    <button onClick={() => (testBlock.value = null)}>{tr.cancel}</button>
+                  </p>
+                )}
+                <div class={styles.testResult} role="status">
+                  {testLines.map((l, i) => (
+                    <Fragment key={i}>
+                      <p class={l.ok ? styles.ok : styles.fail}>
+                        <span class={styles.title}>{l.title}</span>
+                        {tr.colon}
+                        {l.text}
+                      </p>
+                      {l.raw && (
+                        <details>
+                          <summary>{tr.details}</summary>
+                          <pre class={styles.pre}>{l.raw}</pre>
+                        </details>
+                      )}
+                    </Fragment>
+                  ))}
+                  {testError.value?.kind === "unsaved" && <p class={styles.fail}>{tr.test.notSaved}</p>}
+                  {failure && (
+                    <>
+                      <p class={styles.fail}>{failure.text}</p>
+                      {failure.raw && (
+                        <details>
+                          <summary>{tr.details}</summary>
+                          <pre class={styles.pre}>{failure.raw}</pre>
+                        </details>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section class={styles.section}>
+              <h3 class={styles.heading}>{tr.apiKeys.heading}</h3>
+              <p class={styles.help}>{keysHelp()}</p>
+              {keyRows.value.used.map(keyRow)}
+              {keyRows.value.others.length > 0 && (
+                <details
+                  class={styles.others}
+                  open={othersOpen.value}
+                  onToggle={(e) => (othersOpen.value = (e.currentTarget as HTMLDetailsElement).open)}
+                >
+                  <summary>{tr.apiKeys.others}</summary>
+                  {keyRows.value.others.map(keyRow)}
+                </details>
+              )}
+            </section>
+          </>,
         )}
-      </section>
 
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Son</h2>
-        <label class={cx(styles.row, styles.check)}>
-          <input
-            type="checkbox"
-            checked={cur.mute_audio_during_dictation}
-            onChange={(e) => edit((d) => (d.mute_audio_during_dictation = e.currentTarget.checked))}
-          />{" "}
-          Couper le son de l'ordinateur pendant la dictée
-        </label>
-        <label class={cx(styles.row, styles.check)}>
-          <input
-            type="checkbox"
-            checked={cur.exclusive_microphone_during_dictation}
-            onChange={(e) => edit((d) => (d.exclusive_microphone_during_dictation = e.currentTarget.checked))}
-            aria-describedby="exclusive-mic-note"
-          />{" "}
-          Couper le micro des autres applications pendant la dictée
-        </label>
-        <p class={styles.note} id="exclusive-mic-note">
-          Une visio ou un appel en cours perd le micro le temps de la dictée. Si le micro refuse cet accès exclusif, la
-          dictée se fait quand même, sans couper les autres applications.
-        </p>
-      </section>
-
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Correction</h2>
-        <label class={styles.row}>
-          Niveau de correction
-          <select
-            value={cur.level}
-            onChange={(e) => edit((d) => (d.level = e.currentTarget.value as SettingsT["level"]))}
-          >
-            {LEVEL_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
-
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Fournisseurs et modèles</h2>
-        <h3 class={styles.subheading}>Transcription</h3>
-        <label class={styles.row}>
-          Fournisseur
-          <select value={cur.stt_provider} onChange={(e) => onSttProvider(e.currentTarget.value)}>
-            {sttProviders.value.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {keyLine(cur.stt_provider, "transcription")}
-        <label class={styles.row} key={`stt-${cur.stt_provider}`}>
-          Modèle{" "}
-          <ModelPicker
-            models={sttProvider.value?.stt_models ?? []}
-            value={cur.stt_model}
-            onValueChange={(v) => edit((d) => (d.stt_model = v))}
-          />
-        </label>
-
-        <h3 class={styles.subheading}>Correction</h3>
-        {raw.value && <p class={cx(styles.note, styles.indent)}>{RAW_LEVEL_NOTE}</p>}
-        <fieldset disabled={raw.value} class={cx(styles.fieldset, raw.value && styles.off)}>
-          <label class={styles.row}>
-            Fournisseur
-            <select value={cur.llm_provider} onChange={(e) => onLlmProvider(e.currentTarget.value)}>
-              {llmProviders.value.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!raw.value && keyLine(cur.llm_provider, "correction")}
-          <label class={styles.row} key={`llm-${cur.llm_provider}`}>
-            Modèle{" "}
-            <ModelPicker
-              models={llmProvider.value?.llm_models.map((x) => x.id) ?? []}
-              value={cur.llm_model}
-              onValueChange={(v) => edit((d) => (d.llm_model = v))}
-              onChange={() => edit(syncEffortOf)}
-            />
-          </label>
-          {efforts.value.length > 0 && (
-            <label class={styles.row}>
-              Réflexion du modèle
-              <select value={cur.llm_effort} onChange={(e) => edit((d) => (d.llm_effort = e.currentTarget.value))}>
-                {efforts.value.map((x) => (
-                  <option key={x} value={x}>
-                    {effortLabel(x)}
+        {pane(
+          "advanced",
+          <section class={styles.section}>
+            {numberField("hold_threshold_ms", cur.gesture.hold_threshold_ms, (d, n) => (d.gesture.hold_threshold_ms = n))}
+            {numberField("double_tap_window_ms", cur.gesture.double_tap_window_ms, (d, n) => (d.gesture.double_tap_window_ms = n))}
+            {numberField("restore_delay_ms", cur.restore_delay_ms, (d, n) => (d.restore_delay_ms = n))}
+            <label class={cx(styles.row, styles.field)}>
+              <span>{fieldText("audio_retention_days").label}</span>
+              <select
+                class={styles.short}
+                value={String(cur.audio_retention_days)}
+                onChange={(e) => edit((d) => (d.audio_retention_days = Number(e.currentTarget.value)))}
+              >
+                {retentionOptions(cur.audio_retention_days).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
             </label>
-          )}
-        </fieldset>
-
-        <div class={styles.test}>
-          <button onClick={runTest} disabled={testing.value}>
-            {testing.value ? "Test en cours…" : raw.value ? "Tester la transcription" : "Tester transcription et correction"}
-          </button>
-          {testBlock.value && (
-            <p class={styles.inlineConfirm} role="status">
-              {testBlock.value}
-              <button class="primary" onClick={saveDraftsAndTest}>
-                Enregistrer
-              </button>
-              <button onClick={() => (testBlock.value = null)}>Annuler</button>
-            </p>
-          )}
-          <div class={styles.testResult} role="status">
-            {testLines.map((l, i) => (
-              <Fragment key={i}>
-                <p class={l.ok ? styles.ok : styles.fail}>
-                  <span class={styles.title}>{l.title}</span>
-                  {" : "}
-                  {l.text}
-                </p>
-                {l.raw && (
-                  <details>
-                    <summary>Détails</summary>
-                    <pre class={styles.pre}>{l.raw}</pre>
-                  </details>
-                )}
-              </Fragment>
-            ))}
-            {error.value && (
-              <>
-                <p class={styles.fail}>{errorSummary ? `✗ Test impossible : ${errorSummary}` : error.value}</p>
-                {errorSummary && (
-                  <details>
-                    <summary>Détails</summary>
-                    <pre class={styles.pre}>{error.value}</pre>
-                  </details>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Clés API</h2>
-        <p class={styles.help}>{keysHelp()}</p>
-        {keyRows.value.used.map(keyRow)}
-        {keyRows.value.others.length > 0 && (
-          <details
-            class={styles.others}
-            open={othersOpen.value}
-            onToggle={(e) => (othersOpen.value = (e.currentTarget as HTMLDetailsElement).open)}
-          >
-            <summary>Autres fournisseurs</summary>
-            {keyRows.value.others.map(keyRow)}
-          </details>
+            {numberField("max_recording_min", cur.max_recording_ms / 60000, (d, n) => (d.max_recording_ms = n * 60000))}
+            {numberField("llm_timeout_s", cur.llm_timeout_base_ms / 1000, (d, n) => (d.llm_timeout_base_ms = n * 1000))}
+          </section>,
         )}
-      </section>
-
-      <Startup />
-
-      <Updates />
-
-      <section class={styles.section}>
-        <h2 class={styles.heading}>Avancé</h2>
-        {numberField("hold_threshold_ms", cur.gesture.hold_threshold_ms, (d, n) => (d.gesture.hold_threshold_ms = n))}
-        {numberField("double_tap_window_ms", cur.gesture.double_tap_window_ms, (d, n) => (d.gesture.double_tap_window_ms = n))}
-        {numberField("restore_delay_ms", cur.restore_delay_ms, (d, n) => (d.restore_delay_ms = n))}
-        <label class={cx(styles.row, styles.field)}>
-          <span>{NUMBER_FIELDS.audio_retention_days.label}</span>
-          <select
-            class={styles.short}
-            value={String(cur.audio_retention_days)}
-            onChange={(e) => edit((d) => (d.audio_retention_days = Number(e.currentTarget.value)))}
-          >
-            {retentionOptions(cur.audio_retention_days).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {numberField("max_recording_min", cur.max_recording_ms / 60000, (d, n) => (d.max_recording_ms = n * 60000))}
-        {numberField("llm_timeout_s", cur.llm_timeout_base_ms / 1000, (d, n) => (d.llm_timeout_base_ms = n * 1000))}
-      </section>
-
-      <div class={cx(styles.statusbar, styles[b.tone], !b.visible && styles.hidden)}>
-        <span class={styles.msg} role="status">
-          {!b.alert && (
-            <>
-              {b.tone === "muted" ? (
-                <span class={styles.spinner}></span>
-              ) : (
-                <span key={savedFlash.value} class={styles.tick}>
-                  ✓
-                </span>
-              )}
-              {b.tone === "muted" ? b.text : b.text.replace(/^✓ /, "")}
-            </>
-          )}
-        </span>
-        <span class={cx(styles.msg, styles.alert)} role="alert" title={b.alert ? b.text : undefined}>
-          {b.alert ? b.text : ""}
-        </span>
-        {b.details && (
-          <button
-            type="button"
-            class={styles.small}
-            aria-expanded={showDetails.value}
-            onClick={() => (showDetails.value = !showDetails.value)}
-          >
-            Détails
-          </button>
-        )}
-        {b.retry && (
-          <button type="button" class={cx(styles.small, "primary")} onClick={retrySave}>
-            Réessayer
-          </button>
-        )}
-        {b.details && showDetails.value && <pre class={cx(styles.pre, styles.details)}>{b.details}</pre>}
       </div>
+
+      <SaveStatusBar view={bar.value} savedFlash={savedFlash.value} onRetry={retrySave} />
     </>
   );
 }

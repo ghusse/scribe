@@ -1,6 +1,8 @@
 import { useSignal } from "@preact/signals";
 import { useEffect } from "preact/hooks";
 import { api } from "../lib/api";
+import { errorText } from "../lib/errors";
+import { t } from "../lib/i18n";
 import styles from "./Startup.module.css";
 
 export type StartupProps = Record<string, never>;
@@ -9,15 +11,15 @@ export type StartupProps = Record<string, never>;
 export default function Startup(_props: StartupProps) {
   const enabled = useSignal<boolean | null>(null);
   const busy = useSignal(false);
-  const error = useSignal<string | null>(null);
-  const note = useSignal<string | null>(null);
+  const error = useSignal<unknown>(null);
+  const notApplied = useSignal(false);
 
   async function load() {
     try {
       enabled.value = await api.getAutostart();
       error.value = null;
     } catch (e) {
-      error.value = String(e);
+      error.value = e;
     }
   }
 
@@ -34,11 +36,10 @@ export default function Startup(_props: StartupProps) {
     try {
       enabled.value = await api.setAutostart(want);
       error.value = null;
-      note.value =
-        enabled.value === want ? null : "Le système n'a pas appliqué ce changement (désactivé dans le Gestionnaire des tâches ?).";
+      notApplied.value = enabled.value !== want;
     } catch (err) {
-      error.value = String(err);
-      note.value = null;
+      error.value = err;
+      notApplied.value = false;
     } finally {
       busy.value = false;
       // Always show what is really in place, not the click.
@@ -50,9 +51,10 @@ export default function Startup(_props: StartupProps) {
     void load();
   }, []);
 
+  const m = t.value.settings.startup;
   return (
     <section class={styles.section}>
-      <h2>Démarrage</h2>
+      <h3>{m.heading}</h3>
       <label class={styles.check}>
         <input
           type="checkbox"
@@ -61,17 +63,17 @@ export default function Startup(_props: StartupProps) {
           aria-disabled={busy.value}
           onChange={toggle}
         />
-        Lancer Scribe à l'ouverture de session
+        {m.launchAtLogin}
       </label>
-      <p class={styles.help}>Scribe démarre alors discrètement, sans ouvrir de fenêtre, prêt à dicter.</p>
-      {note.value && (
+      <p class={styles.help}>{m.help}</p>
+      {notApplied.value && (
         <p class={styles.help} role="status">
-          {note.value}
+          {m.notApplied}
         </p>
       )}
-      {error.value && (
+      {error.value !== null && (
         <p class={styles.error} role="alert">
-          Démarrage automatique indisponible&nbsp;: {error.value}
+          {m.unavailable(errorText(error.value))}
         </p>
       )}
     </section>

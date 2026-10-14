@@ -11,7 +11,8 @@ use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError};
 use scribe_core::prompt;
 use scribe_core::storage::Db;
 
-use crate::overlay::{OverlayEvent, ToastLevel};
+use crate::error::AppError;
+use crate::overlay::{Notice, OverlayEvent, ToastLevel};
 use crate::services::{now_rfc3339, Services};
 use crate::settings::Settings;
 
@@ -25,14 +26,6 @@ pub struct Captured {
     pub focus_start: FocusSnapshot,
 }
 
-/// Spec §7: a correction failure is always mentioned (« non corrigé »), whatever the insertion result.
-fn with_correction_note(msg: &str, correction_error: Option<&str>) -> String {
-    match correction_error {
-        Some(err) => format!("{msg} (non corrigé : {err})"),
-        None => msg.to_string(),
-    }
-}
-
 fn preview(text: &str) -> String {
     let p: String = text.chars().take(140).collect();
     if p.len() < text.len() {
@@ -42,41 +35,29 @@ fn preview(text: &str) -> String {
     }
 }
 
-/// What the overlay shows once a transcribed dictation was delivered (or not).
+/// What the overlay shows once a transcribed dictation was delivered (or not). Spec §7: a correction failure is
+/// always mentioned, whatever the insertion result.
 pub fn feedback(
     inserted: InsertResult,
-    correction_error: Option<&str>,
+    correction_error: Option<&ProviderError>,
     final_text: &str,
     id: Option<i64>,
 ) -> OverlayEvent {
-    let toast = |level, message: String, preview: Option<String>| OverlayEvent::Toast {
-        level,
-        message,
-        preview,
-        dictation_id: id,
-    };
+    let toast =
+        |level, message, preview: Option<String>| OverlayEvent::Toast { level, message, preview, dictation_id: id };
     let p = Some(preview(final_text));
+    let correction = correction_error.cloned();
     match inserted {
-        InsertResult::Pasted => match correction_error {
-            Some(err) => toast(ToastLevel::Info, format!("Inséré sans correction ({err})"), None),
+        InsertResult::Pasted => match correction {
+            Some(correction) => toast(ToastLevel::Info, Notice::PastedWithoutCorrection { correction }, None),
             None => OverlayEvent::Idle,
         },
-        InsertResult::PastedUncertain => {
-            toast(ToastLevel::Uncertain, with_correction_note("Texte inséré ?", correction_error), p)
-        }
+        InsertResult::PastedUncertain => toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction }, p),
         InsertResult::ClipboardOnly | InsertResult::PasteFailed => {
-            toast(ToastLevel::Copied, with_correction_note("Texte copié dans le presse-papier", correction_error), p)
+            toast(ToastLevel::Copied, Notice::Copied { correction }, p)
         }
-        InsertResult::NotPasted => toast(
-            ToastLevel::Copied,
-            with_correction_note("Non inséré : texte copié, collez-le avec Ctrl+V", correction_error),
-            p,
-        ),
-        InsertResult::ClipboardFailed => toast(
-            ToastLevel::Error,
-            with_correction_note("Presse-papier indisponible : texte dans l'historique", correction_error),
-            p,
-        ),
+        InsertResult::NotPasted => toast(ToastLevel::Copied, Notice::NotPasted { correction }, p),
+        InsertResult::ClipboardFailed => toast(ToastLevel::Error, Notice::ClipboardUnavailable { correction }, p),
     }
 }
 
@@ -84,10 +65,15 @@ pub fn feedback(
 pub fn failure_feedback(e: &ProviderError, id: Option<i64>) -> OverlayEvent {
     OverlayEvent::Toast {
         level: ToastLevel::Error,
-        message: format!("Échec de la transcription : {e}. Réessayez depuis l'historique."),
+        message: Notice::TranscriptionFailed { error: e.clone() },
         preview: None,
         dictation_id: id,
     }
+}
+
+/// `dictations.error`: the JSON of the error, which the history translates.
+pub fn stored_error(e: &ProviderError) -> String {
+    serde_json::to_string(e).expect("serialize ProviderError")
 }
 
 /// Facts about the recording itself, known before any network call.
@@ -102,7 +88,7 @@ pub struct RecordMeta {
 /// How the pipeline ended, for the history row.
 pub enum Delivery<'a> {
     Failed(&'a ProviderError),
-    Done { out: &'a PipelineOutput, transcriber: String, corrector: String, inserted: InsertResult },
+    Done { out: &'a PipelineOutput, transcriber: String, corrector: Option<String>, inserted: InsertResult },
 }
 
 /// The history row of a dictation.
@@ -125,17 +111,17 @@ pub fn build_record(meta: &RecordMeta, settings: &Settings, delivery: Delivery<'
         error: None,
     };
     match delivery {
-        Delivery::Failed(e) => record.error = Some(e.to_string()),
+        Delivery::Failed(e) => record.error = Some(stored_error(e)),
         Delivery::Done { out, transcriber, corrector, inserted } => {
             record.raw_text = Some(out.raw.clone());
             record.final_text = Some(out.final_text.clone());
             record.transcriber = Some(transcriber);
             // Raw level and short dictations never reach the corrector (`pipeline::run`).
-            record.corrector = out.llm_ms.is_some().then_some(corrector);
+            record.corrector = out.llm_ms.and(corrector);
             record.stt_ms = Some(out.stt_ms as i64);
             record.llm_ms = out.llm_ms.map(|v| v as i64);
             record.outcome = inserted.outcome();
-            record.error = out.correction_error.clone();
+            record.error = out.correction_error.as_ref().map(stored_error);
         }
     }
     record
@@ -165,7 +151,7 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
     }
     let wav = match audio::encode_wav(&cap.clip) {
         Ok(w) => w,
-        Err(e) => return svc.overlay.toast(ToastLevel::Error, format!("Encodage audio impossible : {e}"), None, None),
+        Err(detail) => return svc.overlay.toast(ToastLevel::Error, Notice::AudioEncodingFailed { detail }, None, None),
     };
     let created_at = now_rfc3339();
     // Written before any network call: a dictation is never lost.
@@ -221,23 +207,23 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
                 let _ = db.bump_term_usage(&used, &meta.created_at);
                 id
             };
-            svc.overlay.emit(feedback(inserted, out.correction_error.as_deref(), &out.final_text, id));
+            svc.overlay.emit(feedback(inserted, out.correction_error.as_ref(), &out.final_text, id));
         }
     }
     svc.ui.history_changed();
 }
 
 /// Re-runs the pipeline on a stored recording (after a failure, or with new settings/glossary).
-pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
+pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), AppError> {
     let settings = svc.settings.read().unwrap().clone();
     let (dictation, terms) = {
         let db = svc.db.lock().unwrap();
-        (db.get_dictation(id).map_err(|e| e.to_string())?, db.list_terms().unwrap_or_default())
+        (db.get_dictation(id)?, db.list_terms().unwrap_or_default())
     };
-    let dictation = dictation.ok_or("dictée introuvable")?;
-    let path = dictation.audio_path.ok_or("l'audio de cette dictée a été purgé")?;
-    let wav = std::fs::read(&path).map_err(|e| format!("lecture audio impossible : {e}"))?;
-    let (stt, llm) = svc.build_providers(&settings).map_err(|e| e.to_string())?;
+    let dictation = dictation.ok_or(AppError::DictationNotFound)?;
+    let path = dictation.audio_path.ok_or(AppError::AudioPurged)?;
+    let wav = std::fs::read(&path).map_err(|e| AppError::system(format!("cannot read the audio: {e}")))?;
+    let (stt, llm) = svc.build_providers(&settings)?;
     let out = pipeline::run(
         &settings.pipeline_config(),
         &wav,
@@ -246,8 +232,7 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
         stt.as_ref(),
         llm.as_ref(),
     )
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
     // A failed dictation was never delivered: hand the new text over through the clipboard, and
     // only record « Clipboard » when that copy actually happened.
     let outcome = if dictation.outcome == Outcome::Error {
@@ -265,13 +250,13 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), String> {
         raw_text: Some(out.raw),
         final_text: Some(out.final_text),
         transcriber: Some(stt.name()),
-        corrector: out.llm_ms.is_some().then(|| llm.name()),
+        corrector: out.llm_ms.and_then(|_| llm.name()),
         stt_ms: Some(out.stt_ms as i64),
         llm_ms: out.llm_ms.map(|v| v as i64),
         outcome,
-        error: out.correction_error,
+        error: out.correction_error.as_ref().map(stored_error),
     };
-    svc.db.lock().unwrap().update_transcription(id, &update).map_err(|e| e.to_string())?;
+    svc.db.lock().unwrap().update_transcription(id, &update)?;
     svc.ui.history_changed();
     Ok(())
 }

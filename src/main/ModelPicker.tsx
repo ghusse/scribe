@@ -1,5 +1,6 @@
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
+import { t } from "../lib/i18n";
 import { checkModelId } from "../lib/validation";
 import styles from "./ModelPicker.module.css";
 
@@ -18,7 +19,8 @@ const CUSTOM = "__custom__";
  */
 export default function ModelPicker({ models, value, onValueChange, onChange }: ModelPickerProps) {
   const forceCustom = useSignal(false);
-  const invalid = useSignal<string | null>(null);
+  // Translated at render, so it follows a language change.
+  const invalid = useSignal<(() => string) | null>(null);
   const focusPending = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const selected = forceCustom.value || !models.includes(value) ? CUSTOM : value;
@@ -57,7 +59,7 @@ export default function ModelPicker({ models, value, onValueChange, onChange }: 
     const el = e.currentTarget as HTMLInputElement;
     const r = checkModelId(el.value);
     if (!r.ok) {
-      invalid.value = r.message;
+      invalid.value = () => t.value.settings.modelPicker.empty;
       return;
     }
     invalid.value = null;
@@ -65,31 +67,32 @@ export default function ModelPicker({ models, value, onValueChange, onChange }: 
     if (r.value !== value) update(r.value);
   }
 
+  const tr = t.value.settings.modelPicker;
   return (
     <div class={styles.picker}>
       <select value={selected} onChange={pick}>
         {models.map((m, i) => (
           <option key={m} value={m}>
             {m}
-            {i === 0 ? " (dernier, par défaut)" : ""}
+            {i === 0 ? tr.newest : ""}
           </option>
         ))}
-        <option value={CUSTOM}>Autre…</option>
+        <option value={CUSTOM}>{tr.other}</option>
       </select>
       {selected === CUSTOM && (
         <input
           ref={input}
           defaultValue={value}
           title={value}
-          placeholder="ex. gpt-4o-mini (identifiant exact de l'API)"
-          aria-label="Identifiant du modèle personnalisé"
+          placeholder={tr.placeholder}
+          aria-label={tr.custom}
           aria-invalid={invalid.value !== null}
           onChange={commit}
         />
       )}
       {invalid.value && (
         <span class={styles.pickerError} role="alert">
-          {invalid.value}
+          {invalid.value()}
         </span>
       )}
     </div>

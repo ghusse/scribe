@@ -3,7 +3,7 @@ import type { OverlayEvent } from "../lib/api";
 import { barHeight, createOverlay, emptyLevels, LEVEL_BARS, pushLevel, reduce, toastActions, toastTimeout, type OverlayView } from "./model";
 
 const toast = (over: Partial<Extract<OverlayEvent, { kind: "toast" }>> = {}): OverlayEvent => ({
-  kind: "toast", level: "info", message: "Inséré", preview: null, dictation_id: 7, ...over,
+  kind: "toast", level: "info", message: { code: "copied", correction: null }, preview: null, dictation_id: 7, ...over,
 });
 
 describe("pure helpers", () => {
@@ -161,10 +161,19 @@ describe("createOverlay", () => {
     s.rejectCopy("presse-papier occupé");
     await expect(done).resolves.toBeUndefined();
     const ov = s.ctl.view().ov;
-    expect(ov).toEqual({ kind: "toast", level: "error", message: "Copie impossible : presse-papier occupé", preview: null, dictation_id: 7 });
+    expect(ov).toEqual({ kind: "toast", level: "error", message: { code: "copy_failed", detail: "presse-papier occupé" }, preview: null, dictation_id: 7 });
     expect(toastActions(ov)).toEqual({ copy: false, view: true });
     expect(s.timers.at(-1)!.ms).toBe(10000);
     expect(s.deps.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("a copy refused by the backend keeps its untranslated detail", async () => {
+    const s = setup();
+    s.ctl.event(toast());
+    const done = s.ctl.copy();
+    s.rejectCopy({ code: "system", detail: "clipboard locked" });
+    await done;
+    expect(s.ctl.view().ov).toMatchObject({ message: { code: "copy_failed", detail: "clipboard locked" } });
   });
 
   it("a failed copy does not cover an event that arrived meanwhile", async () => {

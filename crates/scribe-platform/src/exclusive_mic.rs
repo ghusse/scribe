@@ -67,7 +67,7 @@ pub fn open_input(
                 }
             });
         }
-        (true, ExclusiveAccess::Unsupported) => refused("non disponible sur cette plateforme".into()),
+        (true, ExclusiveAccess::Unsupported) => refused("not available on this platform".into()),
     }
     shared.open(capture).map(|stream| (stream, not_held))
 }
@@ -142,12 +142,12 @@ impl<B: HogBackend> HogGuard<B> {
 
     fn take(&mut self, device: u32) -> Result<(), String> {
         if self.backend.has_output(device)? {
-            return Err("micro intégré à un appareil de sortie audio, dont le son serait coupé aussi".into());
+            return Err("microphone built into an audio output device, whose sound would be muted too".into());
         }
         let owner = self.backend.owner(device)?;
         if owner != own_pid() {
             if owner != -1 {
-                return Err(format!("micro déjà réservé par le processus {owner}"));
+                return Err(format!("microphone already held by process {owner}"));
             }
             self.backend.toggle(device)?;
         }
@@ -155,7 +155,7 @@ impl<B: HogBackend> HogGuard<B> {
         self.held.push(device);
         match self.backend.owner(device)? {
             pid if pid == own_pid() => Ok(()),
-            _ => Err("le micro refuse l'accès exclusif".into()),
+            _ => Err("the microphone refuses exclusive access".into()),
         }
     }
 }
@@ -234,7 +234,7 @@ mod tests {
             let mut failures = self.failures.lock().unwrap();
             if *failures > 0 {
                 *failures -= 1;
-                return Err("le micro redémarre".into());
+                return Err("the microphone is restarting".into());
             }
             let (channels, rate) = self.result.map_err(String::from)?;
             capture.push(vec![0.5]);
@@ -282,8 +282,8 @@ mod tests {
 
     #[test]
     fn the_shared_error_is_returned_when_nothing_opens() {
-        let (ex, sh, _) = openers(Err("device in use"), Err("aucun micro détecté"));
-        assert_eq!(open_input(true, &ex, &sh, capture()).err(), Some("aucun micro détecté".into()));
+        let (ex, sh, _) = openers(Err("device in use"), Err("no microphone found"));
+        assert_eq!(open_input(true, &ex, &sh, capture()).err(), Some("no microphone found".into()));
     }
 
     #[test]
@@ -357,7 +357,7 @@ mod tests {
     fn a_shared_input_that_never_opens_gives_up_without_holding() {
         let (access, sh, log) = held(None, Ok((1, 48_000)));
         *sh.failures.lock().unwrap() = SETTLE_ATTEMPTS;
-        assert_eq!(open_input(true, &access, &sh, capture()).err(), Some("le micro redémarre".into()));
+        assert_eq!(open_input(true, &access, &sh, capture()).err(), Some("the microphone is restarting".into()));
         assert_eq!(entries(&log), vec!["shared"; SETTLE_ATTEMPTS as usize]);
     }
 
@@ -433,7 +433,7 @@ mod tests {
             if s.broken.contains(&"default_input") {
                 return Err("default_input failed".into());
             }
-            s.default.ok_or_else(|| "aucun micro détecté".into())
+            s.default.ok_or_else(|| "no microphone found".into())
         }
         fn set_default_input(&self, device: u32) -> Result<(), String> {
             let mut s = self.state();
@@ -555,7 +555,7 @@ mod tests {
         ]);
         assert_eq!(
             HogGuard::acquire(hog.clone()).err(),
-            Some(format!("micro déjà réservé par le processus {}", own_pid() + 1))
+            Some(format!("microphone already held by process {}", own_pid() + 1))
         );
         assert_eq!(hog.toggles(), [OTHER, OTHER]);
         assert_eq!((hog.owner(OURS), hog.owner(OTHER)), (-1, -1));
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn an_unused_headset_that_also_plays_sound_is_a_refusal() {
         let hog = FakeHog::with(&[(OURS, Dev::default()), (OTHER, Dev { output: true, ..Dev::default() })]);
-        assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("sortie audio"));
+        assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("audio output"));
         assert!(hog.toggles().is_empty());
     }
 
@@ -573,7 +573,7 @@ mod tests {
         let hog = FakeHog::owned_by(own_pid() + 1);
         assert_eq!(
             HogGuard::acquire(hog.clone()).err(),
-            Some(format!("micro déjà réservé par le processus {}", own_pid() + 1))
+            Some(format!("microphone already held by process {}", own_pid() + 1))
         );
         assert!(hog.toggles().is_empty());
     }
@@ -590,14 +590,14 @@ mod tests {
     #[test]
     fn a_microphone_that_also_plays_sound_is_not_held() {
         let hog = FakeHog::with(&[(OURS, Dev { output: true, ..Dev::default() })]);
-        assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("sortie audio"));
+        assert!(HogGuard::acquire(hog.clone()).err().unwrap().contains("audio output"));
         assert!(hog.toggles().is_empty());
     }
 
     #[test]
     fn a_device_without_hog_mode_is_refused_and_nothing_is_given_back() {
         let hog = FakeHog::with(&[(OURS, Dev { stuck: true, ..Dev::default() })]);
-        assert_eq!(HogGuard::acquire(hog.clone()).err(), Some("le micro refuse l'accès exclusif".into()));
+        assert_eq!(HogGuard::acquire(hog.clone()).err(), Some("the microphone refuses exclusive access".into()));
         assert_eq!((hog.owner(OURS), hog.toggles()), (-1, vec![OURS]));
     }
 

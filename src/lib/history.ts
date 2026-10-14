@@ -1,6 +1,4 @@
-import type { Dictation, Outcome } from "./api";
-
-export const OUTCOME_BADGES: Record<Outcome, string> = { pasted: "Inséré", pasted_uncertain: "Inséré ?", clipboard: "Copié", error: "Erreur" };
+import type { Dictation } from "./api";
 
 type Texts = Pick<Dictation, "edited_text" | "final_text" | "raw_text">;
 
@@ -37,11 +35,13 @@ export function editPayload(draft: string): string | null {
   return draft.trim() === "" ? null : draft;
 }
 
-/** « 4.2 s · STT 812 ms · LLM 640 ms » */
-export function timingLine(d: Pick<Dictation, "duration_ms" | "stt_ms" | "llm_ms">): string {
-  let s = `${(d.duration_ms / 1000).toFixed(1)} s`;
-  if (d.stt_ms !== null) s += ` · STT ${d.stt_ms} ms`;
-  if (d.llm_ms !== null) s += ` · LLM ${d.llm_ms} ms`;
+/** « 4.2 s · STT 812 ms · LLM 640 ms », numbers in `locale`'s format. */
+export function timingLine(d: Pick<Dictation, "duration_ms" | "stt_ms" | "llm_ms">, locale: string): string {
+  const seconds = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const ms = new Intl.NumberFormat(locale);
+  let s = `${seconds.format(d.duration_ms / 1000)} s`;
+  if (d.stt_ms !== null) s += ` · STT ${ms.format(d.stt_ms)} ms`;
+  if (d.llm_ms !== null) s += ` · LLM ${ms.format(d.llm_ms)} ms`;
   return s;
 }
 

@@ -2,11 +2,13 @@ use std::path::Path;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use scribe_core::chord;
+use scribe_core::chord::{self, ChordError};
 use scribe_core::gesture::GestureConfig;
 use scribe_core::model::Level;
-use scribe_core::pipeline::PipelineConfig;
+use scribe_core::pipeline::{PipelineConfig, ProviderRole};
 use scribe_providers::catalog;
+
+use crate::locale::LanguagePref;
 
 /// Ctrl droit on Windows; Cmd droit on macOS, where most keyboards have no right Control.
 pub const DEFAULT_TRIGGER: u32 = if cfg!(target_os = "macos") { 0x5C } else { 0xA3 };
@@ -14,6 +16,7 @@ pub const DEFAULT_TRIGGER: u32 = if cfg!(target_os = "macos") { 0x5C } else { 0x
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub language: LanguagePref,
     /// The trigger combination (`scribe_core::chord`), in canonical order. Files from before combinations
     /// hold a single `trigger_vk` number, read as a one-key combination.
     #[serde(alias = "trigger_vk", deserialize_with = "one_or_many")]
@@ -48,6 +51,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            language: LanguagePref::System,
             trigger_keys: vec![DEFAULT_TRIGGER],
             lock_vk: 0x20,
             gesture: GestureConfig::default(),
@@ -83,6 +87,37 @@ pub const MAX_LLM_TIMEOUT_PER_CHAR_MS: u64 = 1_000;
 
 /// About 100 years: anything above is a typo, and would overflow date arithmetic.
 pub const MAX_AUDIO_RETENTION_DAYS: u32 = 36_500;
+pub const MIN_MAX_RECORDING_MS: u64 = 10_000;
+pub const SILENCE_THRESHOLD_RANGE_DBFS: (i32, i32) = (-90, -10);
+
+/// Why `validate` refuses the settings; the UI translates the code (`src/lib/api.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
+pub enum SettingsError {
+    InvalidHotkey,
+    EscapeInHotkey,
+    LockKeyInHotkey,
+    MaxRecordingTooShort { min_seconds: u64 },
+    MaxRecordingTooLong { max_minutes: u64 },
+    MinRecordingNotBelowMax,
+    SilenceThresholdOutOfRange { min_dbfs: i32, max_dbfs: i32 },
+    HotkeyDelayZero,
+    AudioRetentionTooLong { max_days: u32 },
+    RestoreDelayTooLong { max_ms: u64 },
+    CorrectionTimeoutTooLong,
+    UnknownProvider { role: ProviderRole, id: String },
+    ModelRequired,
+}
+
+impl From<ChordError> for SettingsError {
+    fn from(e: ChordError) -> Self {
+        match e {
+            ChordError::Invalid => SettingsError::InvalidHotkey,
+            ChordError::Escape => SettingsError::EscapeInHotkey,
+            ChordError::LockKey => SettingsError::LockKeyInHotkey,
+        }
+    }
+}
 
 impl Settings {
     pub fn load(path: &Path) -> Settings {
@@ -91,7 +126,7 @@ impl Settings {
                 Ok(s) => match s.validate() {
                     Ok(()) => s.normalized(),
                     Err(e) => {
-                        tracing::warn!("réglages invalides ({e}), valeurs par défaut utilisées");
+                        tracing::warn!("réglages invalides ({e:?}), valeurs par défaut utilisées");
                         Settings::default()
                     }
                 },
@@ -116,46 +151,49 @@ impl Settings {
         self
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), SettingsError> {
         chord::validate(&self.trigger_keys, self.lock_vk)?;
-        if self.max_recording_ms < 10_000 {
-            return Err("la durée maximale doit être d'au moins 10 secondes".into());
+        if self.max_recording_ms < MIN_MAX_RECORDING_MS {
+            return Err(SettingsError::MaxRecordingTooShort { min_seconds: MIN_MAX_RECORDING_MS / 1_000 });
         }
         if self.max_recording_ms > MAX_RECORDING_MS_CAP {
-            return Err(format!("la durée maximale ne peut pas dépasser {} minutes", MAX_RECORDING_MS_CAP / 60_000));
+            return Err(SettingsError::MaxRecordingTooLong { max_minutes: MAX_RECORDING_MS_CAP / 60_000 });
         }
         if self.min_recording_ms >= self.max_recording_ms {
-            return Err("la durée minimale doit être inférieure à la durée maximale".into());
+            return Err(SettingsError::MinRecordingNotBelowMax);
         }
-        if !(-90.0..=-10.0).contains(&self.silence_threshold_dbfs) {
-            return Err("le seuil de silence doit être compris entre −90 et −10 dBFS".into());
+        let (min_dbfs, max_dbfs) = SILENCE_THRESHOLD_RANGE_DBFS;
+        if !(min_dbfs as f32..=max_dbfs as f32).contains(&self.silence_threshold_dbfs) {
+            return Err(SettingsError::SilenceThresholdOutOfRange { min_dbfs, max_dbfs });
         }
         if self.gesture.hold_threshold_ms == 0 || self.gesture.double_tap_window_ms == 0 {
-            return Err("les délais du raccourci doivent être supérieurs à 0 ms".into());
+            return Err(SettingsError::HotkeyDelayZero);
         }
         if self.audio_retention_days > MAX_AUDIO_RETENTION_DAYS {
-            return Err(format!(
-                "la durée de conservation de l'audio ne peut pas dépasser {MAX_AUDIO_RETENTION_DAYS} jours"
-            ));
+            return Err(SettingsError::AudioRetentionTooLong { max_days: MAX_AUDIO_RETENTION_DAYS });
         }
         if self.restore_delay_ms > MAX_RESTORE_DELAY_MS {
-            return Err(format!(
-                "le délai de restauration du presse-papiers ne peut pas dépasser {MAX_RESTORE_DELAY_MS} ms"
-            ));
+            return Err(SettingsError::RestoreDelayTooLong { max_ms: MAX_RESTORE_DELAY_MS });
         }
         if self.llm_timeout_base_ms > MAX_LLM_TIMEOUT_BASE_MS
             || self.llm_timeout_per_char_ms > MAX_LLM_TIMEOUT_PER_CHAR_MS
         {
-            return Err("le délai de correction est trop élevé".into());
+            return Err(SettingsError::CorrectionTimeoutTooLong);
         }
         if catalog::stt_provider(&self.stt_provider).is_none() {
-            return Err(format!("fournisseur de transcription inconnu : {}", self.stt_provider));
+            return Err(SettingsError::UnknownProvider {
+                role: ProviderRole::Transcription,
+                id: self.stt_provider.clone(),
+            });
         }
         if catalog::llm_provider(&self.llm_provider).is_none() {
-            return Err(format!("fournisseur de correction inconnu : {}", self.llm_provider));
+            return Err(SettingsError::UnknownProvider {
+                role: ProviderRole::Correction,
+                id: self.llm_provider.clone(),
+            });
         }
         if self.stt_model.trim().is_empty() || self.llm_model.trim().is_empty() {
-            return Err("choisissez un modèle de transcription et un modèle de correction".into());
+            return Err(SettingsError::ModelRequired);
         }
         Ok(())
     }
@@ -318,34 +356,77 @@ mod tests {
         assert!(Settings { lock_vk: DEFAULT_TRIGGER, ..Default::default() }.validate().is_err());
         assert_eq!(
             Settings { trigger_keys: vec![0xA2, 0x20], ..Default::default() }.validate(),
-            Err("la touche de verrouillage ne peut pas faire partie du raccourci".into())
+            Err(SettingsError::LockKeyInHotkey)
+        );
+        assert_eq!(
+            Settings { trigger_keys: vec![0xA2, 0x1B], ..Default::default() }.validate(),
+            Err(SettingsError::EscapeInHotkey)
+        );
+        assert_eq!(
+            Settings { trigger_keys: vec![], ..Default::default() }.validate(),
+            Err(SettingsError::InvalidHotkey)
         );
         assert!(Settings { trigger_keys: vec![0xA2, 0x20], lock_vk: 0, ..Default::default() }.validate().is_ok());
         assert!(Settings { max_recording_ms: 100, ..Default::default() }.validate().is_err());
     }
 
+    fn silence_range() -> SettingsError {
+        SettingsError::SilenceThresholdOutOfRange { min_dbfs: -90, max_dbfs: -10 }
+    }
+
     #[test]
     fn validation_rejects_values_that_break_dictation() {
+        use SettingsError::*;
+        let unknown = |role, id: &str| UnknownProvider { role, id: id.into() };
         let bad = [
-            Settings { min_recording_ms: 700_000, ..Default::default() },
-            Settings { min_recording_ms: 600_000, ..Default::default() },
-            Settings { silence_threshold_dbfs: -1.0, ..Default::default() },
-            Settings { silence_threshold_dbfs: -200.0, ..Default::default() },
-            Settings { gesture: GestureConfig { hold_threshold_ms: 0, ..Default::default() }, ..Default::default() },
-            Settings { gesture: GestureConfig { double_tap_window_ms: 0, ..Default::default() }, ..Default::default() },
-            Settings { audio_retention_days: 100_000_000, ..Default::default() },
-            Settings { stt_provider: "anthropic".into(), ..Default::default() },
-            Settings { llm_provider: "inconnu".into(), ..Default::default() },
-            Settings { stt_model: " ".into(), ..Default::default() },
-            Settings { max_recording_ms: MAX_RECORDING_MS_CAP + 1, ..Default::default() },
-            Settings { max_recording_ms: 1_800_000, ..Default::default() },
-            Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS + 1, ..Default::default() },
-            Settings { restore_delay_ms: u64::MAX, ..Default::default() },
-            Settings { llm_timeout_base_ms: u64::MAX, ..Default::default() },
-            Settings { llm_timeout_per_char_ms: u64::MAX, ..Default::default() },
+            (Settings { min_recording_ms: 700_000, ..Default::default() }, MinRecordingNotBelowMax),
+            (Settings { min_recording_ms: 600_000, ..Default::default() }, MinRecordingNotBelowMax),
+            (Settings { max_recording_ms: 9_999, ..Default::default() }, MaxRecordingTooShort { min_seconds: 10 }),
+            (Settings { silence_threshold_dbfs: -1.0, ..Default::default() }, silence_range()),
+            (Settings { silence_threshold_dbfs: -200.0, ..Default::default() }, silence_range()),
+            (
+                Settings {
+                    gesture: GestureConfig { hold_threshold_ms: 0, ..Default::default() },
+                    ..Default::default()
+                },
+                HotkeyDelayZero,
+            ),
+            (
+                Settings {
+                    gesture: GestureConfig { double_tap_window_ms: 0, ..Default::default() },
+                    ..Default::default()
+                },
+                HotkeyDelayZero,
+            ),
+            (
+                Settings { audio_retention_days: 100_000_000, ..Default::default() },
+                AudioRetentionTooLong { max_days: 36_500 },
+            ),
+            (
+                Settings { stt_provider: "anthropic".into(), ..Default::default() },
+                unknown(ProviderRole::Transcription, "anthropic"),
+            ),
+            (
+                Settings { llm_provider: "inconnu".into(), ..Default::default() },
+                unknown(ProviderRole::Correction, "inconnu"),
+            ),
+            (Settings { stt_model: " ".into(), ..Default::default() }, ModelRequired),
+            (Settings { llm_model: "".into(), ..Default::default() }, ModelRequired),
+            (
+                Settings { max_recording_ms: MAX_RECORDING_MS_CAP + 1, ..Default::default() },
+                MaxRecordingTooLong { max_minutes: 10 },
+            ),
+            (Settings { max_recording_ms: 1_800_000, ..Default::default() }, MaxRecordingTooLong { max_minutes: 10 }),
+            (
+                Settings { restore_delay_ms: MAX_RESTORE_DELAY_MS + 1, ..Default::default() },
+                RestoreDelayTooLong { max_ms: 2_000 },
+            ),
+            (Settings { restore_delay_ms: u64::MAX, ..Default::default() }, RestoreDelayTooLong { max_ms: 2_000 }),
+            (Settings { llm_timeout_base_ms: u64::MAX, ..Default::default() }, CorrectionTimeoutTooLong),
+            (Settings { llm_timeout_per_char_ms: u64::MAX, ..Default::default() }, CorrectionTimeoutTooLong),
         ];
-        for s in bad {
-            assert!(s.validate().is_err(), "should be rejected: {s:?}");
+        for (s, expected) in bad {
+            assert_eq!(s.validate(), Err(expected), "{s:?}");
         }
         let good = [
             Settings { audio_retention_days: 0, ..Default::default() },
@@ -363,5 +444,39 @@ mod tests {
         for s in good {
             assert!(s.validate().is_ok(), "should be accepted: {s:?}");
         }
+    }
+
+    #[test]
+    fn settings_errors_serialize_as_codes_for_the_ui() {
+        use serde_json::json;
+        let cases = [
+            (SettingsError::InvalidHotkey, json!({"code": "invalid_hotkey"})),
+            (SettingsError::LockKeyInHotkey, json!({"code": "lock_key_in_hotkey"})),
+            (
+                SettingsError::MaxRecordingTooShort { min_seconds: 10 },
+                json!({"code": "max_recording_too_short", "min_seconds": 10}),
+            ),
+            (silence_range(), json!({"code": "silence_threshold_out_of_range", "min_dbfs": -90, "max_dbfs": -10})),
+            (
+                SettingsError::UnknownProvider { role: ProviderRole::Correction, id: "x".into() },
+                json!({"code": "unknown_provider", "role": "correction", "id": "x"}),
+            ),
+            (SettingsError::ModelRequired, json!({"code": "model_required"})),
+        ];
+        for (e, expected) in cases {
+            assert_eq!(serde_json::to_value(&e).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn the_language_follows_the_system_unless_chosen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"llm_model":"claude-haiku-4-5"}"#).unwrap();
+        assert_eq!(Settings::load(&path).language, LanguagePref::System, "file from before the setting");
+        let fr = Settings { language: LanguagePref::Fr, ..Default::default() };
+        fr.save(&path).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains(r#""language": "fr""#));
+        assert_eq!(Settings::load(&path), fr);
     }
 }

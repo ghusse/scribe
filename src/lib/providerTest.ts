@@ -1,25 +1,9 @@
-/** Outcome of one provider call in test_providers: its duration in ms, or the raw error. */
-export type TestOutcome = { Ok: number } | { Err: string };
+import type { ProviderError } from "./api";
+import { errorText, providerErrorDetail, providerErrorText } from "./errors";
+import { t } from "./i18n";
 
-/**
- * French summary of a provider error (the Display of ProviderError, or a build_providers error),
- * e.g. « clé refusée par Anthropic, vérifiez la clé ». Null when there is nothing better than the raw text.
- */
-export function translateProviderError(raw: string, provider: string | null): string | null {
-  // build_providers (transcription): « clé API manquante pour « OpenAI » »;
-  // build_corrector (correction): « clé API Anthropic manquante ».
-  const missing = /clé API manquante pour « (.+?) »/.exec(raw) ?? /clé API (.+?) manquante/.exec(raw);
-  if (missing) return `aucune clé ${missing[1]} enregistrée, ajoutez-la dans Clés API`;
-  if (/clé API refusée/.test(raw) || /\bHTTP (401|403)\b/.test(raw)) return provider ? `clé refusée par ${provider}, vérifiez la clé` : "clé refusée, vérifiez la clé";
-  if (/\bHTTP 404\b/.test(raw)) return "modèle inconnu chez ce fournisseur";
-  if (/\bHTTP 400\b/.test(raw)) return "requête refusée par le fournisseur (HTTP 400), voir Détails";
-  if (/\bHTTP 429\b/.test(raw)) return "trop de requêtes, réessayez dans un instant";
-  const server = /\bHTTP (5\d\d)\b/.exec(raw);
-  if (server) return `erreur du fournisseur (HTTP ${server[1]}), réessayez plus tard`;
-  if (/^erreur réseau|délai dépassé/.test(raw)) return "fournisseur injoignable";
-  if (/fournisseur de (transcription|correction) inconnu/.test(raw)) return "fournisseur inconnu";
-  return null;
-}
+/** Outcome of one provider call in test_providers: its duration in ms, or the error. */
+export type TestOutcome = { Ok: number } | { Err: ProviderError };
 
 export interface TestLine {
   ok: boolean;
@@ -33,9 +17,15 @@ export interface TestLine {
 
 /** One line of the test result; `outcome` null means not used (raw level). */
 export function testLine(role: string, provider: string, model: string, outcome: TestOutcome | null): TestLine {
+  const m = t.value.settings.test;
   const title = `${role} · ${provider} / ${model}`;
-  if (outcome === null) return { ok: true, title: `${role}`, text: "— non utilisée (niveau brut)", raw: null };
-  if ("Ok" in outcome) return { ok: true, title, text: `✓ fonctionne (${Math.round(outcome.Ok)} ms)`, raw: null };
-  const fr = translateProviderError(outcome.Err, provider);
-  return { ok: false, title, text: `✗ ${fr ?? "erreur du fournisseur, voir Détails"}`, raw: outcome.Err };
+  if (outcome === null) return { ok: true, title: role, text: m.unused, raw: null };
+  if ("Ok" in outcome) return { ok: true, title, text: m.works(Math.round(outcome.Ok)), raw: null };
+  return { ok: false, title, text: `✗ ${providerErrorText(outcome.Err, provider)}`, raw: providerErrorDetail(outcome.Err) };
+}
+
+/** A test that could not run (rejected `test_providers`), with the provider's technical text when there is one. */
+export function testFailure(e: unknown): { text: string; raw: string | null } {
+  const provider = (e as { code?: unknown } | null)?.code === "provider" ? (e as { error: ProviderError }).error : null;
+  return { text: t.value.settings.test.failed(errorText(e)), raw: provider && providerErrorDetail(provider) };
 }

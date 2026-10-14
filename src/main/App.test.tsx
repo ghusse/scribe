@@ -22,7 +22,9 @@ beforeEach(() => {
 });
 
 const tab = (name: string) => screen.getByRole("button", { name: new RegExp(`^${name}`) });
-const settingsPanel = () => screen.getByText("Raccourci").closest("div[hidden], div:not([hidden])") as HTMLElement;
+/** App's wrapper around Settings (Settings' own panes are hidden too, so look from its navigation). */
+const settingsPanel = () =>
+  document.querySelector('nav[aria-label="Sections des réglages"]')!.closest("main > div") as HTMLElement;
 
 describe("App", () => {
   it("opens on the history when the keys are set, Settings mounted but hidden", async () => {
@@ -84,6 +86,18 @@ describe("App", () => {
     expect(screen.queryByLabelText("(réglages non enregistrés)")).toBeNull();
     await fireEvent.click(screen.getByLabelText(/Double-tap/));
     expect(await screen.findByLabelText("(réglages non enregistrés)", {}, { timeout: 2000 })).toBeTruthy();
+  });
+
+  it("starts in the backend's language and follows its changes", async () => {
+    commands({ language: () => "en" });
+    render(<App />);
+    await waitFor(() => expect(tab("History").classList.contains(styles.active)).toBe(true));
+    expect(tab("Vocabulary")).toBeTruthy();
+    expect(tab("Settings")).toBeTruthy();
+    expect(await screen.findByText(/No dictations yet/)).toBeTruthy();
+    emit("language", "fr");
+    await waitFor(() => expect(tab("Historique")).toBeTruthy());
+    expect(await screen.findByText(/Aucune dictée/)).toBeTruthy();
   });
 
   it("stops listening when unmounted", async () => {

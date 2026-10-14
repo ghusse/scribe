@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Settings as SettingsT } from "../lib/api";
 import type { SaveState } from "../lib/autosave";
-import { CAPTURE_TIMEOUT_MESSAGE } from "../lib/hotkeys";
+import { lang, t } from "../lib/i18n";
 import { calls, commands, invoke, resetTauri } from "../../tests/tauri";
 import { PROVIDERS, settings } from "../../tests/fixtures";
 import { advanceTimers } from "../../tests/timers";
@@ -36,12 +36,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Mounts Settings, records what it reports through `onStatusChange` and waits for the form. */
-async function setup(extra: { active?: boolean } = {}) {
+type Pane = "Général" | "Dictée" | "Modèles" | "Avancé";
+
+/** The settings navigation (one button per category). */
+const nav = () => screen.getByRole("navigation", { name: t.value.settings.nav.label });
+const goTo = (pane: Pane) => fireEvent.click(within(nav()).getByRole("button", { name: new RegExp(`^${pane}`) }));
+
+/** Mounts Settings, records what it reports through `onStatusChange`, waits for the form and opens `pane`. */
+async function setup(pane?: Pane) {
   let status: SaveState = "saved";
   const onStatusChange = (v: SaveState) => (status = v);
-  const r = render(<Settings {...extra} onStatusChange={onStatusChange} />);
+  const r = render(<Settings onStatusChange={onStatusChange} />);
   await screen.findByText("Raccourci");
+  if (pane) await goTo(pane);
   const rerender = (props: { active?: boolean }) => r.rerender(<Settings {...props} onStatusChange={onStatusChange} />);
   return { ...r, rerender, status: () => status };
 }
@@ -219,7 +226,7 @@ describe("Settings: autosave", () => {
 
 describe("Settings: providers and models", () => {
   it("switching the transcription provider selects its newest model", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.change(providerSelect("stt"), { target: { value: "mistral" } });
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
     expect([lastSave().stt_provider, lastSave().stt_model]).toEqual(["mistral", "voxtral"]);
@@ -227,7 +234,7 @@ describe("Settings: providers and models", () => {
   });
 
   it("switching the correction provider selects its first model and drops a meaningless effort", async () => {
-    await setup();
+    await setup("Modèles");
     expect(select(/Réflexion du modèle/).value).toBe("low");
     await fireEvent.change(providerSelect("llm"), { target: { value: "openai" } });
     expect(screen.queryByLabelText(/Réflexion du modèle/)).toBeNull();
@@ -237,7 +244,7 @@ describe("Settings: providers and models", () => {
 
   it("picking another model keeps the effort valid", async () => {
     commands({ get_settings: () => settings({ llm_effort: "max" }) });
-    await setup();
+    await setup("Modèles");
     const llmModel = screen.getAllByLabelText(/^Modèle/, { selector: "select" })[1] as HTMLSelectElement;
     await fireEvent.change(llmModel, { target: { value: "claude-haiku-4-5" } });
     expect(screen.queryByLabelText(/Réflexion du modèle/)).toBeNull();
@@ -250,7 +257,7 @@ describe("Settings: providers and models", () => {
 
   it("raw level: correction disabled, its key not required, the test is transcription only", async () => {
     stored = { openai: true };
-    await setup();
+    await setup("Modèles");
     expect(screen.getByRole("note").textContent).toMatch(/Anthropic.*\(correction\)/);
     await fireEvent.change(select(/Niveau de correction/), { target: { value: "raw" } });
     expect(screen.getByText("Correction désactivée en mode brut")).toBeTruthy();
@@ -262,7 +269,7 @@ describe("Settings: providers and models", () => {
 
   it("works with a provider the catalog does not know", async () => {
     commands({ get_settings: () => settings({ stt_provider: "gone", llm_provider: "gone2" }), key_status: () => ({ gone: true, gone2: true }) });
-    await setup();
+    await setup("Modèles");
     expect(screen.getByText("✓ Clé gone enregistrée")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     expect(await screen.findByText(/Transcription · gone \/ gpt-4o-transcribe/)).toBeTruthy();
@@ -273,7 +280,7 @@ describe("Settings: providers and models", () => {
 describe("Settings: API keys", () => {
   it("lists the keys in use first, the others folded, with their status", async () => {
     stored = { openai: true };
-    await setup();
+    await setup("Modèles");
     const used = [...document.querySelectorAll(`.${styles.section} > form.${styles.key} .${styles.label}`)].map((e) => e.textContent);
     expect(used).toEqual(["OpenAI", "Anthropic"]);
     const others = [...document.querySelectorAll(`details.${styles.others} form.${styles.key} .${styles.label}`)].map((e) => e.textContent);
@@ -288,7 +295,7 @@ describe("Settings: API keys", () => {
 
   it("saves a typed key, refreshes the status and confirms briefly", async () => {
     stored = { openai: true };
-    await setup();
+    await setup("Modèles");
     const form = keyForm("Anthropic");
     const save = within(form).getByRole("button", { name: "Enregistrer" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -305,7 +312,7 @@ describe("Settings: API keys", () => {
   });
 
   it("never sends an empty key from the form", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.input(screen.getByLabelText("Clé OpenAI"), { target: { value: "   " } });
     await fireEvent.submit(keyForm("OpenAI"));
     expect(calls("set_api_key")).toHaveLength(0);
@@ -313,7 +320,7 @@ describe("Settings: API keys", () => {
 
   it("shows why a key could not be saved", async () => {
     commands({ set_api_key: () => Promise.reject("coffre indisponible") });
-    await setup();
+    await setup("Modèles");
     await fireEvent.input(screen.getByLabelText("Clé OpenAI"), { target: { value: "sk" } });
     await fireEvent.submit(keyForm("OpenAI"));
     expect(await screen.findByText("coffre indisponible")).toBeTruthy();
@@ -321,7 +328,7 @@ describe("Settings: API keys", () => {
   });
 
   it("deletes a key only after confirmation", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(within(keyForm("OpenAI")).getByRole("button", { name: "Supprimer" }));
     expect(screen.getByText("Supprimer la clé OpenAI ?")).toBeTruthy();
     const cancel = screen.getByRole("button", { name: "Annuler" });
@@ -342,7 +349,7 @@ describe("Settings: API keys", () => {
   });
 
   it("Échap cancels the delete confirmation, other keys do nothing", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(within(keyForm("OpenAI")).getByRole("button", { name: "Supprimer" }));
     const confirm = screen.getByText("Supprimer la clé OpenAI ?").closest("form")!;
     const del = within(confirm).getByRole("button", { name: "Supprimer" });
@@ -356,7 +363,7 @@ describe("Settings: API keys", () => {
   it("« Ajouter la clé » brings the missing key's field into view, unfolding the others", async () => {
     commands({ get_settings: () => settings({ stt_provider: "mistral" }) });
     stored = { anthropic: true };
-    await setup();
+    await setup("Modèles");
     expect(document.querySelector(`details.${styles.others}`)!.textContent).not.toContain("Mistral"); // in use: shown first
     await fireEvent.click(screen.getByRole("button", { name: "Ajouter la clé" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Clé Mistral")));
@@ -365,7 +372,7 @@ describe("Settings: API keys", () => {
 
   it("the banner link focuses the key and closes a pending delete confirmation on it", async () => {
     stored = { openai: true };
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(within(screen.getByRole("note")).getByRole("button", { name: "Anthropic" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Clé Anthropic")));
   });
@@ -373,7 +380,7 @@ describe("Settings: API keys", () => {
   it("names every missing key in the banner", async () => {
     stored = {};
     commands({ get_settings: () => settings({ llm_provider: "mistral", llm_model: "mistral-large" }) });
-    await setup();
+    await setup("Modèles");
     expect(screen.getByRole("note").textContent!.replace(/\s+/g, " ")).toBe(
       "Pour commencer, ajoutez la clé OpenAI (transcription) et Mistral (correction).",
     );
@@ -383,7 +390,7 @@ describe("Settings: API keys", () => {
     // A key line for a provider that is not in use cannot be clicked, so go through a provider switch:
     // the inline warning of the new provider points at a row that was folded a moment ago.
     stored = { openai: true, anthropic: true };
-    await setup();
+    await setup("Modèles");
     const details = document.querySelector(`details.${styles.others}`) as HTMLDetailsElement;
     expect(details.open).toBe(false);
     await fireEvent.click(within(keyForm("OpenAI")).getByRole("button", { name: "Supprimer" }));
@@ -395,24 +402,24 @@ describe("Settings: API keys", () => {
 
 describe("Settings: provider test", () => {
   it("shows one line per role with the timing or the translated error", async () => {
-    commands({ test_providers: () => ({ stt: { Ok: 412.4 }, llm: { Err: "HTTP 401 Unauthorized" } }) });
-    await setup();
+    commands({ test_providers: () => ({ stt: { Ok: 412.4 }, llm: { Err: { code: "http", status: 401, body: "Unauthorized" } } }) });
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: "Tester transcription et correction" }));
     expect(await screen.findByText(/✓ fonctionne \(412 ms\)/)).toBeTruthy();
     expect(screen.getByText(/✗ clé refusée par Anthropic, vérifiez la clé/)).toBeTruthy();
-    expect(screen.getByText("HTTP 401 Unauthorized")).toBeTruthy();
+    expect(screen.getByText("HTTP 401: Unauthorized")).toBeTruthy();
     expect(document.querySelectorAll(`.${styles.testResult} p.${styles.ok}, .${styles.testResult} p.${styles.fail}`)).toHaveLength(2);
   });
 
   it("a raw-level test says correction is not used", async () => {
     commands({ get_settings: () => settings({ level: "raw" }), test_providers: () => ({ stt: { Ok: 10 }, llm: null }) });
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: "Tester la transcription" }));
     expect(await screen.findByText(/non utilisée \(niveau brut\)/)).toBeTruthy();
   });
 
   it("saves pending edits before testing", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByLabelText(/Double-tap/));
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     await screen.findAllByText(/✓ fonctionne/);
@@ -420,7 +427,7 @@ describe("Settings: provider test", () => {
   });
 
   it("refuses to test settings that cannot be saved", async () => {
-    await setup();
+    await setup("Modèles");
     await setNumber(/Seuil de maintien/, "5");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     expect(await screen.findByText(/corrigez l'erreur avant de tester/)).toBeTruthy();
@@ -428,25 +435,25 @@ describe("Settings: provider test", () => {
   });
 
   it("explains a test that could not run, with the raw error in the details", async () => {
-    commands({ test_providers: () => Promise.reject("clé API manquante pour « OpenAI »") });
-    await setup();
+    commands({ test_providers: () => Promise.reject({ code: "provider", error: { code: "config", detail: "no base url" } }) });
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
-    expect(await screen.findByText(/✗ Test impossible.*aucune clé OpenAI enregistrée/)).toBeTruthy();
-    expect(screen.getByText("clé API manquante pour « OpenAI »")).toBeTruthy();
+    expect(await screen.findByText(/✗ Test impossible.*configuration du fournisseur invalide/)).toBeTruthy();
+    expect(screen.getByText("no base url")).toBeTruthy();
   });
 
-  it("shows an untranslatable error as is", async () => {
+  it("shows an error without technical text as is, without details", async () => {
     commands({ test_providers: () => Promise.reject("panique") });
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
-    expect(await screen.findByText("panique")).toBeTruthy();
+    expect(await screen.findByText(/^✗ Test impossible.*: panique$/)).toBeTruthy();
     expect(document.querySelector(`.${styles.testResult} details`)).toBeNull();
   });
 
   it("shows the button busy while testing", async () => {
     let done!: (v: unknown) => void;
     commands({ test_providers: () => new Promise((res) => (done = res)) });
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     const busy = (await screen.findByRole("button", { name: "Test en cours…" })) as HTMLButtonElement;
     expect(busy.disabled).toBe(true);
@@ -455,7 +462,7 @@ describe("Settings: provider test", () => {
   });
 
   it("a result for other settings is dropped", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     await screen.findByText(/✓ fonctionne \(412 ms\)/);
     await fireEvent.change(select(/Niveau de correction/), { target: { value: "clean" } });
@@ -465,7 +472,7 @@ describe("Settings: provider test", () => {
   it("a key saved while a test runs makes its result stale", async () => {
     let done!: (v: unknown) => void;
     commands({ test_providers: () => new Promise((res) => (done = res)) });
-    await setup();
+    await setup("Modèles");
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     await waitFor(() => expect(calls("test_providers")).toHaveLength(1));
     await fireEvent.input(screen.getByLabelText("Clé OpenAI"), { target: { value: "sk-new" } });
@@ -477,12 +484,15 @@ describe("Settings: provider test", () => {
   });
 
   it("asks before testing with a typed but unsaved key, then saves it and tests", async () => {
-    await setup();
+    await setup("Modèles");
     await fireEvent.input(screen.getByLabelText("Clé Anthropic"), { target: { value: "sk-ant" } });
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     expect(screen.getByText("Clé Anthropic saisie mais non enregistrée. Enregistrer ?")).toBeTruthy();
     expect(calls("test_providers")).toHaveLength(0);
-    const prompt = screen.getByText(/saisie mais non enregistrée/);
+    lang.value = "en";
+    expect(await screen.findByText("Anthropic key typed but not saved. Save it?")).toBeTruthy();
+    lang.value = "fr";
+    const prompt = await screen.findByText(/saisie mais non enregistrée/);
     await fireEvent.click(within(prompt).getByRole("button", { name: "Enregistrer" }));
     expect(await screen.findAllByText(/✓ fonctionne/)).toHaveLength(2);
     expect(calls("set_api_key")).toEqual([{ provider: "anthropic", key: "sk-ant" }]);
@@ -490,7 +500,7 @@ describe("Settings: provider test", () => {
 
   it("the unsaved-key question can be dismissed; a failed key save stops the test", async () => {
     commands({ set_api_key: () => Promise.reject("coffre") });
-    await setup();
+    await setup("Modèles");
     await fireEvent.input(screen.getByLabelText("Clé Anthropic"), { target: { value: "sk-ant" } });
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     await fireEvent.click(within(screen.getByText(/saisie mais non enregistrée/)).getByRole("button", { name: "Annuler" }));
@@ -508,7 +518,7 @@ describe("Settings: hotkeys", () => {
 
   it("captures a new trigger key and saves it", async () => {
     commands({ capture_key: () => [0x70] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText("F1")).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
@@ -518,7 +528,7 @@ describe("Settings: hotkeys", () => {
   it("shows the capture in progress and can cancel it", async () => {
     let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)) });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("verrouillage"));
     expect(screen.getByText("Appuyez sur une touche… (Échap pour annuler)")).toBeTruthy();
     expect((change("déclenchement") as HTMLButtonElement).disabled).toBe(true);
@@ -535,47 +545,51 @@ describe("Settings: hotkeys", () => {
   it("a cancel that fails still lets the capture end", async () => {
     let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)), cancel_capture: () => Promise.reject("x") });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     await fireEvent.click(screen.getByRole("button", { name: "Annuler la capture" }));
     answer(null);
     expect(await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" })).toBeTruthy();
-    expect(screen.queryByText(CAPTURE_TIMEOUT_MESSAGE)).toBeNull();
+    expect(screen.queryByText(t.value.settings.hotkey.captureTimeout)).toBeNull();
   });
 
   it("says when no key was pressed in time", async () => {
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
-    expect(await screen.findByText(CAPTURE_TIMEOUT_MESSAGE)).toBeTruthy();
+    expect(await screen.findByText(t.value.settings.hotkey.captureTimeout)).toBeTruthy();
   });
 
   it("says when the capture fails", async () => {
     commands({ capture_key: () => Promise.reject("hook absent") });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/Capture impossible.*hook absent/)).toBeTruthy();
   });
 
   it("refuses the trigger key as the lock key when there is no lock to swap", async () => {
     commands({ get_settings: () => settings({ lock_vk: 0 }), capture_key: () => [0xa5] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("verrouillage"));
     expect(await screen.findByText(/Alt droit \(AltGr\) est déjà la touche de déclenchement/)).toBeTruthy();
+    lang.value = "en";
+    expect(await screen.findByText(/is already the trigger key/)).toBeTruthy();
   });
 
   it("swaps the keys when the trigger takes the lock key", async () => {
     commands({ capture_key: () => [0x14] });
     commands({ get_settings: () => settings({ lock_vk: 0x14 }) });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/Touches échangées/)).toBeTruthy();
+    lang.value = "en";
+    expect(await screen.findByText(/Keys swapped/)).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
     expect([lastSave().trigger_keys, lastSave().lock_vk]).toEqual([[0x14], 0xa5]);
   });
 
   it("asks before making a typing key the trigger", async () => {
     commands({ capture_key: () => [0x41] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/Ce raccourci gênera la saisie normale/)).toBeTruthy();
     expect(screen.getByText("A")).toBeTruthy();
@@ -592,7 +606,7 @@ describe("Settings: hotkeys", () => {
 
   it("the confirmation also names the lock key when the keys are swapped", async () => {
     commands({ get_settings: () => settings({ lock_vk: 0x41 }), capture_key: () => [0x41] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     const confirm = (await screen.findByText(/saisie normale/)).closest("p")!;
     expect(confirm.textContent).toMatch(/Déclenchement = A, Verrouillage = Alt droit \(AltGr\)\./);
@@ -601,7 +615,7 @@ describe("Settings: hotkeys", () => {
   it("captures a combination, shows it and saves it", async () => {
     let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)) });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(screen.getByText("Appuyez sur la touche ou la combinaison, puis relâchez… (Échap pour annuler)")).toBeTruthy();
     answer([0xa2, 0xa0, 0x41]);
@@ -613,18 +627,18 @@ describe("Settings: hotkeys", () => {
 
   it("Échap during the capture changes nothing", async () => {
     commands({ capture_key: () => [] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" })).toBeTruthy();
     expect(screen.getByText("Alt droit (AltGr)")).toBeTruthy();
-    expect(screen.queryByText(CAPTURE_TIMEOUT_MESSAGE)).toBeNull();
+    expect(screen.queryByText(t.value.settings.hotkey.captureTimeout)).toBeNull();
     await advanceTimers(600);
     expect(saves()).toHaveLength(0);
   });
 
   it("warns about a combination Windows uses but keeps it", async () => {
     commands({ capture_key: () => [0xa0, 0xa4] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     expect(await screen.findByText(/changer la langue du clavier/)).toBeTruthy();
     expect(screen.getByText("Maj + Alt")).toBeTruthy();
@@ -633,14 +647,14 @@ describe("Settings: hotkeys", () => {
 
   it("refuses a combination as the lock key", async () => {
     commands({ capture_key: () => [0xa2, 0x41] });
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(change("verrouillage"));
     expect(await screen.findByText("Le verrouillage se fait avec une seule touche.")).toBeTruthy();
     expect(screen.getByText("Espace")).toBeTruthy();
   });
 
   it("disables the lock key", async () => {
-    await setup();
+    await setup("Dictée");
     await fireEvent.click(screen.getByLabelText("Désactiver la touche de verrouillage"));
     expect(screen.getByText("Aucune")).toBeTruthy();
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
@@ -650,7 +664,7 @@ describe("Settings: hotkeys", () => {
   it("the captured Space/Enter never activates the button being captured", async () => {
     let answer!: (keys: number[] | null) => void;
     commands({ capture_key: () => new Promise((res) => (answer = res)) });
-    await setup();
+    await setup("Dictée");
     const button = change("déclenchement");
     await fireEvent.click(button);
     const capturing = screen.getByRole("button", { name: "Annuler la capture" });
@@ -667,7 +681,7 @@ describe("Settings: hotkeys", () => {
 
   it("a capture stops when its tab is hidden, and when unmounted", async () => {
     commands({ capture_key: () => new Promise(() => {}) });
-    const { rerender, unmount } = await setup();
+    const { rerender, unmount } = await setup("Dictée");
     await fireEvent.click(change("déclenchement"));
     await rerender({ active: false });
     await waitFor(() => expect(calls("cancel_capture")).toHaveLength(1));
@@ -677,9 +691,135 @@ describe("Settings: hotkeys", () => {
 
   it("ignores a second capture while one runs", async () => {
     commands({ capture_key: () => new Promise(() => {}) });
-    await setup();
+    await setup("Dictée");
     const button = change("déclenchement");
     await fireEvent.click(button);
     expect(calls("capture_key")).toHaveLength(1);
+  });
+});
+
+describe("Settings: categories", () => {
+  const current = () => within(nav()).getByRole("button", { current: "page" }).textContent;
+  const paneTitle = () => screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+
+  it("shows one category at a time, General first", async () => {
+    await setup();
+    expect(current()).toBe("Général");
+    expect(paneTitle()).toEqual(["Général"]);
+    expect(screen.getByRole("heading", { name: "Langue" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Raccourci" })).toBeNull();
+    await goTo("Dictée");
+    expect(current()).toBe("Dictée");
+    expect(paneTitle()).toEqual(["Dictée"]);
+    expect(screen.getByRole("heading", { name: "Raccourci" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Son" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Langue" })).toBeNull();
+    await goTo("Avancé");
+    expect(screen.getByRole("spinbutton", { name: /Seuil de maintien/ })).toBeTruthy();
+  });
+
+  it("opens on Models when a required key is missing", async () => {
+    stored = { openai: true };
+    await setup();
+    expect(current()).toMatch(/^Modèles/);
+    expect(screen.getByRole("heading", { name: "Clés API" })).toBeTruthy();
+  });
+
+  it("keeps the banner and the status bar whatever the category", async () => {
+    stored = { openai: true };
+    await setup("Général");
+    expect(screen.getByRole("note")).toBeTruthy();
+    await fireEvent.change(select(/Langue de l'interface/), { target: { value: "en" } });
+    await goTo("Avancé");
+    expect(bar().textContent).toContain("Enregistrement…");
+    expect(screen.getByRole("note")).toBeTruthy();
+  });
+
+  it("the banner link switches to Models and focuses the key", async () => {
+    stored = { openai: true };
+    await setup("Dictée");
+    await fireEvent.click(within(screen.getByRole("note")).getByRole("button", { name: "Anthropic" }));
+    expect(current()).toMatch(/^Modèles/);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Clé Anthropic")));
+  });
+
+  it("flags the categories that hold something to fix", async () => {
+    stored = { openai: true };
+    await setup("Avancé");
+    const flagged = () => within(nav()).getAllByRole("img", { name: "(à vérifier)" }).map((d) => d.parentElement!.textContent);
+    expect(flagged()).toEqual(["Modèles"]);
+    await setNumber(/Seuil de maintien/, "5");
+    expect(flagged()).toEqual(["Modèles", "Avancé"]);
+  });
+
+  it("cancels a capture when its category is left", async () => {
+    commands({ capture_key: () => new Promise(() => {}) });
+    await setup("Dictée");
+    await fireEvent.click(screen.getByRole("button", { name: "Changer le raccourci de déclenchement" }));
+    expect(calls("cancel_capture")).toHaveLength(0);
+    await goTo("Général");
+    await waitFor(() => expect(calls("cancel_capture")).toHaveLength(1));
+  });
+});
+
+describe("Settings: language", () => {
+  it("autosaves the chosen language, the system's being the default", async () => {
+    await setup("Général");
+    const language = select(/Langue de l'interface/);
+    expect(language.value).toBe("system");
+    expect([...language.options].map((o) => o.textContent)).toEqual(["Système", "English", "Français"]);
+    await fireEvent.change(language, { target: { value: "en" } });
+    await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
+    expect(lastSave().language).toBe("en");
+  });
+
+  it("renders in English", async () => {
+    lang.value = "en";
+    stored = { openai: true };
+    render(<Settings />);
+    expect(await screen.findByRole("heading", { name: "Models" })).toBeTruthy();
+    expect(within(nav()).getAllByRole("button").map((b) => b.textContent)).toEqual(["General", "Dictation", "Models", "Advanced"]);
+    expect(within(nav()).getByRole("img", { name: "(needs attention)" })).toBeTruthy();
+    expect(screen.getByRole("note").textContent!.replace(/\s+/g, " ")).toBe("To get started, add an API key for Anthropic (correction).");
+    expect(screen.getByText("⚠ No Anthropic key: correction will fail.")).toBeTruthy();
+    expect((screen.getByLabelText("OpenAI key") as HTMLInputElement).placeholder).toBe("Replace the key…");
+    await fireEvent.click(within(nav()).getByRole("button", { name: "Dictation" }));
+    expect(screen.getByText("Right Alt (AltGr)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change the trigger shortcut" })).toBeTruthy();
+  });
+
+  it("switches the labels when the language changes", async () => {
+    await setup("Dictée");
+    expect(screen.getByRole("heading", { name: "Raccourci" })).toBeTruthy();
+    lang.value = "en";
+    expect(await screen.findByRole("heading", { name: "Shortcut" })).toBeTruthy();
+    expect(screen.getByText("Space")).toBeTruthy();
+    expect(within(nav()).getByRole("button", { current: "page" }).textContent).toBe("Dictation");
+  });
+
+  it("translates a refused save, also after a language change", async () => {
+    commands({ save_settings: () => Promise.reject({ code: "invalid_settings", error: { code: "model_required" } }) });
+    const { status } = await setup("Dictée");
+    await fireEvent.click(screen.getByLabelText(/Double-tap/));
+    await waitFor(() => expect(status()).toBe("failed"), SAVE_WAIT);
+    expect(alertText()).toBe("⚠ Non enregistré : choisissez un modèle de transcription et un modèle de correction");
+    lang.value = "en";
+    await waitFor(() => expect(alertText()).toBe("⚠ Not saved: choose a transcription model and a correction model"));
+  });
+});
+
+describe("Settings: command errors", () => {
+  it("translates a load error", async () => {
+    commands({ get_settings: () => Promise.reject({ code: "system", detail: "base verrouillée" }) });
+    render(<Settings />);
+    expect(await screen.findByText(/Impossible de charger les réglages.*base verrouillée/)).toBeTruthy();
+  });
+
+  it("translates a key that could not be saved", async () => {
+    commands({ set_api_key: () => Promise.reject({ code: "system", detail: "coffre indisponible" }) });
+    await setup("Modèles");
+    await fireEvent.input(screen.getByLabelText("Clé OpenAI"), { target: { value: "sk" } });
+    await fireEvent.submit(keyForm("OpenAI"));
+    expect(await within(keyForm("OpenAI")).findByText("coffre indisponible")).toBeTruthy();
   });
 });

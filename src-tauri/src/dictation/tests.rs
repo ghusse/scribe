@@ -30,8 +30,12 @@ fn only_row(f: &Fixture) -> Dictation {
     rows.into_iter().next().unwrap()
 }
 
-fn toast(level: ToastLevel, message: &str, preview: Option<&str>, id: Option<i64>) -> OverlayEvent {
-    OverlayEvent::Toast { level, message: message.into(), preview: preview.map(String::from), dictation_id: id }
+fn toast(level: ToastLevel, message: Notice, preview: Option<&str>, id: Option<i64>) -> OverlayEvent {
+    OverlayEvent::Toast { level, message, preview: preview.map(String::from), dictation_id: id }
+}
+
+fn stored(e: &ProviderError) -> Option<String> {
+    Some(stored_error(e))
 }
 
 fn set_end_focus(f: &Fixture, state: FocusState) {
@@ -51,12 +55,6 @@ fn purge_cutoff_never_panics_on_huge_retention() {
 }
 
 #[test]
-fn correction_note_is_appended_to_every_toast() {
-    assert_eq!(with_correction_note("Texte inséré ?", None), "Texte inséré ?");
-    assert_eq!(with_correction_note("Texte inséré ?", Some("délai")), "Texte inséré ? (non corrigé : délai)");
-}
-
-#[test]
 fn preview_is_cut_at_140_characters() {
     assert_eq!(preview("court"), "court");
     let exact = "é".repeat(140);
@@ -68,37 +66,34 @@ fn preview_is_cut_at_140_characters() {
 #[test]
 fn feedback_for_each_insertion_result() {
     let id = Some(3);
+    let timeout = ProviderError::Timeout;
+    let note = || Some(timeout.clone());
     assert_eq!(feedback(InsertResult::Pasted, None, "t", id), OverlayEvent::Idle);
     assert_eq!(
-        feedback(InsertResult::Pasted, Some("délai"), "t", id),
-        toast(ToastLevel::Info, "Inséré sans correction (délai)", None, id)
+        feedback(InsertResult::Pasted, Some(&timeout), "t", id),
+        toast(ToastLevel::Info, Notice::PastedWithoutCorrection { correction: timeout.clone() }, None, id)
     );
     assert_eq!(
         feedback(InsertResult::PastedUncertain, None, "t", id),
-        toast(ToastLevel::Uncertain, "Texte inséré ?", Some("t"), id)
+        toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction: None }, Some("t"), id)
     );
     assert_eq!(
-        feedback(InsertResult::PastedUncertain, Some("délai"), "t", id),
-        toast(ToastLevel::Uncertain, "Texte inséré ? (non corrigé : délai)", Some("t"), id)
+        feedback(InsertResult::PastedUncertain, Some(&timeout), "t", id),
+        toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction: note() }, Some("t"), id)
     );
     for r in [InsertResult::ClipboardOnly, InsertResult::PasteFailed] {
         assert_eq!(
             feedback(r, None, "t", None),
-            toast(ToastLevel::Copied, "Texte copié dans le presse-papier", Some("t"), None)
+            toast(ToastLevel::Copied, Notice::Copied { correction: None }, Some("t"), None)
         );
     }
     assert_eq!(
-        feedback(InsertResult::NotPasted, Some("x"), "t", id),
-        toast(ToastLevel::Copied, "Non inséré : texte copié, collez-le avec Ctrl+V (non corrigé : x)", Some("t"), id)
+        feedback(InsertResult::NotPasted, Some(&timeout), "t", id),
+        toast(ToastLevel::Copied, Notice::NotPasted { correction: note() }, Some("t"), id)
     );
     assert_eq!(
-        feedback(InsertResult::ClipboardFailed, Some("x"), "t", id),
-        toast(
-            ToastLevel::Error,
-            "Presse-papier indisponible : texte dans l'historique (non corrigé : x)",
-            Some("t"),
-            id
-        )
+        feedback(InsertResult::ClipboardFailed, Some(&timeout), "t", id),
+        toast(ToastLevel::Error, Notice::ClipboardUnavailable { correction: note() }, Some("t"), id)
     );
 }
 
@@ -106,12 +101,16 @@ fn feedback_for_each_insertion_result() {
 fn failure_feedback_points_to_the_history() {
     assert_eq!(
         failure_feedback(&ProviderError::Auth, Some(9)),
-        toast(
-            ToastLevel::Error,
-            "Échec de la transcription : clé API refusée. Réessayez depuis l'historique.",
-            None,
-            Some(9)
-        )
+        toast(ToastLevel::Error, Notice::TranscriptionFailed { error: ProviderError::Auth }, None, Some(9))
+    );
+}
+
+#[test]
+fn errors_are_stored_as_json_for_the_history() {
+    assert_eq!(stored_error(&ProviderError::Timeout), r#"{"code":"timeout"}"#);
+    assert_eq!(
+        stored_error(&ProviderError::MissingKey { provider: "OpenAI".into() }),
+        r#"{"code":"missing_key","provider":"OpenAI"}"#
     );
 }
 
@@ -130,7 +129,7 @@ fn build_record_for_a_failed_transcription() {
     let s = Settings::default();
     let r = build_record(&meta(), &s, Delivery::Failed(&ProviderError::Timeout));
     assert_eq!(r.outcome, Outcome::Error);
-    assert_eq!(r.error.as_deref(), Some("délai dépassé"));
+    assert_eq!(r.error, stored(&ProviderError::Timeout));
     assert_eq!((r.raw_text, r.final_text, r.corrector), (None, None, None));
     assert_eq!(r.transcriber.as_deref(), Some("gpt-transcribe"), "the configured model");
     assert_eq!(
@@ -147,23 +146,41 @@ fn build_record_for_a_delivered_dictation() {
         final_text: "F".into(),
         stt_ms: 10,
         llm_ms: Some(20),
-        correction_error: Some("e".into()),
+        correction_error: Some(ProviderError::NoOutputTag),
     };
     let s = Settings::default();
-    let done = |inserted| Delivery::Done { out: &out, transcriber: "stt".into(), corrector: "llm".into(), inserted };
+    let done =
+        |inserted| Delivery::Done { out: &out, transcriber: "stt".into(), corrector: Some("llm".into()), inserted };
     let r = build_record(&meta(), &s, done(InsertResult::PastedUncertain));
     assert_eq!((r.raw_text.as_deref(), r.final_text.as_deref()), (Some("r"), Some("F")));
     assert_eq!((r.transcriber.as_deref(), r.corrector.as_deref()), (Some("stt"), Some("llm")));
     assert_eq!((r.stt_ms, r.llm_ms), (Some(10), Some(20)));
-    assert_eq!((r.outcome, r.error.as_deref()), (Outcome::PastedUncertain, Some("e")));
+    assert_eq!((r.outcome, r.error), (Outcome::PastedUncertain, stored(&ProviderError::NoOutputTag)));
     // What the pipeline returns at the raw level or for a short dictation: the corrector never ran.
     let uncorrected = PipelineOutput { llm_ms: None, correction_error: None, ..out.clone() };
     let raw = Settings { level: Level::Raw, ..Default::default() };
-    let done =
-        |inserted| Delivery::Done { out: &uncorrected, transcriber: "stt".into(), corrector: "llm".into(), inserted };
+    let done = |inserted| Delivery::Done {
+        out: &uncorrected,
+        transcriber: "stt".into(),
+        corrector: Some("llm".into()),
+        inserted,
+    };
     let r = build_record(&meta(), &raw, done(InsertResult::ClipboardFailed));
     assert_eq!(r.corrector, None, "no corrector at the raw level");
     assert_eq!(r.outcome, Outcome::Error);
+    // No model reached (missing correction key): the history shows no corrector, not a placeholder name.
+    let unreachable = PipelineOutput { correction_error: Some(ProviderError::CorrectionDisabled), ..out.clone() };
+    let r = build_record(
+        &meta(),
+        &s,
+        Delivery::Done {
+            out: &unreachable,
+            transcriber: "stt".into(),
+            corrector: None,
+            inserted: InsertResult::Pasted,
+        },
+    );
+    assert_eq!(r.corrector, None);
 }
 
 // --- process ------------------------------------------------------------------------------------
@@ -213,19 +230,17 @@ fn no_speech_deletes_the_recording_without_a_row() {
 #[test]
 fn provider_setup_failure_keeps_the_audio_for_a_retry() {
     let f = Fixture::new();
-    f.plan(|p| p.build = Err(ProviderError::Config("clé API manquante pour « OpenAI »".into())));
+    let missing = ProviderError::MissingKey { provider: "OpenAI".into() };
+    f.plan(|p| p.build = Err(missing.clone()));
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(row.outcome, Outcome::Error);
-    assert_eq!(row.error.as_deref(), Some("configuration : clé API manquante pour « OpenAI »"));
+    assert_eq!(row.error, stored(&missing));
     assert_eq!(row.raw_text, None);
     let audio = row.audio_path.clone().expect("audio kept");
     assert!(std::path::Path::new(&audio).exists());
     assert_eq!(f.wav_files().len(), 1);
-    assert_eq!(
-        f.window.last_event(),
-        Some(failure_feedback(&ProviderError::Config("clé API manquante pour « OpenAI »".into()), Some(row.id)))
-    );
+    assert_eq!(f.window.last_event(), Some(failure_feedback(&missing, Some(row.id))));
     assert_eq!(f.ui.calls(), vec![UiCall::HistoryChanged]);
 }
 
@@ -235,10 +250,7 @@ fn transcription_failure_is_saved_without_text() {
     f.plan(|p| p.stt = Err(ProviderError::Auth));
     run(&f, speech(1_000));
     let row = only_row(&f);
-    assert_eq!(
-        (row.outcome, row.error.as_deref(), row.raw_text.as_deref()),
-        (Outcome::Error, Some("clé API refusée"), None)
-    );
+    assert_eq!((row.outcome, row.error, row.raw_text.as_deref()), (Outcome::Error, stored(&ProviderError::Auth), None));
     assert!(row.audio_path.is_some());
     assert_eq!(row.mode, "locked");
     assert_eq!(row.app_name.as_deref(), Some("Notepad"));
@@ -283,10 +295,15 @@ fn pasted_without_correction_says_so() {
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("bonjour scribe comment ça va")));
-    assert_eq!(row.error.as_deref(), Some("clé API refusée"));
+    assert_eq!(row.error, stored(&ProviderError::Auth));
     assert_eq!(
         f.window.last_event(),
-        Some(toast(ToastLevel::Info, "Inséré sans correction (clé API refusée)", None, Some(row.id)))
+        Some(toast(
+            ToastLevel::Info,
+            Notice::PastedWithoutCorrection { correction: ProviderError::Auth },
+            None,
+            Some(row.id)
+        ))
     );
 }
 
@@ -302,7 +319,7 @@ fn unknown_focus_pastes_with_a_doubt() {
         f.window.last_event(),
         Some(toast(
             ToastLevel::Uncertain,
-            "Texte inséré ? (non corrigé : le modèle a refusé la requête)",
+            Notice::PastedUncertain { correction: Some(ProviderError::Refusal) },
             Some("bonjour scribe comment ça va"),
             Some(row.id)
         ))
@@ -326,7 +343,7 @@ fn not_editable_focus_or_failed_paste_copies_the_text() {
             f.window.last_event(),
             Some(toast(
                 ToastLevel::Copied,
-                "Texte copié dans le presse-papier",
+                Notice::Copied { correction: None },
                 Some("Bonjour Scribe, comment ça va ?"),
                 Some(row.id)
             ))
@@ -363,7 +380,7 @@ fn a_paste_the_field_did_not_receive_leaves_the_text_to_paste_by_hand() {
         f.window.last_event(),
         Some(toast(
             ToastLevel::Copied,
-            "Non inséré : texte copié, collez-le avec Ctrl+V",
+            Notice::NotPasted { correction: None },
             Some("Bonjour Scribe, comment ça va ?"),
             Some(row.id)
         ))
@@ -381,7 +398,7 @@ fn unavailable_clipboard_keeps_the_text_in_the_history() {
         f.window.last_event(),
         Some(toast(
             ToastLevel::Error,
-            "Presse-papier indisponible : texte dans l'historique",
+            Notice::ClipboardUnavailable { correction: None },
             Some("Bonjour Scribe, comment ça va ?"),
             Some(row.id)
         ))
@@ -430,7 +447,7 @@ fn unwritable_audio_does_not_stop_the_dictation() {
 // --- retranscribe -------------------------------------------------------------------------------
 
 /// A stored dictation with a real .wav, as process() leaves it.
-fn stored(f: &Fixture, outcome: Outcome, with_audio: bool) -> i64 {
+fn stored_row(f: &Fixture, outcome: Outcome, with_audio: bool) -> i64 {
     let path = f.svc.paths.audio_dir.join("old.wav");
     std::fs::write(&path, audio::encode_wav(&speech(500)).unwrap()).unwrap();
     let mut r = build_record(&meta(), &Settings::default(), Delivery::Failed(&ProviderError::Auth));
@@ -439,7 +456,7 @@ fn stored(f: &Fixture, outcome: Outcome, with_audio: bool) -> i64 {
     f.svc.db.lock().unwrap().insert_dictation(&r).unwrap()
 }
 
-fn retry(f: &Fixture, id: i64) -> Result<(), String> {
+fn retry(f: &Fixture, id: i64) -> Result<(), AppError> {
     tauri::async_runtime::block_on(retranscribe(f.svc.clone(), id))
 }
 
@@ -450,7 +467,7 @@ fn get(f: &Fixture, id: i64) -> Dictation {
 #[test]
 fn retranscribing_a_failed_dictation_copies_the_new_text() {
     let f = Fixture::new();
-    let id = stored(&f, Outcome::Error, true);
+    let id = stored_row(&f, Outcome::Error, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
     assert_eq!(
@@ -467,7 +484,7 @@ fn retranscribing_a_failed_dictation_copies_the_new_text() {
 fn retranscribe_keeps_the_error_outcome_when_the_copy_fails() {
     let f = Fixture::new();
     *f.clipboard.fail.lock().unwrap() = true;
-    let id = stored(&f, Outcome::Error, true);
+    let id = stored_row(&f, Outcome::Error, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
     assert_eq!((d.outcome, d.final_text.as_deref()), (Outcome::Error, Some("Bonjour Scribe, comment ça va ?")));
@@ -477,7 +494,7 @@ fn retranscribe_keeps_the_error_outcome_when_the_copy_fails() {
 fn retranscribing_a_delivered_dictation_keeps_its_outcome_and_clipboard() {
     let f = Fixture::with_settings(Settings { level: Level::Raw, ..Default::default() });
     f.plan(|p| p.stt = Ok("nouveau texte".into()));
-    let id = stored(&f, Outcome::PastedUncertain, true);
+    let id = stored_row(&f, Outcome::PastedUncertain, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
     assert_eq!(
@@ -496,7 +513,7 @@ fn a_short_dictation_is_pasted_uncorrected_and_records_no_corrector() {
     assert_eq!((row.outcome, row.final_text.as_deref()), (Outcome::Pasted, Some("OK, merci beaucoup.")));
     assert_eq!((row.corrector, row.llm_ms, row.error), (None, None, None));
 
-    let id = stored(&f, Outcome::Pasted, true);
+    let id = stored_row(&f, Outcome::Pasted, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
     assert_eq!((d.final_text.as_deref(), d.corrector), (Some("OK, merci beaucoup."), None));
@@ -506,32 +523,36 @@ fn a_short_dictation_is_pasted_uncorrected_and_records_no_corrector() {
 fn retranscribe_records_a_correction_failure() {
     let f = Fixture::new();
     f.plan(|p| p.llm = Ok("pas de balise".into()));
-    let id = stored(&f, Outcome::Pasted, true);
+    let id = stored_row(&f, Outcome::Pasted, true);
     retry(&f, id).unwrap();
     let d = get(&f, id);
     assert_eq!(d.final_text.as_deref(), Some("bonjour scribe comment ça va"));
-    assert_eq!(d.error.as_deref(), Some("réponse du correcteur sans balise <output>"));
+    assert_eq!(d.error, stored(&ProviderError::NoOutputTag));
 }
 
 #[test]
 fn retranscribe_errors_leave_the_row_untouched() {
     let f = Fixture::new();
-    assert_eq!(retry(&f, 404).unwrap_err(), "dictée introuvable");
+    assert_eq!(retry(&f, 404).unwrap_err(), AppError::DictationNotFound);
 
-    let purged = stored(&f, Outcome::Error, false);
-    assert_eq!(retry(&f, purged).unwrap_err(), "l'audio de cette dictée a été purgé");
+    let purged = stored_row(&f, Outcome::Error, false);
+    assert_eq!(retry(&f, purged).unwrap_err(), AppError::AudioPurged);
 
-    let id = stored(&f, Outcome::Error, true);
+    let id = stored_row(&f, Outcome::Error, true);
     let before = get(&f, id);
-    f.plan(|p| p.build = Err(ProviderError::Config("clé API manquante".into())));
-    assert_eq!(retry(&f, id).unwrap_err(), "configuration : clé API manquante");
+    let missing = ProviderError::MissingKey { provider: "OpenAI".into() };
+    f.plan(|p| p.build = Err(missing.clone()));
+    assert_eq!(retry(&f, id).unwrap_err(), AppError::Provider { error: missing });
     f.plan(|p| p.build = Ok(()));
     f.plan(|p| p.stt = Err(ProviderError::Auth));
-    assert_eq!(retry(&f, id).unwrap_err(), "transcription : clé API refusée");
+    assert_eq!(retry(&f, id).unwrap_err(), AppError::Provider { error: ProviderError::Auth });
     f.plan(|p| p.stt = Ok("".into()));
-    assert_eq!(retry(&f, id).unwrap_err(), "aucune parole détectée");
+    assert_eq!(retry(&f, id).unwrap_err(), AppError::NoSpeech);
     std::fs::remove_file(before.audio_path.as_deref().unwrap()).unwrap();
-    assert!(retry(&f, id).unwrap_err().starts_with("lecture audio impossible : "));
+    assert!(matches!(
+        retry(&f, id).unwrap_err(),
+        AppError::System { detail } if detail.starts_with("cannot read the audio: ")
+    ));
 
     assert_eq!(get(&f, id), before);
     assert!(f.ui.calls().is_empty());

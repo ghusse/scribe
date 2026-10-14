@@ -6,6 +6,8 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition};
 
 use crate::bootstrap::MAIN_WINDOW;
 use crate::controller::{Recorder, Recording};
+use crate::error::AppError;
+use crate::locale::Language;
 use crate::overlay::{self, OverlayEvent, OverlayWindow};
 use crate::services::{AppUpdater, AvailableUpdate, LaunchAtLogin, UiSink};
 
@@ -45,14 +47,14 @@ impl AppUpdater for TauriUpdater {
         let update = self.0.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
         Ok(update.map(|u| AvailableUpdate { version: u.version, notes: u.body }))
     }
-    async fn install(&self) -> Result<(), String> {
+    async fn install(&self) -> Result<(), AppError> {
         use tauri_plugin_updater::UpdaterExt;
-        let update = self.0.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+        let update = self.0.updater().map_err(AppError::system)?.check().await.map_err(AppError::system)?;
         let Some(update) = update else {
-            return Err("aucune mise à jour disponible".into());
+            return Err(AppError::NoUpdate);
         };
         // Windows: the installer closes Scribe and relaunches it. macOS: restart into the new bundle.
-        update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+        update.download_and_install(|_, _| {}, || {}).await.map_err(AppError::system)?;
         self.0.restart()
     }
 }
@@ -86,6 +88,16 @@ impl UiSink for TauriUi {
     }
     fn show_main(&self) {
         show_main(&self.0);
+    }
+    fn language_changed(&self, language: Language) {
+        let _ = self.0.emit("language", language);
+        if let Some(tray) = self.0.try_state::<crate::tray::TrayMenu>() {
+            tray.relabel(language);
+        }
+        #[cfg(target_os = "macos")]
+        if let Err(e) = crate::menu::set(&self.0, language) {
+            tracing::warn!("menu bar not relabelled: {e}");
+        }
     }
 }
 

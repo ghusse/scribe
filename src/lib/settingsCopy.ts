@@ -1,30 +1,29 @@
-import type { Level } from "./api";
+import type { Language, LanguagePref, Level } from "./api";
+import { t } from "./i18n";
 import { OS, type Os } from "./platform";
 
 /** « Réflexion du modèle » choices; the values sent to the backend stay low / medium / high. */
-export const EFFORT_LABELS: Record<string, string> = {
-  low: "Faible (rapide, recommandé)",
-  medium: "Moyenne",
-  high: "Élevée (plus lent, plus cher)",
-};
-
 export function effortLabel(effort: string): string {
-  return EFFORT_LABELS[effort] ?? effort;
+  return (t.value.settings.models.efforts as Record<string, string>)[effort] ?? effort;
 }
 
+const LEVELS: Level[] = ["raw", "clean", "formatted"];
+
 /** « Niveau de correction » choices, in display order. */
-export const LEVEL_OPTIONS: { value: Level; label: string }[] = [
-  { value: "raw", label: "Aucune (texte brut)" },
-  { value: "clean", label: "Nettoyage (ponctuation, vocabulaire, hésitations)" },
-  { value: "formatted", label: "Nettoyage + mise en forme selon l'application" },
-];
+export function levelOptions(): { value: Level; label: string }[] {
+  return LEVELS.map((value) => ({ value, label: t.value.settings.correction.levels[value] }));
+}
 
-export const RAW_LEVEL_NOTE = "Correction désactivée en mode brut";
+/** Each language in its own name, whatever the UI language. */
+const LANGUAGE_NAMES: Record<Language, string> = { en: "English", fr: "Français" };
 
-export const HOTKEY_HELP =
-  "Maintenez pour dicter, relâchez pour envoyer. Double-tap (ou maintien + touche de verrouillage) pour dicter mains libres\u00a0; appuyez à nouveau pour arrêter.";
+export function languageOptions(): { value: LanguagePref; label: string }[] {
+  return [
+    { value: "system", label: t.value.settings.language.system },
+    ...(Object.entries(LANGUAGE_NAMES) as [Language, string][]).map(([value, label]) => ({ value, label })),
+  ];
+}
 
 export function keysHelp(os: Os = OS): string {
-  const vault = os === "mac" ? "le trousseau macOS" : "le coffre Windows";
-  return `Stockées dans ${vault}. Chaque clé s'enregistre avec son bouton\u00a0; les autres réglages s'enregistrent automatiquement.`;
+  return t.value.settings.apiKeys.help[os];
 }

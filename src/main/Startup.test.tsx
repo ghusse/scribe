@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { lang } from "../lib/i18n";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import Startup from "./Startup";
 
@@ -92,5 +93,13 @@ describe("Startup", () => {
     render(<Startup />);
     expect((await screen.findByRole("alert")).textContent).toContain("plugin indisponible");
     expect(box().disabled).toBe(true);
+  });
+
+  it("speaks English", async () => {
+    lang.value = "en";
+    commands({ get_autostart: () => Promise.reject({ code: "system", detail: "no plugin" }) });
+    render(<Startup />);
+    expect((await screen.findByRole("alert")).textContent).toBe("Automatic startup unavailable: no plugin");
+    expect(screen.getByRole("checkbox", { name: "Launch Scribe when you log in" })).toBeTruthy();
   });
 });

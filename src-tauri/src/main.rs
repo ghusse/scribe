@@ -6,6 +6,10 @@ mod bootstrap;
 mod commands;
 mod controller;
 mod dictation;
+mod error;
+mod locale;
+#[cfg(target_os = "macos")]
+mod menu;
 mod overlay;
 mod providers;
 mod secrets;
@@ -26,7 +30,7 @@ use scribe_platform::HookConfig;
 use crate::adapters::{CpalRecorder, TauriAutostart, TauriOverlayWindow, TauriUi, TauriUpdater};
 use crate::audio_mute::AudioMute;
 use crate::controller::{ControllerDeps, ControllerMsg};
-use crate::overlay::{Overlay, ToastLevel};
+use crate::overlay::{Notice, Overlay, ToastLevel};
 use crate::secrets::{KeyringStore, SecretStore};
 use crate::services::{AppPaths, KeyCapture, Services};
 use crate::settings::Settings;
@@ -72,6 +76,7 @@ fn main() {
             let svc = Arc::new(Services {
                 db: Mutex::new(db),
                 settings: RwLock::new(settings),
+                system_languages: sys_locale::get_locales().collect(),
                 paths,
                 hook_cfg: hook_cfg.clone(),
                 focus: scribe_platform::focus_detector(),
@@ -100,7 +105,9 @@ fn main() {
                 dictation::purge_audio(&purge_svc);
             })?;
             adapters::setup_overlay(app.handle())?;
-            tray::setup(app.handle())?;
+            tray::setup(app.handle(), svc.language())?;
+            #[cfg(target_os = "macos")]
+            menu::set(app.handle(), svc.language())?;
 
             let key_tx = tx.clone();
             match scribe_platform::start_keyboard_hook(
@@ -112,9 +119,9 @@ fn main() {
                 Ok(handle) => {
                     app.manage(HookGuard(handle));
                 }
-                Err(e) => {
-                    tracing::error!("{e}");
-                    svc.overlay.toast(ToastLevel::Error, bootstrap::hook_unavailable_message(&e), None, None);
+                Err(detail) => {
+                    tracing::error!("{detail}");
+                    svc.overlay.toast(ToastLevel::Error, Notice::HookUnavailable { detail }, None, None);
                 }
             }
             let deps = ControllerDeps {
@@ -169,11 +176,12 @@ fn main() {
             commands::check_update,
             commands::install_update,
             commands::providers,
+            commands::language,
             commands::overlay_dismiss,
             commands::open_history,
         ])
         .build(tauri::generate_context!())
-        .expect("erreur au lancement de Scribe")
+        .expect("failed to start Scribe")
         .run(|app, event| {
             // Quitting (tray) while recording: the recording never ends, restore the sound it muted. Off the
             // controller, on the mute worker, with a bounded wait.

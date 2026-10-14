@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Term } from "../lib/api";
 import { calls, commands, resetTauri } from "../../tests/tauri";
+import { lang } from "../lib/i18n";
 import Glossary from "./Glossary";
 
 const term = (id: number, t: string, variants: string[], note: string | null = null): Term => ({
@@ -63,20 +64,20 @@ describe("Glossary", () => {
   });
 
   it("keeps the form and shows the error when adding fails, clears it on the next success", async () => {
-    commands({ add_term: () => Promise.reject("terme en double") });
+    commands({ add_term: () => Promise.reject({ code: "duplicate_term", term: "Kubernetes" }) });
     render(<Glossary />);
     await screen.findByText("Kubernetes");
     const termInput = screen.getByPlaceholderText("Terme (ex. Kubernetes)") as HTMLInputElement;
     await type(termInput, "Kubernetes");
     await type(screen.getByPlaceholderText(/Note/), "n");
     await fireEvent.submit(termInput.form!);
-    expect(await screen.findByText("terme en double")).toBeTruthy();
+    expect(await screen.findByText("terme déjà présent dans le glossaire : Kubernetes")).toBeTruthy();
     expect(termInput.value).toBe("Kubernetes");
     expect(calls("add_term")[0]!.note).toBe("n");
 
     commands({ add_term: () => 10 });
     await fireEvent.submit(termInput.form!);
-    await waitFor(() => expect(screen.queryByText("terme en double")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("terme déjà présent dans le glossaire : Kubernetes")).toBeNull());
   });
 
   it("edits a term in place and saves it", async () => {
@@ -127,5 +128,17 @@ describe("Glossary", () => {
     expect(await screen.findByText(/Glossaire vide/)).toBeTruthy();
     expect(screen.queryByText("introuvable")).toBeNull();
     expect(calls("delete_term")).toEqual([{ id: 1 }, { id: 1 }]);
+  });
+
+  it("speaks English and re-renders on a language change", async () => {
+    lang.value = "en";
+    terms = [];
+    render(<Glossary />);
+    expect(await screen.findByText("Empty glossary: add the proper names and jargon of your fields.")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Term (e.g. Kubernetes)")).toBeTruthy();
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Term", "Heard", "Note", "Uses", ""]);
+    lang.value = "fr";
+    expect(await screen.findByText(/Glossaire vide/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ajouter" })).toBeTruthy();
   });
 });

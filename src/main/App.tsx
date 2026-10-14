@@ -4,6 +4,7 @@ import { useEffect } from "preact/hooks";
 import { api } from "../lib/api";
 import { needsSetup } from "../lib/apiKeys";
 import { needsAttention, type SaveState } from "../lib/autosave";
+import { t, useLanguage } from "../lib/i18n";
 import History from "./History";
 import Permissions from "./Permissions";
 import Glossary from "./Glossary";
@@ -11,13 +12,10 @@ import Settings from "./Settings";
 import styles from "./App.module.css";
 
 type Tab = "history" | "glossary" | "settings";
-const tabs: { id: Tab; label: string }[] = [
-  { id: "history", label: "Historique" },
-  { id: "glossary", label: "Vocabulaire" },
-  { id: "settings", label: "Réglages" },
-];
+const TABS: Tab[] = ["history", "glossary", "settings"];
 
 export default function App() {
+  useLanguage();
   const tab = useSignal<Tab>("history");
   // Set by the toast's « Voir » button; consumed by History once it has scrolled to the card.
   const focusRequest = useSignal<{ id: number } | null>(null);
@@ -45,11 +43,11 @@ export default function App() {
   return (
     <>
       <nav class={styles.nav}>
-        {tabs.map((t) => (
-          <button key={t.id} class={tab.value === t.id ? styles.active : undefined} onClick={() => (tab.value = t.id)}>
-            {t.label}
-            {t.id === "settings" && needsAttention(settingsStatus.value) && (
-              <span class={styles.dot} role="img" aria-label="(réglages non enregistrés)" title="Réglages non enregistrés"></span>
+        {TABS.map((id) => (
+          <button key={id} class={tab.value === id ? styles.active : undefined} onClick={() => (tab.value = id)}>
+            {t.value.app.tabs[id]}
+            {id === "settings" && needsAttention(settingsStatus.value) && (
+              <span class={styles.dot} role="img" aria-label={t.value.app.unsavedLabel} title={t.value.app.unsavedTitle}></span>
             )}
           </button>
         ))}

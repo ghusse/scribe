@@ -1,32 +1,65 @@
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{Level, Term};
 use crate::prompt::{self, CorrectionPrompt};
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+/// Which provider a setting or an error is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRole {
+    Transcription,
+    Correction,
+}
+
+impl std::fmt::Display for ProviderRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ProviderRole::Transcription => "transcription",
+            ProviderRole::Correction => "correction",
+        })
+    }
+}
+
+/// Why a provider call (or the correction) failed. Sent to the UI as a code it translates (`src/lib/api.ts`), and
+/// stored as JSON in `dictations.error`; `Display` is for the logs.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
+#[serde(tag = "code", rename_all = "snake_case")]
 pub enum ProviderError {
-    #[error("erreur réseau : {0}")]
-    Network(String),
-    #[error("délai dépassé")]
+    #[error("network error: {detail}")]
+    Network { detail: String },
+    #[error("timed out")]
     Timeout,
-    #[error("clé API refusée")]
+    #[error("API key rejected")]
     Auth,
-    #[error("HTTP {status} : {body}")]
+    #[error("HTTP {status}: {body}")]
     Http { status: u16, body: String },
-    #[error("le modèle a refusé la requête")]
+    #[error("the model refused the request")]
     Refusal,
-    #[error("réponse invalide : {0}")]
-    Malformed(String),
-    #[error("configuration : {0}")]
-    Config(String),
+    #[error("invalid response: {detail}")]
+    Malformed { detail: String },
+    /// `provider`: the provider's label.
+    #[error("missing {provider} API key")]
+    MissingKey { provider: String },
+    #[error("unknown {role} provider: {id}")]
+    UnknownProvider { role: ProviderRole, id: String },
+    #[error("correction disabled")]
+    CorrectionDisabled,
+    /// The correction exceeded its own budget (`llm_timeout`), unlike `Timeout`, the HTTP client's.
+    #[error("correction took too long")]
+    CorrectionTimeout,
+    #[error("corrector response without an <output> tag")]
+    NoOutputTag,
+    #[error("configuration: {detail}")]
+    Config { detail: String },
 }
 
 impl ProviderError {
     pub fn is_retryable(&self) -> bool {
         match self {
-            ProviderError::Network(_) | ProviderError::Timeout => true,
+            ProviderError::Network { .. } | ProviderError::Timeout => true,
             ProviderError::Http { status, .. } => *status == 429 || *status >= 500,
             _ => false,
         }
@@ -41,7 +74,8 @@ pub trait Transcriber: Send + Sync {
 
 #[async_trait]
 pub trait Corrector: Send + Sync {
-    fn name(&self) -> String;
+    /// The model called; None when the correction cannot reach one (turned off, missing key, unknown provider).
+    fn name(&self) -> Option<String>;
     /// Returns the raw model response; the pipeline extracts the `<output>` part.
     async fn correct(&self, prompt: &CorrectionPrompt) -> Result<String, ProviderError>;
 }
@@ -79,14 +113,14 @@ pub struct PipelineOutput {
     pub stt_ms: u64,
     pub llm_ms: Option<u64>,
     /// Set when the corrector failed and `final_text` is the raw transcript.
-    pub correction_error: Option<String>,
+    pub correction_error: Option<ProviderError>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum PipelineError {
-    #[error("transcription : {0}")]
+    #[error("transcription: {0}")]
     Transcription(ProviderError),
-    #[error("aucune parole détectée")]
+    #[error("no speech detected")]
     Empty,
 }
 
@@ -179,10 +213,10 @@ pub async fn run(
     let (final_text, correction_error) = match result {
         Ok(Ok(resp)) => match prompt::extract_output(&resp) {
             Some(text) => (text, None),
-            None => (raw.clone(), Some("réponse du correcteur sans balise <output>".to_string())),
+            None => (raw.clone(), Some(ProviderError::NoOutputTag)),
         },
-        Ok(Err(e)) => (raw.clone(), Some(e.to_string())),
-        Err(_) => (raw.clone(), Some("délai du correcteur dépassé".to_string())),
+        Ok(Err(e)) => (raw.clone(), Some(e)),
+        Err(_) => (raw.clone(), Some(ProviderError::CorrectionTimeout)),
     };
     Ok(PipelineOutput { raw, final_text, stt_ms, llm_ms, correction_error })
 }
@@ -230,8 +264,8 @@ mod tests {
     }
     #[async_trait]
     impl Corrector for FakeLlm {
-        fn name(&self) -> String {
-            "fake-llm".into()
+        fn name(&self) -> Option<String> {
+            Some("fake-llm".into())
         }
         async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -302,7 +336,7 @@ mod tests {
         let llm = FakeLlm::new(Err(ProviderError::Http { status: 529, body: "overloaded".into() }), 0);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
         assert_eq!(out.final_text, "bonjour à tous et merci");
-        assert!(out.correction_error.unwrap().contains("529"));
+        assert_eq!(out.correction_error, Some(ProviderError::Http { status: 529, body: "overloaded".into() }));
     }
 
     #[tokio::test(start_paused = true)]
@@ -311,7 +345,7 @@ mod tests {
         let llm = FakeLlm::new(Ok("<output>Bonjour.</output>".into()), 60_000);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
         assert_eq!(out.final_text, "bonjour à tous et merci");
-        assert!(out.correction_error.unwrap().contains("délai"));
+        assert_eq!(out.correction_error, Some(ProviderError::CorrectionTimeout));
     }
 
     #[tokio::test(start_paused = true)]
@@ -320,7 +354,7 @@ mod tests {
         let llm = FakeLlm::new(Ok("Voici le texte corrigé : Bonjour.".into()), 0);
         let out = run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.unwrap();
         assert_eq!(out.final_text, "bonjour à tous et merci");
-        assert!(out.correction_error.is_some());
+        assert_eq!(out.correction_error, Some(ProviderError::NoOutputTag));
     }
 
     #[tokio::test(start_paused = true)]
@@ -330,10 +364,13 @@ mod tests {
         assert!(run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await.is_ok());
         assert_eq!(stt.calls(), 2);
 
-        let stt = FakeStt::new(vec![Err(ProviderError::Network("x".into())), Err(ProviderError::Network("y".into()))]);
+        let stt = FakeStt::new(vec![
+            Err(ProviderError::Network { detail: "x".into() }),
+            Err(ProviderError::Network { detail: "y".into() }),
+        ]);
         assert_eq!(
             run(&cfg(Level::Clean), b"wav", &[], None, &stt, &llm).await,
-            Err(PipelineError::Transcription(ProviderError::Network("y".into())))
+            Err(PipelineError::Transcription(ProviderError::Network { detail: "y".into() }))
         );
     }
 
@@ -401,7 +438,7 @@ mod tests {
     #[test]
     fn retry_classification() {
         let retried = [
-            ProviderError::Network("connexion réinitialisée".into()),
+            ProviderError::Network { detail: "connection reset".into() },
             ProviderError::Timeout,
             ProviderError::Http { status: 429, body: String::new() },
             ProviderError::Http { status: 500, body: String::new() },
@@ -415,8 +452,13 @@ mod tests {
             ProviderError::Http { status: 428, body: String::new() },
             ProviderError::Http { status: 499, body: String::new() },
             ProviderError::Refusal,
-            ProviderError::Malformed("x".into()),
-            ProviderError::Config("x".into()),
+            ProviderError::Malformed { detail: "x".into() },
+            ProviderError::MissingKey { provider: "OpenAI".into() },
+            ProviderError::UnknownProvider { role: ProviderRole::Correction, id: "x".into() },
+            ProviderError::CorrectionDisabled,
+            ProviderError::CorrectionTimeout,
+            ProviderError::NoOutputTag,
+            ProviderError::Config { detail: "x".into() },
         ];
         for e in &retried {
             assert!(e.is_retryable(), "{e:?}");
@@ -453,5 +495,52 @@ mod tests {
             Err(PipelineError::Transcription(bad))
         );
         assert_eq!(stt.calls(), 1);
+    }
+
+    #[test]
+    fn provider_errors_serialize_as_codes_for_the_ui() {
+        use serde_json::json;
+        let cases = [
+            (ProviderError::Network { detail: "reset".into() }, json!({"code": "network", "detail": "reset"})),
+            (ProviderError::Timeout, json!({"code": "timeout"})),
+            (ProviderError::CorrectionTimeout, json!({"code": "correction_timeout"})),
+            (ProviderError::Auth, json!({"code": "auth"})),
+            (
+                ProviderError::Http { status: 503, body: "down".into() },
+                json!({"code": "http", "status": 503, "body": "down"}),
+            ),
+            (ProviderError::Refusal, json!({"code": "refusal"})),
+            (ProviderError::Malformed { detail: "eof".into() }, json!({"code": "malformed", "detail": "eof"})),
+            (
+                ProviderError::MissingKey { provider: "OpenAI".into() },
+                json!({"code": "missing_key", "provider": "OpenAI"}),
+            ),
+            (
+                ProviderError::UnknownProvider { role: ProviderRole::Transcription, id: "x".into() },
+                json!({"code": "unknown_provider", "role": "transcription", "id": "x"}),
+            ),
+            (
+                ProviderError::UnknownProvider { role: ProviderRole::Correction, id: "y".into() },
+                json!({"code": "unknown_provider", "role": "correction", "id": "y"}),
+            ),
+            (ProviderError::CorrectionDisabled, json!({"code": "correction_disabled"})),
+            (ProviderError::NoOutputTag, json!({"code": "no_output_tag"})),
+            (ProviderError::Config { detail: "tls".into() }, json!({"code": "config", "detail": "tls"})),
+        ];
+        for (e, expected) in cases {
+            assert_eq!(serde_json::to_value(&e).unwrap(), expected, "{e:?}");
+            assert_eq!(serde_json::from_value::<ProviderError>(expected).unwrap(), e, "round trip");
+        }
+    }
+
+    #[test]
+    fn errors_read_in_english_in_the_logs() {
+        assert_eq!(ProviderError::Http { status: 404, body: "nope".into() }.to_string(), "HTTP 404: nope");
+        assert_eq!(
+            ProviderError::UnknownProvider { role: ProviderRole::Correction, id: "x".into() }.to_string(),
+            "unknown correction provider: x"
+        );
+        assert_eq!(PipelineError::Transcription(ProviderError::Auth).to_string(), "transcription: API key rejected");
+        assert_eq!(PipelineError::Empty.to_string(), "no speech detected");
     }
 }

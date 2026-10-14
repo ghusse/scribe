@@ -1,4 +1,4 @@
-// Main window with demo data; `?tab=` opens a tab, `?section=` hides the sections above that heading.
+// Main window with demo data; `?tab=` opens a tab, `?section=` a category of the settings.
 import "./tauri-demo";
 import "../../src/main/main";
 
@@ -16,10 +16,4 @@ const byText = (selector: string, text: string | null) =>
 const tab = params.get("tab");
 const section = params.get("section");
 if (tab) whenFound(() => byText("nav button", tab), (b) => b.click());
-if (section)
-  whenFound(
-    () => byText("h2", section)?.closest("section"),
-    (s) => {
-      for (let e = s.previousElementSibling; e; e = e.previousElementSibling) (e as HTMLElement).hidden = true;
-    },
-  );
+if (section) whenFound(() => byText("nav button", section), (b) => b.click());

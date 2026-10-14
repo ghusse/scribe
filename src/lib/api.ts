@@ -19,6 +19,7 @@ export interface Dictation {
   stt_ms: number | null;
   llm_ms: number | null;
   outcome: Outcome;
+  /** A JSON `ProviderError` (`parseStoredError`); plain French text in older rows. */
   error: string | null;
 }
 
@@ -40,7 +41,12 @@ export interface GestureConfig {
   lock_key_enabled: boolean;
 }
 
+/** UI language: « system » follows the OS. */
+export type LanguagePref = "system" | Language;
+export type Language = "en" | "fr";
+
 export interface Settings {
+  language: LanguagePref;
   /** Trigger combination (1 to 4 virtual-key codes, canonical order: Ctrl, Maj, Alt, Win, others). */
   trigger_keys: number[];
   lock_vk: number;
@@ -85,15 +91,82 @@ export function effortLevels(p: Provider | undefined, model: string): string[] {
   return [];
 }
 
+/**
+ * Why a provider call (or the correction) failed; mirror of `scribe_core::pipeline::ProviderError`.
+ * `detail` and `body` are untranslated technical text.
+ */
+export type ProviderError =
+  | { code: "network"; detail: string }
+  | { code: "timeout" }
+  | { code: "auth" }
+  | { code: "http"; status: number; body: string }
+  | { code: "refusal" }
+  | { code: "malformed"; detail: string }
+  /** `provider`: the provider's label. */
+  | { code: "missing_key"; provider: string }
+  | { code: "unknown_provider"; role: ProviderRole; id: string }
+  | { code: "correction_disabled" }
+  /** The correction exceeded its own time budget (Advanced settings), unlike `timeout` (no HTTP answer). */
+  | { code: "correction_timeout" }
+  | { code: "no_output_tag" }
+  | { code: "config"; detail: string };
+export type ProviderRole = "transcription" | "correction";
+
+/** Why `save_settings` refused the settings; mirror of `settings::SettingsError`. */
+export type SettingsError =
+  | { code: "invalid_hotkey" }
+  | { code: "escape_in_hotkey" }
+  | { code: "lock_key_in_hotkey" }
+  | { code: "max_recording_too_short"; min_seconds: number }
+  | { code: "max_recording_too_long"; max_minutes: number }
+  | { code: "min_recording_not_below_max" }
+  | { code: "silence_threshold_out_of_range"; min_dbfs: number; max_dbfs: number }
+  | { code: "hotkey_delay_zero" }
+  | { code: "audio_retention_too_long"; max_days: number }
+  | { code: "restore_delay_too_long"; max_ms: number }
+  | { code: "correction_timeout_too_long" }
+  | { code: "unknown_provider"; role: ProviderRole; id: string }
+  | { code: "model_required" };
+
+/** A command's error (the rejection of `invoke`); mirror of `commands::AppError`. `detail` is untranslated. */
+export type AppError =
+  | { code: "system"; detail: string }
+  | { code: "dictation_not_found" }
+  | { code: "no_text" }
+  | { code: "audio_purged" }
+  | { code: "no_speech" }
+  | { code: "duplicate_term"; term: string }
+  | { code: "invalid_settings"; error: SettingsError }
+  | { code: "provider"; error: ProviderError }
+  | { code: "no_update" };
+
+/** What a toast says; mirror of `overlay::Notice`. `correction`: why the text was not corrected. */
+export type Notice =
+  | { code: "pasted_without_correction"; correction: ProviderError }
+  | { code: "pasted_uncertain"; correction: ProviderError | null }
+  | { code: "copied"; correction: ProviderError | null }
+  | { code: "not_pasted"; correction: ProviderError | null }
+  | { code: "clipboard_unavailable"; correction: ProviderError | null }
+  | { code: "transcription_failed"; error: ProviderError }
+  | { code: "audio_encoding_failed"; detail: string }
+  | { code: "microphone_unavailable"; detail: string }
+  | { code: "recording_lost"; detail: string }
+  | { code: "hook_unavailable"; detail: string }
+  | { code: "update_available"; version: string }
+  /** Raised by the overlay itself when its « Copy » button fails. */
+  | { code: "copy_failed"; detail: string };
+
+/** Shown under the pill for the whole recording. */
+export type RecordingWarning = "shared_microphone";
+
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
 export type OverlayEvent =
   | { kind: "idle" }
-  /** `warning`: shown under the pill for the whole recording (e.g. microphone not exclusive). */
-  | { kind: "recording"; locked: boolean; warning: string | null }
+  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null }
   | { kind: "processing" }
-  | { kind: "toast"; level: ToastLevel; message: string; preview: string | null; dictation_id: number | null };
+  | { kind: "toast"; level: ToastLevel; message: Notice; preview: string | null; dictation_id: number | null };
 
-type Result<T> = { Ok: T } | { Err: string };
+type Result<T> = { Ok: T } | { Err: ProviderError };
 /** Each call's duration in ms or its error; `llm` is null at the raw level (no correction tested). */
 export interface ProviderTest { stt: Result<number>; llm: Result<number> | null }
 
@@ -138,6 +211,8 @@ export const api = {
   /** Shows the OS prompt when it still can; returns the states right after (read again once answered). */
   requestPermission: (permission: Permission) => invoke<PermissionStatus[]>("request_permission", { permission }),
   openPermissionSettings: (permission: Permission) => invoke<void>("open_permission_settings", { permission }),
+  /** The language the UI must use: the saved choice, else the system's. Changes are sent as the `language` event. */
+  language: () => invoke<Language>("language"),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
 };

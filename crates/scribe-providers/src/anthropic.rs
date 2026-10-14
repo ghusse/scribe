@@ -67,8 +67,8 @@ impl AnthropicCorrector {
 
 #[async_trait]
 impl Corrector for AnthropicCorrector {
-    fn name(&self) -> String {
-        self.model.clone()
+    fn name(&self) -> Option<String> {
+        Some(self.model.clone())
     }
 
     async fn correct(&self, prompt: &CorrectionPrompt) -> Result<String, ProviderError> {
@@ -83,7 +83,7 @@ impl Corrector for AnthropicCorrector {
             req = req.header("anthropic-beta", FALLBACK_BETA);
         }
         let resp = map_status(req.send().await.map_err(map_send_error)?).await?;
-        let v: Value = resp.json().await.map_err(|e| ProviderError::Malformed(e.to_string()))?;
+        let v: Value = resp.json().await.map_err(|e| ProviderError::Malformed { detail: e.to_string() })?;
         if v["stop_reason"] == "refusal" {
             return Err(ProviderError::Refusal);
         }
@@ -99,7 +99,7 @@ impl Corrector for AnthropicCorrector {
             })
             .unwrap_or_default();
         if text.trim().is_empty() {
-            return Err(ProviderError::Malformed("aucun bloc texte dans la réponse".into()));
+            return Err(ProviderError::Malformed { detail: "no text block in the response".into() });
         }
         Ok(text)
     }
@@ -190,7 +190,7 @@ mod tests {
             .await;
         assert!(matches!(
             corrector(&server, "claude-opus-5-5").correct(&prompt()).await,
-            Err(ProviderError::Malformed(_))
+            Err(ProviderError::Malformed { .. })
         ));
     }
 
@@ -203,7 +203,7 @@ mod tests {
             .await;
         let c =
             AnthropicCorrector::new(server.uri(), "k", "claude-haiku-4-5", None, Duration::from_millis(100)).unwrap();
-        assert_eq!(c.name(), "claude-haiku-4-5");
+        assert_eq!(c.name().as_deref(), Some("claude-haiku-4-5"));
         assert_eq!(c.correct(&prompt()).await, Err(ProviderError::Timeout));
     }
 }
