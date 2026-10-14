@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scribe dictation</title>
+    <style>
+      html, body { margin: 0; height: 100%; }
+      body { font-family: system-ui, sans-serif; background: linear-gradient(135deg, #6366f1, #a855f7 60%, #ec4899);
+        display: flex; align-items: center; justify-content: center; }
+      .window { width: 720px; background: #fff; color: #1f2330; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.35);
+        overflow: hidden; margin-bottom: 110px; }
+      .bar { display: flex; gap: 8px; padding: 12px 14px; background: #f1f1f5; border-bottom: 1px solid #e3e4ec; }
+      .bar span { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+      .bar span:nth-child(2) { background: #febc2e; } .bar span:nth-child(3) { background: #28c840; }
+      .field { padding: 10px 20px; border-bottom: 1px solid #ececf2; font-size: 14px; color: #6b7080; }
+      .field b { color: #1f2330; font-weight: 500; }
+      .body { padding: 20px; font-size: 15px; line-height: 1.6; min-height: 150px; }
+      .caret { display: inline-block; width: 2px; height: 1.1em; background: #4f46e5; vertical-align: text-bottom; }
+      iframe { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); width: 440px; height: 120px;
+        border: 0; background: transparent; }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <div class="bar"><span></span><span></span><span></span></div>
+      <div class="field">To: <b>Claire Martin</b></div>
+      <div class="field">Subject: <b>Thursday's meeting</b></div>
+      <div class="body">Hi Claire,<br /><br />Just confirming Thursday's meeting at 10 a.m. with the Kubernetes team.<span class="caret"></span></div>
+    </div>
+    <iframe src="overlay.html" allowtransparency="true"></iframe>
+  </body>
+</html>

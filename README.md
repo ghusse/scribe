@@ -1,179 +1,159 @@
 # Scribe
 
-Dictée vocale pour Windows et macOS : maintenez une touche, parlez, le texte corrigé
-s'insère dans le champ actif.
+**Voice dictation for Windows and macOS: hold a key, speak, release. Clean, punctuated text lands wherever you were
+typing.**
 
-## Lancer en développement
+Mail, Slack, Word, VS Code, browser, terminal: Scribe works in any application, with no extension and no
+copy-paste. One AI transcribes your voice, another removes the "uh"s and fixes punctuation and the spelling of the
+names you taught it.
 
-```bash
-rustup update stable
-bun install
-bun tauri dev
-```
+![Scribe while dictating](docs/screenshots/dictation.png)
 
-Au premier lancement (clés manquantes), la fenêtre principale s'ouvre sur l'onglet Réglages : choisissez un fournisseur
-et un modèle pour la transcription et pour la correction (par défaut OpenAI `gpt-transcribe` et Anthropic
-`claude-opus-5-5`), renseignez les clés API correspondantes, puis « Tester la configuration ».
+[**⬇ Download the latest version**](https://github.com/ghusse/scribe/releases/latest)
 
-La fenêtre principale s'ouvre à chaque lancement ; fermée, Scribe reste dans la zone de notification. Lancé avec
-`--minimized`, il démarre directement dans la zone de notification, sauf s'il manque une clé. Réglages > Démarrage >
-« Lancer Scribe à l'ouverture de session » l'inscrit au démarrage de la session (Windows et macOS), avec ce mode
-discret.
+> Scribe's interface is in French. Dictation works in any language your speech-to-text model supports.
 
-## Utilisation
+## Why Scribe
 
-- **Maintenir** Ctrl droit : push-to-talk, relâcher pour transcrire.
-- **Double-tap** Ctrl droit : mode verrouillé, un nouvel appui arrête.
-- **Maintenir Ctrl droit + Espace** : verrouille en cours de dictée.
-- Le raccourci peut être une combinaison de 1 à 4 touches (Réglages > Raccourci > Changer, puis appuyer sur la
-  combinaison et relâcher), par exemple `Ctrl + Maj + A` ou `Win + Alt`. Elle se déclenche quand toutes ses
-  touches sont tenues et aucune autre ; dans une combinaison, Ctrl/Maj/Alt/Win valent des deux côtés. La touche
-  non modificatrice (le A) est avalée ; les modificateurs passent, et Alt/Win n'ouvrent pas de menu.
-- Si aucun champ texte n'est actif, le texte est copié et un toast propose de le voir.
+- **Everywhere.** Text goes into the focused field of any application. With no field, it is copied to the clipboard
+  and a toast tells you so.
+- **Quick to trigger.** Hold Right Ctrl (Right Cmd on a Mac) to speak, or double-tap it to dictate hands-free. The
+  shortcut can be changed to any combination you like.
+- **Text you don't need to fix.** Three correction levels: raw text, clean-up (punctuation, hesitations,
+  vocabulary), or clean-up + formatting suited to the application (an email is not written like a Slack message).
+- **Your vocabulary.** The Vocabulaire (vocabulary) tab teaches Scribe the names and jargon of your field
+  ("Kubernetes", not "cube ernetes").
+- **Nothing gets lost.** The history keeps every dictation; network error? « Retranscrire » runs it again from the
+  recording.
+- **Your keys, your providers.** OpenAI, Anthropic, Mistral or Groq: you pick the model and pay the provider
+  directly, per use. No Scribe account, no subscription, no telemetry.
+- **Unobtrusive.** A small pill shows the recording and never steals focus. Optionally, mute the computer's sound
+  and other applications' microphone while you dictate.
+- **Free software** (AGPL-3.0), updated automatically.
 
-## Tests et couverture
+| History | Vocabulary | Settings |
+|---|---|---|
+| ![Dictation history](docs/screenshots/history.png) | ![Vocabulary](docs/screenshots/glossary.png) | ![Settings](docs/screenshots/settings.png) |
 
-```bash
-bun run fmt        # cargo fmt (rustfmt.toml) ; vérifié par le CI et par le hook pre-commit installé par `bun install`
-cargo test --workspace
-bun run test
-bun run check
-bun run coverage   # porte : >= 95 % des lignes en Rust, TypeScript et TSX (Preact)
-```
+## Installation
 
-Règle : au moins 95 % de couverture de lignes dans tous les langages, vérifiée par le CI
-(`.github/workflows/ci.yml`, Windows). Rust via `cargo-llvm-cov` (`rustup component add llvm-tools-preview`,
-`cargo install cargo-llvm-cov`), UI via `bun test --coverage` et `scripts/coverage-gate.ts` (seuil par langage ;
-composants testés avec `@testing-library/preact` + happy-dom, corrigé par `patches/happy-dom@20.14.5.patch` pour que `:checked` trouve
-l'option choisie d'un `<select>`). Les seules exclusions autorisées (adaptateurs OS/framework sans logique) et
-leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
+Download the installer for your system from the
+[latest release](https://github.com/ghusse/scribe/releases/latest):
 
-## Checklist manuelle (Windows)
+| System | File |
+|---|---|
+| Windows 10 / 11 (x64) | `Scribe_<version>_x64-setup.exe` (recommended) or `Scribe_<version>_x64_en-US.msi` |
+| macOS 11 or later (Apple Silicon and Intel) | `Scribe_<version>_universal.dmg` |
 
-- [ ] Bloc-notes : maintien → texte inséré, presse-papier précédent restauré.
-- [ ] VS Code, Slack, Chrome (champ de recherche, Gmail) : texte inséré (toast « Texte inséré ? » toléré).
-- [ ] Windows Terminal : texte collé ou toast avec « Copier ».
-- [ ] Bureau / Explorateur sans champ : toast « Texte copié », Ctrl+V colle le texte.
-- [ ] Changer de fenêtre pendant la transcription : pas de collage, toast « Texte copié ».
-- [ ] Copier une image, dicter, vérifier que l'image est restaurée.
-- [ ] Tenir la touche 3 s sans parler : rien n'est inséré.
-- [ ] Double-tap : pastille « Verrouillé », Ctrl+Espace ne parvient pas à l'application.
-- [ ] Raccourci `Ctrl + Maj + A` : dicte avec l'un ou l'autre Ctrl ; aucun « a » tapé ; Ctrl+A seul sélectionne toujours tout.
-- [ ] Raccourci `Win + Alt` : dicte, et le menu Démarrer ne s'ouvre pas au relâchement.
-- [ ] Pendant « Changer », Win/Alt/lettres n'ont aucun effet dans Windows ; Échap annule.
-- [ ] Win+L pendant le maintien : la dictée est abandonnée (rien n'est collé après déverrouillage) ; le raccourci et Espace fonctionnent ensuite normalement.
-- [ ] AZERTY : raccourci « Alt droit (AltGr) » seul déclenche ; avec `Ctrl + Alt` comme raccourci, taper @ ou € ne déclenche rien.
-- [ ] Plusieurs dispositions installées : `Ctrl + Maj + A` ne change pas la disposition du clavier.
-- [ ] La pastille n'enlève jamais le focus au champ.
-- [ ] Clé Anthropic invalide : texte brut inséré, toast « Inséré sans correction ».
-- [ ] Wi-Fi coupé : toast d'erreur, dictée « Erreur » dans l'historique, « Retranscrire » fonctionne après reconnexion.
-- [ ] Ajouter « Kubernetes » au glossaire, dicter « cube ernetes » : orthographe corrigée, compteur d'usages incrémenté.
-- [ ] Tray : Pause désactive le raccourci ; Quitter ferme l'app ; fermer la fenêtre la masque seulement.
+> **Why a warning during installation?** Scribe is free, open-source software: its installers are not signed with
+> a paid certificate (Microsoft Authenticode, Apple notarization), so Windows and macOS warn you on first launch.
+> The installers are built by GitHub Actions straight from this repository's source code (details in
+> [PRIVACY.md](PRIVACY.md)). Updates, on the other hand, are signed and verified by Scribe.
 
-## Checklist manuelle (macOS)
+### Windows
 
-- [ ] Premier lancement : la fenêtre s'ouvre sur le panneau des autorisations ; après « Autoriser » et activation
-  dans Réglages Système, le panneau disparaît et « Cmd droit » dicte sans relancer.
-- [ ] Nouvelle build avec Scribe déjà coché : le panneau reste affiché ; « Autoriser » puis réactiver suffit.
-- [ ] Micro : « Autoriser » affiche la demande de macOS ; refusé, « Ouvrir les Réglages Système » mène au bon panneau.
-- [ ] TextEdit, Notes, Safari, Chrome, VS Code, Slack : texte inséré.
-- [ ] Terminal, iTerm2 : texte collé.
-- [ ] Finder sans champ : toast « Texte copié », Cmd+V colle le texte.
-- [ ] La pastille s'affiche par-dessus une app en plein écran et ne prend jamais le focus (clic dessus compris).
-- [ ] Double-tap : pastille « Verrouillé », Espace ne parvient pas à l'application.
-- [ ] AZERTY : raccourci `Cmd + A` affiché « Cmd + A » et déclenché par la touche A ; Cmd+A seul sélectionne toujours tout.
-- [ ] Pendant « Changer », Cmd/Option/lettres n'ont aucun effet ; Échap annule.
-- [ ] Pas d'icône dans le Dock ; l'icône de la barre de menus ouvre Scribe.
-- [ ] Clés API dans le trousseau : relancer Scribe ne les redemande pas.
+1. Run `Scribe_<version>_x64-setup.exe`.
+2. SmartScreen shows "Windows protected your PC": click **More info**, then **Run anyway**.
+3. Finish the installation. Scribe opens and settles in the notification area (next to the clock).
 
-## Publier une version
+### macOS
 
-Les versions sont publiées automatiquement, sans PR de version ni étape manuelle, à partir des
-[Conventional Commits](https://www.conventionalcommits.org/) (workflow `.github/workflows/semantic-release.yml`,
-configuration `release.config.mjs`, [semantic-release](https://semantic-release.gitbook.io/)).
+1. Open the `.dmg` and drag **Scribe** into **Applications**.
+2. On first launch, macOS refuses to open the app ("unidentified developer" or "cannot be verified"). Open
+   **System Settings > Privacy & Security**, scroll down to the message about Scribe, click **Open Anyway** and
+   confirm. On older macOS versions, right-click Scribe > **Open** is enough.
 
-1. Fusionner les PR en **squash** avec un titre conventionnel : il devient le message du commit sur `main`. Avant
-   1.0, `feat:` monte la version mineure (0.3.0 → 0.4.0), `fix:` et `perf:` la version de correctif (0.3.0 →
-   0.3.1), un changement cassant (`feat!:` ou `BREAKING CHANGE:`) la version mineure. `chore:`, `docs:`, `ci:`,
-   `test:`, `refactor:`, `style:`, `build:` ne déclenchent pas de version (un `revert:` donne un correctif).
-2. Quand la CI de ce push sur `main` est verte, le workflow analyse les commits depuis le dernier tag `vX.Y.Z`. S'il
-   y trouve un `feat`, `fix` ou `perf`, il écrit la version dans `package.json`, `src-tauri/Cargo.toml` et
-   `Cargo.lock` (entrée `scribe-app` seulement), ajoute les notes en tête de `CHANGELOG.md` (Fonctionnalités,
-   Corrections, Performances), pousse le commit « chore(release): X.Y.Z » sur `main`, crée le tag `vX.Y.Z` et une
-   release en brouillon. Ce commit est poussé avec `GITHUB_TOKEN` : il ne relance ni la CI ni le workflow.
-3. Le workflow construit ensuite les installeurs Windows puis le `.dmg` macOS universel depuis ce tag, dans le
-   brouillon (avec `latest.json` pour les deux plateformes), et ne publie la release que si les deux builds ont
-   réussi.
+   Command-line alternative:
 
-Chaque merge `feat`/`fix`/`perf` donne donc sa propre version. Pour en grouper plusieurs dans une seule version,
-les réunir sur une branche et la fusionner en un seul squash, ou fusionner d'abord des commits qui ne publient
-rien (`chore:`, `refactor:`…) : ils partent avec la version suivante. Si plusieurs merges arrivent avant la fin de
-la CI, seule la CI du dernier va au bout (`cancel-in-progress`) et sa version contient tout depuis le dernier tag ;
-un run lancé pour un commit qui n'est plus la tête de `main` ne publie rien.
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Scribe.app
+   ```
 
-Reprise : si un build ou la publication échoue, le brouillon reste privé ; relancer les jobs en échec (« Re-run
-failed jobs ») le complète puis le publie. Si le job `release` a échoué après avoir poussé le tag (avant ou après
-la création du brouillon), ou pour toute autre reprise : Actions > Semantic Release > « Run workflow » avec le tag
-(`v0.4.0`) reconstruit les deux plateformes dans ce brouillon et le publie ; si le tag n'a encore aucune release, ce
-run crée d'abord le brouillon, avec les notes de cette version prises dans `CHANGELOG.md` au tag (le lancer une fois
-le run automatique terminé, sans quoi il pourrait doubler le brouillon). Une reprise a son propre groupe de
-concurrence : un push sur `main` ne l'annule pas pendant qu'elle attend, et elle n'annule pas une publication en
-attente. Relancer le job `release` lui-même ne crée rien (le commit de version a déjà fait avancer `main`) ; si la CI
-de `main` a échoué ou a été annulée, la relancer (ou pousser un nouveau commit) suffit : rien n'est perdu, la
-version suivante part toujours du dernier tag.
+3. Scribe asks for two permissions, granted from its window:
+   - **Accessibility**: detect the shortcut, paste the text and check that it landed;
+   - **Microphone**: record the dictation.
 
-La version de l'app est celle de `src-tauri/Cargo.toml` (`tauri.conf.json` n'en a pas : Tauri reprend celle du
-crate pour les installeurs, `latest.json` et la version affichée). Ne pas la modifier à la main. Il n'y a plus de
-manifeste : ce sont les tags `vX.Y.Z` présents dans l'historique de `main` qui donnent la version de départ.
+Scribe lives in the menu bar, with no Dock icon.
 
-Réglages du dépôt : « Allow GitHub Actions to create and approve pull requests » n'est plus nécessaire. `main` n'est
-pas protégée ; si elle le devient (protection de branche ou ruleset), le bot GitHub Actions doit rester autorisé à y
-pousser (le commit « chore(release) ») et à créer des tags `v*`, sans quoi le job `release` échoue avant de créer le
-tag.
+> After an update on macOS, the Accessibility permission may no longer be honoured even though Scribe is still
+> ticked. Scribe's window tells you: click **Autoriser**, then switch Scribe back on in System Settings.
 
-Repli manuel (`.github/workflows/release.yml`) : dans un même commit, monter la version dans
-`src-tauri/Cargo.toml`, `package.json` et `Cargo.lock`, puis pousser ce commit et le tag ensemble
-(`git tag v0.4.0 && git push --atomic origin main v0.4.0`). Le workflow vérifie que le tag correspond à
-`src-tauri/Cargo.toml`, construit les installeurs et les joint à une release en brouillon, à publier à la main.
-semantic-release repart de ce tag : la version automatique suivante ne compte que les commits postérieurs. Le push
-du commit de version relance aussi la CI puis semantic-release, qui ne publie rien si ce commit est un `chore:`.
+## Setup: API keys
 
-Build local :
+Scribe uses two AI services, with your own keys:
 
-```bash
-# Les bundles de mise à jour sont signés : la clé privée et son mot de passe sont lus dans ~/.tauri.
-TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/scribe.key)" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/scribe.key.password)"   bun tauri build   # target/release/bundle/nsis/Scribe_<version>_x64-setup.exe (+ .sig), et un .msi
-```
+- **Transcription** (voice to text): OpenAI, Mistral or Groq;
+- **Correction** (text to clean text): OpenAI, Anthropic, Mistral or Groq. Optional: the « Aucune (texte brut) »
+  (none, raw text) level skips it.
 
-Les installeurs ne sont pas signés : au premier lancement, Windows SmartScreen demande « Informations
-complémentaires » puis « Exécuter quand même » ; macOS demande un clic droit sur Scribe > Ouvrir.
+One key is enough to get started: OpenAI, Mistral and Groq do both.
 
-Mises à jour : la release publiée contient `latest.json`. Les versions installées le consultent 30 s après leur
-lancement (un toast annonce une nouvelle version) et depuis Réglages > Mises à jour, qui l'installe et redémarre
-Scribe. Chaque mise à jour est vérifiée avec la clé publique de `tauri.conf.json` ; la clé privée et son mot de
-passe sont les secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` du dépôt. Les perdre
-empêche toute mise à jour des versions installées : gardez-en une copie.
+### 1. Create a key
 
-## Confidentialité et installation
+| Provider | Transcription | Correction | Where to create the key |
+|---|:---:|:---:|---|
+| OpenAI | ✓ | ✓ | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| Anthropic | | ✓ | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| Mistral | ✓ | ✓ | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
+| Groq | ✓ | ✓ | [console.groq.com/keys](https://console.groq.com/keys) |
 
-Pas de télémétrie ni de compte. Ce que Scribe envoie sur le réseau (l'audio et le texte des dictées aux fournisseurs
-choisis, la vérification des mises à jour sur GitHub) et les accès système qu'il utilise (hook clavier,
-presse-papier, champ actif) sont détaillés dans [PRIVACY.md](PRIVACY.md).
+These are pay-per-use APIs (Groq and Mistral offer a limited free tier): add a payment method or credit to the
+provider account, or the key will be rejected. A dictation of a few sentences costs a fraction of a cent.
 
-Les installeurs ne sont pas signés (Authenticode) : à la première installation, SmartScreen affiche « Windows a
-protégé votre ordinateur », cliquez sur « Informations complémentaires » puis « Exécuter quand même ». Les mises à
-jour, téléchargées par Scribe lui-même, ne déclenchent pas cet avertissement.
+### 2. Enter it in Scribe
 
-Sur macOS, l'app est signée ad hoc mais pas notarisée : au premier lancement, clic droit sur Scribe > Ouvrir. Scribe
-demande ensuite l'accès Accessibilité (raccourci global, collage, lecture du champ actif) puis le micro. La signature
-ad hoc change à chaque version : après une mise à jour, l'autorisation Accessibilité ne vaut plus même si Scribe
-reste coché. La fenêtre de Scribe le signale ; « Autoriser » remet l'autorisation à zéro, il suffit de réactiver Scribe.
+On first launch, Scribe opens on the **Réglages** (settings) tab:
 
-## Licence
+1. **Fournisseurs et modèles** (providers and models): pick the transcription provider and model, then the
+   correction ones. Defaults: OpenAI `gpt-transcribe` for transcription, Anthropic `claude-opus-5-5` for correction.
+2. **Clés API** (API keys): paste the key of each chosen provider.
+3. Click **Tester transcription et correction** (test transcription and correction): Scribe checks both steps and
+   shows the details if something fails.
+
+Keys are stored in your system's credential store (Windows Credential Manager, macOS Keychain), never in a file.
+
+![Providers and API keys setup](docs/screenshots/setup.png)
+
+## Usage
+
+| Gesture | Effect |
+|---|---|
+| **Hold** Right Ctrl (Right Cmd on a Mac) | Records while the key is held; releasing transcribes and inserts. |
+| **Double-tap** the key | Locked, hands-free mode; press again to stop. |
+| **Space** while holding | Locks the current dictation. |
+
+- **Change the shortcut**: Réglages > Raccourci > Changer, then press the combination you want (1 to 4 keys, for
+  example `Ctrl + Shift + A` or `Win + Alt`) and release.
+- **Vocabulary**: add names, brands and technical terms, with the ways they get misheard. Scribe passes them to
+  transcription and correction.
+- **History**: find, copy or re-transcribe a dictation. Audio recordings are deleted after the retention period
+  chosen in the settings.
+- **Startup**: Réglages > Démarrage > « Lancer Scribe à l'ouverture de session » starts it in the background at
+  every login.
+- **Pause**: from the notification area icon (menu bar on a Mac), to disable the shortcut.
+
+Closing the window does not quit Scribe: it stays in the notification area. To quit, use its icon.
+
+## Updates
+
+Scribe checks for a new version 30 seconds after launch and tells you with a toast. Réglages > Mises à jour installs
+it and restarts Scribe. Every update is signed and verified before installation.
+
+## Privacy
+
+No telemetry, no analytics, no account. Your dictations' audio and text go straight from your computer to the
+providers you chose, with your key; the history, vocabulary and settings stay on your machine. Everything Scribe
+sends and the system access it uses (keyboard, clipboard, focused field) are detailed in [PRIVACY.md](PRIVACY.md).
+
+## Contributing
+
+Bugs and ideas: [open an issue](https://github.com/ghusse/scribe/issues). To build Scribe, run the tests or submit a
+change, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
 
 Copyright (C) 2026 Guillaume Gautreau.
 
-Scribe est distribué sous la licence [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). Vous pouvez
-l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée distribuée ou mise à disposition
-d'utilisateurs, y compris à travers un service en ligne, doit l'être sous la même licence, avec son code source
-complet.
+Scribe is distributed under the [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). You may use,
+study, modify and redistribute it; any modified version distributed or made available to users, including through
+an online service, must be released under the same license, with its complete source code.

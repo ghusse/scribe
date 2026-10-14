@@ -161,9 +161,14 @@ When you add or remove an exclusion, update this list, the regex/globs above, an
 ## PR titles and commit subjects
 
 The changelog is generated from them (semantic-release, squash merge: the PR title becomes the commit subject).
-A `feat` or `fix` that the user can notice describes **what changes for the user**, in French and in their words,
-never how it was done: `fix(macos): coller la dictée au lieu de taper « v »`, not
-`fix(macos): chercher la touche « v » avec UCKeyTranslate`. The technical how goes in the PR body.
+A `feat` or `fix` that the user can notice describes **what changes for the user**, in their words, never how it
+was done: `fix(macos): paste the dictation instead of typing "v"`, not
+`fix(macos): look up the "v" key with UCKeyTranslate`. The technical how goes in the PR body.
+
+## Language
+
+Everything on GitHub is in English: code, comments, docs, commit messages, PR titles and descriptions, review
+comments. Only the app's UI strings are in French.
 
 ## Rust formatting
 
