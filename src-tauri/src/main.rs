@@ -129,6 +129,7 @@ fn main() {
                 recorder: Arc::new(CpalRecorder),
                 clock: Arc::new(scribe_core::clock::now_ms),
                 spawn_processing: Box::new(controller::spawn_processing),
+                spawn_prefix: Box::new(controller::spawn_prefix),
                 is_pressed: Arc::new(scribe_platform::is_key_pressed),
             };
             let update_svc = svc.clone();
@@ -183,6 +184,7 @@ fn main() {
             commands::improve_style,
             commands::overlay_dismiss,
             commands::open_history,
+            commands::overlay_hit_areas,
         ])
         .build(tauri::generate_context!())
         .expect("failed to start Scribe")

@@ -249,15 +249,19 @@ impl Default for ProviderPlan {
     }
 }
 
-struct FakeStt(Result<String, ProviderError>);
+struct FakeStt {
+    answer: Result<String, ProviderError>,
+    hints: Arc<Mutex<Vec<Vec<String>>>>,
+}
 
 #[async_trait::async_trait]
 impl Transcriber for FakeStt {
     fn name(&self) -> String {
         "fake-stt".into()
     }
-    async fn transcribe(&self, _wav: &[u8], _hints: &[String]) -> Result<String, ProviderError> {
-        self.0.clone()
+    async fn transcribe(&self, _wav: &[u8], hints: &[String]) -> Result<String, ProviderError> {
+        self.hints.lock().unwrap().push(hints.to_vec());
+        self.answer.clone()
     }
 }
 
@@ -329,6 +333,8 @@ pub struct Fixture {
     pub plan: Arc<Mutex<ProviderPlan>>,
     /// Every prompt the fake corrector received.
     pub prompts: Arc<Mutex<Vec<CorrectionPrompt>>>,
+    /// The hints of every transcription request.
+    pub hints: Arc<Mutex<Vec<Vec<String>>>>,
     /// The transcription provider of each warm-up request.
     pub warm_ups: Arc<Mutex<Vec<String>>>,
     pub ctrl_rx: Receiver<ControllerMsg>,
@@ -361,6 +367,8 @@ impl Fixture {
         let corrector_plan = plan.clone();
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let (factory_prompts, corrector_prompts) = (prompts.clone(), prompts.clone());
+        let hints = Arc::new(Mutex::new(Vec::new()));
+        let stt_hints = hints.clone();
         let warm_ups = Arc::new(Mutex::new(Vec::new()));
         let warm_up_log = warm_ups.clone();
         let (tx, ctrl_rx) = mpsc::channel();
@@ -381,7 +389,7 @@ impl Fixture {
                 let plan = factory_plan.lock().unwrap().clone();
                 plan.build?;
                 let llm = FakeLlm { answer: plan.llm, prompts: factory_prompts.clone() };
-                Ok((Box::new(FakeStt(plan.stt)), Box::new(llm)))
+                Ok((Box::new(FakeStt { answer: plan.stt, hints: stt_hints.clone() }), Box::new(llm)))
             }),
             corrector: Box::new(move |_s, _store| {
                 let answer = corrector_plan.lock().unwrap().llm.clone();
@@ -411,6 +419,7 @@ impl Fixture {
             secrets,
             plan,
             prompts,
+            hints,
             warm_ups,
             ctrl_rx,
             _dir: dir,

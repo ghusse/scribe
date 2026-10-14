@@ -44,6 +44,7 @@ describe("api", () => {
     ["improveStyle", () => api.improveStyle(request), "improve_style", { request }],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
+    ["overlayHitAreas", () => api.overlayHitAreas({ surface: [0, 0, 9, 9], buttons: [[1, 2, 3, 4]] }), "overlay_hit_areas", { surface: [0, 0, 9, 9], buttons: [[1, 2, 3, 4]] }],
   ];
 
   it.each(table)("%s invokes its command with its arguments", async (_name, call, cmd, args) => {

@@ -7,6 +7,7 @@ pub mod gesture;
 pub mod insert;
 pub mod lang;
 pub mod model;
+pub mod peek;
 pub mod permissions;
 pub mod pipeline;
 pub mod prompt;
