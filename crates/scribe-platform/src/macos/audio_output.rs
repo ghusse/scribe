@@ -88,7 +88,7 @@ pub(super) fn data_size(object: AudioObjectID, address: &mut AudioObjectProperty
 }
 
 /// Every audio device (inputs and outputs).
-fn devices() -> Result<Vec<AudioObjectID>, String> {
+pub(super) fn devices() -> Result<Vec<AudioObjectID>, String> {
     let system = kAudioObjectSystemObject as AudioObjectID;
     let mut address = prop(kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal);
     let mut size = data_size(system, &mut address)?;
