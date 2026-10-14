@@ -1,8 +1,10 @@
 use dispatch2::DispatchQueue;
 use objc2::ffi::object_setClass;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyObject, Bool};
 use objc2::ClassType;
+use objc2::{msg_send, sel};
 use objc2_app_kit::{NSPanel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask};
+use objc2_foundation::NSObjectProtocol;
 
 /// NSStatusWindowLevel: above other apps' windows, full-screen ones included.
 const STATUS_LEVEL: isize = 25;
@@ -18,6 +20,11 @@ pub fn prepare_overlay(raw: isize) {
         object_setClass(raw as *mut AnyObject, NSPanel::class());
         let w = window(raw);
         w.setStyleMask(w.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+        // AppKit ignores NonactivatingPanel set after the window exists: without the WindowServer tag, a click
+        // activates Scribe and macOS jumps to the Space of its main window.
+        if w.respondsToSelector(sel!(_setPreventsActivation:)) {
+            let _: () = msg_send![w, _setPreventsActivation: Bool::YES];
+        }
         w.setLevel(STATUS_LEVEL);
         w.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces
