@@ -1,0 +1,8 @@
+.panel { background: var(--card); border: 1px solid var(--danger); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; font-size: 14px; }
+.panel h2 { font-size: 15px; margin: 0 0 10px; }
+.panel h3 { font-size: 14px; margin: 0 0 4px; }
+.permission + .permission { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.panel p { margin: 0 0 6px; }
+.panel .how { color: var(--muted); font-size: 13px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.panel .error { color: var(--danger); font-size: 13px; margin: 8px 0 0; }

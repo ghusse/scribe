@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Settings as SettingsT } from "../lib/api";
 import type { SaveState } from "../lib/autosave";
 import { CAPTURE_TIMEOUT_MESSAGE } from "../lib/hotkeys";
 import { calls, commands, invoke, resetTauri } from "../../tests/tauri";
 import { PROVIDERS, settings } from "../../tests/fixtures";
-import Settings from "./Settings.svelte";
+import Settings from "./Settings";
+import styles from "./Settings.module.css";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 
@@ -30,26 +31,19 @@ beforeEach(() => {
   });
 });
 
-/** Mounts Settings with an observable `bind:status` (see ModelPicker.test.ts) and waits for the form. */
+/** Mounts Settings, records what it reports through `onStatusChange` and waits for the form. */
 async function setup(extra: { active?: boolean } = {}) {
   let status: SaveState = "saved";
-  const props = {
-    ...extra,
-    get status() {
-      return status;
-    },
-    set status(v: SaveState) {
-      status = v;
-    },
-  };
-  const r = render(Settings, { props });
+  const onStatusChange = (v: SaveState) => (status = v);
+  const r = render(<Settings {...extra} onStatusChange={onStatusChange} />);
   await screen.findByText("Raccourci");
-  return { ...r, props, status: () => status };
+  const rerender = (props: { active?: boolean }) => r.rerender(<Settings {...props} onStatusChange={onStatusChange} />);
+  return { ...r, rerender, status: () => status };
 }
 
 const saves = () => calls("save_settings").map((a) => a!.settings as SettingsT);
 const lastSave = () => saves().at(-1)!;
-const bar = () => document.querySelector(".statusbar") as HTMLElement;
+const bar = () => document.querySelector(`.${styles.statusbar}`) as HTMLElement;
 const alertText = () => screen.getByRole("alert", { hidden: true }).textContent ?? "";
 const select = (label: RegExp) => screen.getByLabelText(label, { selector: "select" }) as HTMLSelectElement;
 const keyForm = (label: string) => (screen.getByLabelText(`Clé ${label}`) as HTMLInputElement).closest("form")!;
@@ -65,7 +59,7 @@ async function setNumber(label: RegExp, value: string) {
 
 describe("Settings: loading", () => {
   it("shows a loading state, then the form", async () => {
-    render(Settings);
+    render(<Settings />);
     expect(screen.getByText("Chargement…")).toBeTruthy();
     expect(await screen.findByText("Raccourci")).toBeTruthy();
     expect(screen.getByText("Alt droit (AltGr)")).toBeTruthy();
@@ -74,7 +68,7 @@ describe("Settings: loading", () => {
 
   it("shows a load error and retries", async () => {
     commands({ get_settings: () => Promise.reject("base verrouillée") });
-    render(Settings);
+    render(<Settings />);
     expect(await screen.findByText(/Impossible de charger les réglages.*base verrouillée/)).toBeTruthy();
     commands({ get_settings: () => settings() });
     await fireEvent.click(screen.getByText("Réessayer"));
@@ -94,7 +88,7 @@ describe("Settings: loading", () => {
 describe("Settings: autosave", () => {
   it("saves an edit after a pause, shows the progress then a success that fades out", async () => {
     const { status } = await setup();
-    expect(bar().classList.contains("hidden")).toBe(true);
+    expect(bar().classList.contains(styles.hidden)).toBe(true);
     await fireEvent.click(screen.getByLabelText(/Double-tap/));
     expect(status()).toBe("pending");
     expect(bar().textContent).toContain("Enregistrement…");
@@ -103,8 +97,8 @@ describe("Settings: autosave", () => {
     expect(lastSave().gesture.double_tap_enabled).toBe(false);
     await waitFor(() => expect(bar().textContent).toContain("Réglages enregistrés"));
     expect(status()).toBe("saved");
-    expect(bar().classList.contains("hidden")).toBe(false);
-    await waitFor(() => expect(bar().classList.contains("hidden")).toBe(true), { timeout: 3000 });
+    expect(bar().classList.contains(styles.hidden)).toBe(false);
+    await waitFor(() => expect(bar().classList.contains(styles.hidden)).toBe(true), { timeout: 3000 });
   });
 
   it("saves the « mute during dictation » checkbox", async () => {
@@ -170,7 +164,7 @@ describe("Settings: autosave", () => {
     const details = screen.getByRole("button", { name: "Détails" });
     await fireEvent.click(details);
     expect(details.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector(".statusbar pre")!.textContent).toBe("écriture impossible\nchemin: C:\\x");
+    expect(bar().querySelector("pre")!.textContent).toBe("écriture impossible\nchemin: C:\\x");
     commands({ save_settings: () => undefined });
     await fireEvent.click(screen.getByRole("button", { name: "Réessayer" }));
     await waitFor(() => expect(status()).toBe("saved"));
@@ -239,7 +233,7 @@ describe("Settings: providers and models", () => {
   it("picking another model keeps the effort valid", async () => {
     commands({ get_settings: () => settings({ llm_effort: "max" }) });
     await setup();
-    const llmModel = document.querySelector("fieldset .picker select") as HTMLSelectElement;
+    const llmModel = screen.getAllByLabelText(/^Modèle/, { selector: "select" })[1] as HTMLSelectElement;
     await fireEvent.change(llmModel, { target: { value: "claude-haiku-4-5" } });
     expect(screen.queryByLabelText(/Réflexion du modèle/)).toBeNull();
     await fireEvent.change(llmModel, { target: { value: "claude-sonnet-4-5" } });
@@ -275,9 +269,9 @@ describe("Settings: API keys", () => {
   it("lists the keys in use first, the others folded, with their status", async () => {
     stored = { openai: true };
     await setup();
-    const used = [...document.querySelectorAll("section > form.key .label")].map((e) => e.textContent);
+    const used = [...document.querySelectorAll(`.${styles.section} > form.${styles.key} .${styles.label}`)].map((e) => e.textContent);
     expect(used).toEqual(["OpenAI", "Anthropic"]);
-    const others = [...document.querySelectorAll("details.others form.key .label")].map((e) => e.textContent);
+    const others = [...document.querySelectorAll(`details.${styles.others} form.${styles.key} .${styles.label}`)].map((e) => e.textContent);
     expect(others).toEqual(["Mistral", "Groq"]);
     expect(within(keyForm("OpenAI")).getByText("✓ enregistrée")).toBeTruthy();
     expect(within(keyForm("Anthropic")).getByText("✗ requise")).toBeTruthy();
@@ -358,7 +352,7 @@ describe("Settings: API keys", () => {
     commands({ get_settings: () => settings({ stt_provider: "mistral" }) });
     stored = { anthropic: true };
     await setup();
-    expect(document.querySelector("details.others")!.textContent).not.toContain("Mistral"); // in use: shown first
+    expect(document.querySelector(`details.${styles.others}`)!.textContent).not.toContain("Mistral"); // in use: shown first
     await fireEvent.click(screen.getByRole("button", { name: "Ajouter la clé" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Clé Mistral")));
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
@@ -385,7 +379,7 @@ describe("Settings: API keys", () => {
     // the inline warning of the new provider points at a row that was folded a moment ago.
     stored = { openai: true, anthropic: true };
     await setup();
-    const details = document.querySelector("details.others") as HTMLDetailsElement;
+    const details = document.querySelector(`details.${styles.others}`) as HTMLDetailsElement;
     expect(details.open).toBe(false);
     await fireEvent.click(within(keyForm("OpenAI")).getByRole("button", { name: "Supprimer" }));
     await fireEvent.change(providerSelect("stt"), { target: { value: "groq" } });
@@ -402,7 +396,7 @@ describe("Settings: provider test", () => {
     expect(await screen.findByText(/✓ fonctionne \(412 ms\)/)).toBeTruthy();
     expect(screen.getByText(/✗ clé refusée par Anthropic, vérifiez la clé/)).toBeTruthy();
     expect(screen.getByText("HTTP 401 Unauthorized")).toBeTruthy();
-    expect(document.querySelectorAll(".test-result p.ok, .test-result p.fail")).toHaveLength(2);
+    expect(document.querySelectorAll(`.${styles.testResult} p.${styles.ok}, .${styles.testResult} p.${styles.fail}`)).toHaveLength(2);
   });
 
   it("a raw-level test says correction is not used", async () => {
@@ -441,7 +435,7 @@ describe("Settings: provider test", () => {
     await setup();
     await fireEvent.click(screen.getByRole("button", { name: /Tester/ }));
     expect(await screen.findByText("panique")).toBeTruthy();
-    expect(document.querySelector(".test-result details")).toBeNull();
+    expect(document.querySelector(`.${styles.testResult} details`)).toBeNull();
   });
 
   it("shows the button busy while testing", async () => {

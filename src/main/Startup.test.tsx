@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, resetTauri } from "../../tests/tauri";
-import Startup from "./Startup.svelte";
+import Startup from "./Startup";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
@@ -26,7 +26,7 @@ describe("Startup", () => {
   it("shows the state in place in the OS, disabled until it is known", async () => {
     let answer!: (v: boolean) => void;
     commands({ get_autostart: () => new Promise<boolean>((r) => (answer = r)) });
-    render(Startup);
+    render(<Startup />);
     expect(box().disabled).toBe(true);
     answer(true);
     await waitFor(() => expect(box().disabled).toBe(false));
@@ -34,7 +34,7 @@ describe("Startup", () => {
   });
 
   it("switches launch at login on and off", async () => {
-    render(Startup);
+    render(<Startup />);
     await waitFor(() => expect(box().disabled).toBe(false));
     await fireEvent.click(box());
     await waitFor(() => expect(calls("set_autostart")).toEqual([{ enabled: true }]));
@@ -47,7 +47,7 @@ describe("Startup", () => {
 
   it("keeps the box on the real state when switching fails, and says why", async () => {
     commands({ set_autostart: () => Promise.reject("accès au registre refusé") });
-    render(Startup);
+    render(<Startup />);
     await waitFor(() => expect(box().disabled).toBe(false));
     await fireEvent.click(box());
     expect((await screen.findByRole("alert")).textContent).toBe("Démarrage automatique indisponible : accès au registre refusé");
@@ -61,7 +61,7 @@ describe("Startup", () => {
 
   it("shows the state the OS kept when it did not apply the switch", async () => {
     commands({ set_autostart: () => false });
-    render(Startup);
+    render(<Startup />);
     await waitFor(() => expect(box().disabled).toBe(false));
     await fireEvent.click(box());
     expect((await screen.findByRole("status")).textContent).toContain("Le système n'a pas appliqué ce changement");
@@ -75,7 +75,7 @@ describe("Startup", () => {
   it("keeps the keyboard focus while switching and ignores clicks meanwhile", async () => {
     let answer!: (v: boolean) => void;
     commands({ set_autostart: () => new Promise<boolean>((r) => (answer = r)) });
-    render(Startup);
+    render(<Startup />);
     await waitFor(() => expect(box().disabled).toBe(false));
     box().focus();
     await fireEvent.click(box());
@@ -92,7 +92,7 @@ describe("Startup", () => {
 
   it("reports a state that cannot be read and leaves the box disabled", async () => {
     commands({ get_autostart: () => Promise.reject("plugin indisponible") });
-    render(Startup);
+    render(<Startup />);
     expect((await screen.findByRole("alert")).textContent).toContain("plugin indisponible");
     expect(box().disabled).toBe(true);
   });

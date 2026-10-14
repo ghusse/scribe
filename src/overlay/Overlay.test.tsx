@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
-import Overlay from "./Overlay.svelte";
+import Overlay from "./Overlay";
+import styles from "./Overlay.module.css";
 
 vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
@@ -11,7 +12,7 @@ const toast = (over: Record<string, unknown> = {}) => ({
 });
 
 async function mount() {
-  const r = render(Overlay);
+  const r = render(<Overlay />);
   await waitFor(() => expect(emit("overlay", { kind: "idle" })).toBe(1));
   return r;
 }
@@ -25,18 +26,20 @@ beforeEach(() => {
   resetTauri();
   commands({ overlay_dismiss: () => undefined, copy_dictation: () => undefined, open_history: () => undefined });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("Overlay", () => {
   it("shows nothing while idle", async () => {
     const { container } = await mount();
-    expect(container.querySelector(".pill, .toast")).toBeNull();
+    expect(container.querySelector(`.${styles.pill}, .${styles.toast}`)).toBeNull();
   });
 
   it("shows the recording pill with a live meter and the lock tag", async () => {
     const { container } = await mount();
     await fire("overlay", { kind: "recording", locked: false, warning: null });
-    const bars = () => [...container.querySelectorAll<HTMLElement>(".bars span")].map((b) => b.style.height);
+    const bars = () => [...container.querySelectorAll<HTMLElement>(`.${styles.bars} span`)].map((b) => b.style.height);
     expect(bars()).toHaveLength(12);
     expect(screen.queryByText("Verrouillé")).toBeNull();
     await fire("audio-level", 1);
@@ -71,7 +74,7 @@ describe("Overlay", () => {
     await fire("overlay", toast());
     expect(screen.getByText("Inséré")).toBeTruthy();
     expect(screen.getByText("Bonjour")).toBeTruthy();
-    expect(container.querySelector(".toast.info")).toBeTruthy();
+    expect(container.querySelector(`.${styles.toast}[data-level="info"]`)).toBeTruthy();
     await fireEvent.click(screen.getByText("Copier"));
     await waitFor(() => expect(screen.queryByText("Inséré")).toBeNull());
     expect(calls("copy_dictation")).toEqual([{ id: 7 }]);
@@ -82,7 +85,8 @@ describe("Overlay", () => {
     const { container } = await mount();
     await fire("overlay", toast({ level: "error", preview: null, message: "Échec" }));
     expect(screen.queryByText("Copier")).toBeNull();
-    expect(container.querySelector(".toast p")).toBeNull();
+    expect(container.querySelector(`.${styles.toast}.${styles.error}[data-level="error"]`)).toBeTruthy();
+    expect(container.querySelector(`.${styles.toast} p`)).toBeNull();
     await fireEvent.click(screen.getByText("Voir"));
     expect(calls("open_history")).toEqual([{ id: 7 }]);
     expect(screen.getByText("Échec")).toBeTruthy();

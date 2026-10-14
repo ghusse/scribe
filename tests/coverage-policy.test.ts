@@ -70,17 +70,17 @@ describe("coverage policy", () => {
   });
 
   describe("UI (vitest)", () => {
-    it("measures every TS module and Svelte component", () => {
-      expect(coverage.include).toEqual(["src/**/*.{ts,svelte}"]);
+    it("measures every TS module and Preact component", () => {
+      expect(coverage.include).toEqual(["src/**/*.{ts,tsx}"]);
     });
 
     it("excludes exactly the documented globs", () => {
       expect(coverage.exclude).toEqual(documented("UI excludes"));
     });
 
-    it("gates TypeScript and Svelte each at the threshold, plus the total", () => {
+    it("gates TypeScript and TSX each at the threshold, plus the total", () => {
       const globs = documented("UI per-language thresholds");
-      expect(globs).toEqual(["src/**/*.ts", "src/**/*.svelte"]);
+      expect(globs).toEqual(["src/**/*.ts", "src/**/*.tsx"]);
       const expected: Record<string, number | { lines: number }> = { lines: threshold };
       for (const g of globs) expected[g] = { lines: threshold };
       expect(coverage.thresholds).toEqual(expected);
