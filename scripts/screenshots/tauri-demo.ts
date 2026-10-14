@@ -56,23 +56,23 @@ function dictation(id: number, over: Partial<Dictation>): Dictation {
 const dictations: Dictation[] = [
   dictation(1, {
     app_name: "Mail",
-    raw_text: "bonjour claire euh je te confirme la réunion de jeudi à dix heures avec l'équipe kubernetes",
-    final_text: "Bonjour Claire,\n\nJe te confirme la réunion de jeudi à 10 h avec l'équipe Kubernetes.\n\nBonne journée,",
+    raw_text: "hi claire uh just confirming thursday's meeting at ten with the kubernetes team",
+    final_text: "Hi Claire,\n\nJust confirming Thursday's meeting at 10 a.m. with the Kubernetes team.\n\nBest,",
   }),
   dictation(2, {
     app_name: "Slack", mode: "locked", duration_ms: 14500,
-    raw_text: "la mise en prod est passée tout est vert sur grafana je regarde les logs demain matin",
-    final_text: "La mise en prod est passée, tout est vert sur Grafana. Je regarde les logs demain matin 👍",
+    raw_text: "the release went out everything is green on grafana i'll check the logs tomorrow morning",
+    final_text: "The release went out, everything is green on Grafana. I'll check the logs tomorrow morning 👍",
   }),
   dictation(3, {
     app_name: "Code",
-    raw_text: "retourne une erreur si la liste est vide au lieu de planter",
-    final_text: "Retourne une erreur si la liste est vide au lieu de planter.",
+    raw_text: "return an error if the list is empty instead of crashing",
+    final_text: "Return an error if the list is empty instead of crashing.",
   }),
   dictation(4, {
     app_name: "Notes", outcome: "clipboard",
-    raw_text: "idées pour le week-end randonnée au lac acheter du pain penser au cadeau de léa",
-    final_text: "Idées pour le week-end :\n- randonnée au lac\n- acheter du pain\n- penser au cadeau de Léa",
+    raw_text: "weekend ideas hike to the lake buy bread remember leah's present",
+    final_text: "Weekend ideas:\n- hike to the lake\n- buy bread\n- remember Leah's present",
   }),
 ];
 
@@ -80,10 +80,10 @@ const term = (id: number, t: string, variants: string[], note: string | null, us
   id, term: t, variants, note, source: "manual", use_count, last_used_at: minutesAgo(id * 30), created_at: minutesAgo(10_000),
 });
 const terms: Term[] = [
-  term(1, "Kubernetes", ["cube ernetes", "cubernetis"], "Orchestrateur de conteneurs", 42),
+  term(1, "Kubernetes", ["cube ernetes", "cubernetis"], "Container orchestrator", 42),
   term(2, "Grafana", ["grafanna"], null, 17),
-  term(3, "PostgreSQL", ["postgres q l", "post gré"], "Base de données", 9),
-  term(4, "Léa", ["léa", "lea"], "Prénom", 6),
+  term(3, "PostgreSQL", ["postgres q l", "post grass"], "Database", 9),
+  term(4, "Leah", ["lea", "leia"], "First name", 6),
   term(5, "OAuth", ["o auth", "oh auth"], null, 3),
 ];
 

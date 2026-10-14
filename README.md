@@ -1,164 +1,159 @@
 # Scribe
 
-**Dictée vocale pour Windows et macOS : maintenez une touche, parlez, relâchez. Le texte, propre et ponctué,
-s'insère là où vous écriviez.**
+**Voice dictation for Windows and macOS: hold a key, speak, release. Clean, punctuated text lands wherever you were
+typing.**
 
-Mail, Slack, Word, VS Code, navigateur, terminal : Scribe marche dans n'importe quelle application, sans extension
-ni copier-coller. Une IA transcrit votre voix, puis une autre retire les « euh », corrige la ponctuation et
-l'orthographe des noms propres que vous lui avez appris.
+Mail, Slack, Word, VS Code, browser, terminal: Scribe works in any application, with no extension and no
+copy-paste. One AI transcribes your voice, another removes the "uh"s and fixes punctuation and the spelling of the
+names you taught it.
 
-![Scribe en cours de dictée](docs/screenshots/dictation.png)
+![Scribe while dictating](docs/screenshots/dictation.png)
 
-[**⬇ Télécharger la dernière version**](https://github.com/ghusse/scribe/releases/latest)
+[**⬇ Download the latest version**](https://github.com/ghusse/scribe/releases/latest)
 
-## Pourquoi Scribe
+> Scribe's interface is in French. Dictation works in any language your speech-to-text model supports.
 
-- **Partout.** Le texte arrive dans le champ actif de n'importe quelle application. Sans champ, il est copié dans le
-  presse-papier et un toast vous le signale.
-- **Rapide à déclencher.** Maintenez Ctrl droit (Cmd droit sur Mac) pour parler, ou tapez deux fois pour dicter
-  mains libres. Le raccourci se change en une combinaison de votre choix.
-- **Un texte qu'on n'a pas à reprendre.** Trois niveaux de correction : texte brut, nettoyage (ponctuation,
-  hésitations, vocabulaire), ou nettoyage + mise en forme adaptée à l'application (un mail ne s'écrit pas comme un
-  message Slack).
-- **Votre vocabulaire.** L'onglet Vocabulaire apprend à Scribe les noms propres et le jargon de vos domaines
-  (« Kubernetes », pas « cube ernetes »).
-- **Rien ne se perd.** L'historique garde chaque dictée ; une erreur réseau ? « Retranscrire » relance depuis
-  l'enregistrement.
-- **Vos clés, vos fournisseurs.** OpenAI, Anthropic, Mistral ou Groq : vous choisissez le modèle et payez
-  directement le fournisseur, à l'usage. Pas de compte Scribe, pas d'abonnement, pas de télémétrie.
-- **Discret.** Une pastille indique l'enregistrement sans jamais voler le focus. Option : couper le son de
-  l'ordinateur et le micro des autres applications pendant la dictée.
-- **Libre** (AGPL-3.0) et mis à jour automatiquement.
+## Why Scribe
 
-| Historique | Vocabulaire | Réglages |
+- **Everywhere.** Text goes into the focused field of any application. With no field, it is copied to the clipboard
+  and a toast tells you so.
+- **Quick to trigger.** Hold Right Ctrl (Right Cmd on a Mac) to speak, or double-tap it to dictate hands-free. The
+  shortcut can be changed to any combination you like.
+- **Text you don't need to fix.** Three correction levels: raw text, clean-up (punctuation, hesitations,
+  vocabulary), or clean-up + formatting suited to the application (an email is not written like a Slack message).
+- **Your vocabulary.** The Vocabulaire (vocabulary) tab teaches Scribe the names and jargon of your field
+  ("Kubernetes", not "cube ernetes").
+- **Nothing gets lost.** The history keeps every dictation; network error? « Retranscrire » runs it again from the
+  recording.
+- **Your keys, your providers.** OpenAI, Anthropic, Mistral or Groq: you pick the model and pay the provider
+  directly, per use. No Scribe account, no subscription, no telemetry.
+- **Unobtrusive.** A small pill shows the recording and never steals focus. Optionally, mute the computer's sound
+  and other applications' microphone while you dictate.
+- **Free software** (AGPL-3.0), updated automatically.
+
+| History | Vocabulary | Settings |
 |---|---|---|
-| ![Historique des dictées](docs/screenshots/history.png) | ![Vocabulaire](docs/screenshots/glossary.png) | ![Réglages](docs/screenshots/settings.png) |
+| ![Dictation history](docs/screenshots/history.png) | ![Vocabulary](docs/screenshots/glossary.png) | ![Settings](docs/screenshots/settings.png) |
 
 ## Installation
 
-Téléchargez l'installeur de votre système depuis la
-[dernière release](https://github.com/ghusse/scribe/releases/latest) :
+Download the installer for your system from the
+[latest release](https://github.com/ghusse/scribe/releases/latest):
 
-| Système | Fichier |
+| System | File |
 |---|---|
-| Windows 10 / 11 (x64) | `Scribe_<version>_x64-setup.exe` (recommandé) ou `Scribe_<version>_x64_en-US.msi` |
-| macOS 11 ou plus récent (Apple Silicon et Intel) | `Scribe_<version>_universal.dmg` |
+| Windows 10 / 11 (x64) | `Scribe_<version>_x64-setup.exe` (recommended) or `Scribe_<version>_x64_en-US.msi` |
+| macOS 11 or later (Apple Silicon and Intel) | `Scribe_<version>_universal.dmg` |
 
-> **Pourquoi un avertissement à l'installation ?** Scribe est un projet libre et gratuit : ses installeurs ne sont
-> pas signés par un certificat payant (Microsoft Authenticode, notarisation Apple). Windows et macOS préviennent
-> donc au premier lancement. Les installeurs sont construits par GitHub Actions directement depuis le code de ce
-> dépôt (détails dans [PRIVACY.md](PRIVACY.md)). Les mises à jour, elles, sont signées et vérifiées par Scribe.
+> **Why a warning during installation?** Scribe is free, open-source software: its installers are not signed with
+> a paid certificate (Microsoft Authenticode, Apple notarization), so Windows and macOS warn you on first launch.
+> The installers are built by GitHub Actions straight from this repository's source code (details in
+> [PRIVACY.md](PRIVACY.md)). Updates, on the other hand, are signed and verified by Scribe.
 
 ### Windows
 
-1. Lancez `Scribe_<version>_x64-setup.exe`.
-2. SmartScreen affiche « Windows a protégé votre ordinateur » : cliquez sur **Informations complémentaires**, puis
-   **Exécuter quand même**.
-3. Terminez l'installation. Scribe s'ouvre et s'installe dans la zone de notification (près de l'horloge).
+1. Run `Scribe_<version>_x64-setup.exe`.
+2. SmartScreen shows "Windows protected your PC": click **More info**, then **Run anyway**.
+3. Finish the installation. Scribe opens and settles in the notification area (next to the clock).
 
 ### macOS
 
-1. Ouvrez le `.dmg` et glissez **Scribe** dans **Applications**.
-2. Au premier lancement, macOS refuse d'ouvrir l'app (« développeur non identifié » ou « impossible de vérifier »).
-   Ouvrez **Réglages Système > Confidentialité et sécurité**, descendez jusqu'au message sur Scribe et cliquez sur
-   **Ouvrir quand même**, puis confirmez. Sur les versions plus anciennes de macOS, un clic droit sur Scribe >
-   **Ouvrir** suffit.
+1. Open the `.dmg` and drag **Scribe** into **Applications**.
+2. On first launch, macOS refuses to open the app ("unidentified developer" or "cannot be verified"). Open
+   **System Settings > Privacy & Security**, scroll down to the message about Scribe, click **Open Anyway** and
+   confirm. On older macOS versions, right-click Scribe > **Open** is enough.
 
-   Alternative en ligne de commande :
+   Command-line alternative:
 
    ```bash
    xattr -dr com.apple.quarantine /Applications/Scribe.app
    ```
 
-3. Scribe demande deux autorisations, à accorder depuis sa fenêtre :
-   - **Accessibilité** : détecter le raccourci, coller le texte et vérifier qu'il est bien arrivé ;
-   - **Micro** : enregistrer la dictée.
+3. Scribe asks for two permissions, granted from its window:
+   - **Accessibility**: detect the shortcut, paste the text and check that it landed;
+   - **Microphone**: record the dictation.
 
-Scribe vit dans la barre de menus, sans icône dans le Dock.
+Scribe lives in the menu bar, with no Dock icon.
 
-> Après une mise à jour sur macOS, l'autorisation Accessibilité peut ne plus être reconnue même si Scribe reste
-> coché. La fenêtre de Scribe le signale : cliquez sur **Autoriser**, puis réactivez Scribe dans Réglages Système.
+> After an update on macOS, the Accessibility permission may no longer be honoured even though Scribe is still
+> ticked. Scribe's window tells you: click **Autoriser**, then switch Scribe back on in System Settings.
 
-## Configuration : les clés API
+## Setup: API keys
 
-Scribe utilise deux services d'IA, avec vos propres clés :
+Scribe uses two AI services, with your own keys:
 
-- **Transcription** (la voix devient du texte) : OpenAI, Mistral ou Groq ;
-- **Correction** (le texte devient propre) : OpenAI, Anthropic, Mistral ou Groq. Facultative : le niveau
-  « Aucune (texte brut) » s'en passe.
+- **Transcription** (voice to text): OpenAI, Mistral or Groq;
+- **Correction** (text to clean text): OpenAI, Anthropic, Mistral or Groq. Optional: the « Aucune (texte brut) »
+  (none, raw text) level skips it.
 
-Une seule clé suffit pour commencer : OpenAI, Mistral et Groq font les deux.
+One key is enough to get started: OpenAI, Mistral and Groq do both.
 
-### 1. Créer une clé
+### 1. Create a key
 
-| Fournisseur | Transcription | Correction | Où créer la clé |
+| Provider | Transcription | Correction | Where to create the key |
 |---|:---:|:---:|---|
 | OpenAI | ✓ | ✓ | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | Anthropic | | ✓ | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
 | Mistral | ✓ | ✓ | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
 | Groq | ✓ | ✓ | [console.groq.com/keys](https://console.groq.com/keys) |
 
-Ce sont des API payantes à l'usage (Groq et Mistral proposent un palier gratuit limité) : ajoutez un moyen de
-paiement ou du crédit sur le compte du fournisseur, sans quoi la clé est refusée. Une dictée de quelques phrases
-coûte une fraction de centime.
+These are pay-per-use APIs (Groq and Mistral offer a limited free tier): add a payment method or credit to the
+provider account, or the key will be rejected. A dictation of a few sentences costs a fraction of a cent.
 
-### 2. La renseigner dans Scribe
+### 2. Enter it in Scribe
 
-Au premier lancement, Scribe s'ouvre sur l'onglet **Réglages** :
+On first launch, Scribe opens on the **Réglages** (settings) tab:
 
-1. **Fournisseurs et modèles** : choisissez le fournisseur et le modèle de transcription, puis ceux de correction.
-   Par défaut : OpenAI `gpt-transcribe` pour la transcription, Anthropic `claude-opus-5-5` pour la correction.
-2. **Clés API** : collez la clé de chaque fournisseur choisi.
-3. Cliquez sur **Tester transcription et correction** : Scribe vérifie les deux étapes et affiche le détail en cas d'erreur.
+1. **Fournisseurs et modèles** (providers and models): pick the transcription provider and model, then the
+   correction ones. Defaults: OpenAI `gpt-transcribe` for transcription, Anthropic `claude-opus-5-5` for correction.
+2. **Clés API** (API keys): paste the key of each chosen provider.
+3. Click **Tester transcription et correction** (test transcription and correction): Scribe checks both steps and
+   shows the details if something fails.
 
-Les clés sont rangées dans le coffre de votre système (Gestionnaire d'identification Windows, trousseau macOS),
-jamais dans un fichier.
+Keys are stored in your system's credential store (Windows Credential Manager, macOS Keychain), never in a file.
 
-![Configuration des fournisseurs et des clés](docs/screenshots/setup.png)
+![Providers and API keys setup](docs/screenshots/setup.png)
 
-## Utilisation
+## Usage
 
-| Geste | Effet |
+| Gesture | Effect |
 |---|---|
-| **Maintenir** Ctrl droit (Cmd droit sur Mac) | Enregistre tant que la touche est tenue ; relâcher transcrit et insère. |
-| **Double-tap** sur la touche | Mode verrouillé, mains libres ; un nouvel appui arrête. |
-| **Espace** pendant le maintien | Verrouille la dictée en cours. |
+| **Hold** Right Ctrl (Right Cmd on a Mac) | Records while the key is held; releasing transcribes and inserts. |
+| **Double-tap** the key | Locked, hands-free mode; press again to stop. |
+| **Space** while holding | Locks the current dictation. |
 
-- **Changer le raccourci** : Réglages > Raccourci > Changer, puis appuyez sur la combinaison voulue (1 à 4 touches,
-  par exemple `Ctrl + Maj + A` ou `Win + Alt`) et relâchez.
-- **Vocabulaire** : ajoutez noms propres, marques et termes techniques, avec leurs variantes mal entendues. Scribe
-  les transmet à la transcription et à la correction.
-- **Historique** : retrouvez, copiez ou retranscrivez une dictée. Les enregistrements audio sont supprimés après la
-  durée choisie dans les réglages.
-- **Démarrage** : Réglages > Démarrage > « Lancer Scribe à l'ouverture de session » le lance en arrière-plan à
-  chaque connexion.
-- **Pause** : depuis l'icône de la zone de notification (barre de menus sur Mac), pour désactiver le raccourci.
+- **Change the shortcut**: Réglages > Raccourci > Changer, then press the combination you want (1 to 4 keys, for
+  example `Ctrl + Shift + A` or `Win + Alt`) and release.
+- **Vocabulary**: add names, brands and technical terms, with the ways they get misheard. Scribe passes them to
+  transcription and correction.
+- **History**: find, copy or re-transcribe a dictation. Audio recordings are deleted after the retention period
+  chosen in the settings.
+- **Startup**: Réglages > Démarrage > « Lancer Scribe à l'ouverture de session » starts it in the background at
+  every login.
+- **Pause**: from the notification area icon (menu bar on a Mac), to disable the shortcut.
 
-Fermer la fenêtre ne quitte pas Scribe : il reste dans la zone de notification. Pour quitter, passez par son icône.
+Closing the window does not quit Scribe: it stays in the notification area. To quit, use its icon.
 
-## Mises à jour
+## Updates
 
-Scribe vérifie s'il existe une nouvelle version 30 secondes après son lancement et vous prévient par un toast.
-Réglages > Mises à jour l'installe et redémarre Scribe. Chaque mise à jour est signée et vérifiée avant
-installation.
+Scribe checks for a new version 30 seconds after launch and tells you with a toast. Réglages > Mises à jour installs
+it and restarts Scribe. Every update is signed and verified before installation.
 
-## Confidentialité
+## Privacy
 
-Pas de télémétrie, pas d'analytique, pas de compte. L'audio et le texte de vos dictées partent directement de
-votre ordinateur vers les fournisseurs que vous avez choisis, avec votre clé ; l'historique, le glossaire et les
-réglages restent sur votre machine. Tout ce que Scribe envoie et les accès système qu'il utilise (clavier,
-presse-papier, champ actif) sont détaillés dans [PRIVACY.md](PRIVACY.md).
+No telemetry, no analytics, no account. Your dictations' audio and text go straight from your computer to the
+providers you chose, with your key; the history, vocabulary and settings stay on your machine. Everything Scribe
+sends and the system access it uses (keyboard, clipboard, focused field) are detailed in [PRIVACY.md](PRIVACY.md).
 
-## Contribuer
+## Contributing
 
-Bugs et idées : [ouvrez une issue](https://github.com/ghusse/scribe/issues). Pour compiler Scribe, lancer les tests
-ou proposer une modification, voir [CONTRIBUTING.md](CONTRIBUTING.md).
+Bugs and ideas: [open an issue](https://github.com/ghusse/scribe/issues). To build Scribe, run the tests or submit a
+change, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Licence
+## License
 
 Copyright (C) 2026 Guillaume Gautreau.
 
-Scribe est distribué sous la licence [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). Vous pouvez
-l'utiliser, l'étudier, le modifier et le redistribuer ; toute version modifiée distribuée ou mise à disposition
-d'utilisateurs, y compris à travers un service en ligne, doit l'être sous la même licence, avec son code source
-complet.
+Scribe is distributed under the [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`). You may use,
+study, modify and redistribute it; any modified version distributed or made available to users, including through
+an online service, must be released under the same license, with its complete source code.
