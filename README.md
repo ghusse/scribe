@@ -43,8 +43,8 @@ bun run coverage   # porte : >= 95 % des lignes en Rust, TypeScript et TSX (Prea
 
 Règle : au moins 95 % de couverture de lignes dans tous les langages, vérifiée par le CI
 (`.github/workflows/ci.yml`, Windows). Rust via `cargo-llvm-cov` (`rustup component add llvm-tools-preview`,
-`cargo install cargo-llvm-cov`), UI via vitest exécuté par bun + `@vitest/coverage-istanbul` (composants testés avec
-`@testing-library/preact` + happy-dom, corrigé par `patches/happy-dom@20.14.5.patch` pour que `:checked` trouve
+`cargo install cargo-llvm-cov`), UI via `bun test --coverage` et `scripts/coverage-gate.ts` (seuil par langage ;
+composants testés avec `@testing-library/preact` + happy-dom, corrigé par `patches/happy-dom@20.14.5.patch` pour que `:checked` trouve
 l'option choisie d'un `<select>`). Les seules exclusions autorisées (adaptateurs OS/framework sans logique) et
 leur justification sont listées dans [`CLAUDE.md`](CLAUDE.md).
 

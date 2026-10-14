@@ -1,10 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import Updates from "./Updates";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
-vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
 
 beforeEach(() => {
   resetTauri();

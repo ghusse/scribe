@@ -1,10 +1,10 @@
-// @vitest-environment node
 // Guards the coverage rule (CLAUDE.md > "Exclusion policy"): the documented threshold and exclusions must be
-// exactly what the tooling applies. Widening the Rust regex, adding a vitest exclude or lowering a threshold
+// exactly what the tooling applies. Widening the Rust regex, adding a UI exclude or lowering a threshold
 // without updating CLAUDE.md (and its justification) fails here.
 import { readdirSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import vitestConfig from "../vitest.config.ts";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "bun:test";
+import { EXCLUDES, GLOBS, LCOV, measured, scanSources, THRESHOLD } from "../scripts/coverage-gate.ts";
 
 const root = new URL("../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
@@ -25,10 +25,8 @@ function documented(label: string): string[] {
 
 const threshold = Number(documented("Threshold")[0]);
 const packageJson = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
-const coverage = vitestConfig.test!.coverage as {
-  include: string[];
-  exclude: string[];
-  thresholds: Record<string, number | { lines: number }>;
+const bunfig = Bun.TOML.parse(read("bunfig.toml")) as {
+  test: { coverageReporter: string[]; coverageDir: string; coverageSkipTestFiles: boolean };
 };
 
 /** Every Rust source llvm-cov can report on (workspace crates and the Tauri crate), `/`-separated. */
@@ -69,25 +67,35 @@ describe("coverage policy", () => {
     });
   });
 
-  describe("UI (vitest)", () => {
-    it("measures every TS module and Preact component", () => {
-      expect(coverage.include).toEqual(["src/**/*.{ts,tsx}"]);
-    });
-
+  describe("UI (bun test + scripts/coverage-gate.ts)", () => {
     it("excludes exactly the documented globs", () => {
-      expect(coverage.exclude).toEqual(documented("UI excludes"));
+      expect(EXCLUDES).toEqual(documented("UI excludes"));
     });
 
-    it("gates TypeScript and TSX each at the threshold, plus the total", () => {
-      const globs = documented("UI per-language thresholds");
-      expect(globs).toEqual(["src/**/*.ts", "src/**/*.tsx"]);
-      const expected: Record<string, number | { lines: number }> = { lines: threshold };
-      for (const g of globs) expected[g] = { lines: threshold };
-      expect(coverage.thresholds).toEqual(expected);
+    it("gates TypeScript and TSX each at the threshold", () => {
+      expect(documented("UI per-language thresholds")).toEqual(["src/**/*.ts", "src/**/*.tsx"]);
+      expect(GLOBS).toEqual(documented("UI per-language thresholds"));
+      expect(THRESHOLD).toBe(threshold);
+    });
+
+    it("measures every TS module and TSX component", () => {
+      const all = (readdirSync(new URL("src", root), { recursive: true }) as string[]).map(
+        (p) => `src/${p.replace(/\\/g, "/")}`,
+      );
+      const scanned = measured(scanSources(fileURLToPath(root)));
+      expect(scanned).toContain("src/lib/history.ts");
+      expect(scanned).toContain("src/main/App.tsx");
+      expect(scanned).toEqual(measured(all));
+    });
+
+    it("gates the lcov report bun test writes, without the test files", () => {
+      expect(bunfig.test.coverageReporter).toContain("lcov");
+      expect(LCOV).toBe(`${bunfig.test.coverageDir}/lcov.info`);
+      expect(bunfig.test.coverageSkipTestFiles).toBe(true);
     });
 
     it("runs both gates from bun run coverage", () => {
-      expect(packageJson.scripts["coverage:ui"]).toBe("bun --bun vitest run --coverage");
+      expect(packageJson.scripts["coverage:ui"]).toBe("bun test --coverage && bun scripts/coverage-gate.ts");
       expect(packageJson.scripts.coverage).toBe("bun run coverage:ui && bun run coverage:rust");
     });
   });

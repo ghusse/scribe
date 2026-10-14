@@ -1,19 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Settings as SettingsT } from "../lib/api";
 import type { SaveState } from "../lib/autosave";
 import { CAPTURE_TIMEOUT_MESSAGE } from "../lib/hotkeys";
 import { calls, commands, invoke, resetTauri } from "../../tests/tauri";
 import { PROVIDERS, settings } from "../../tests/fixtures";
+import { advanceTimers } from "../../tests/timers";
 import Settings from "./Settings";
 import styles from "./Settings.module.css";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 
 let stored: Record<string, boolean>;
 
 beforeEach(() => {
   resetTauri();
+  // Debounce and fade-out delays run on fake time: waitFor advances it, so the file takes no real seconds.
+  vi.useFakeTimers();
   Element.prototype.scrollIntoView = vi.fn();
   stored = { openai: true, anthropic: true };
   commands({
@@ -29,6 +30,10 @@ beforeEach(() => {
     cancel_capture: () => undefined,
     get_autostart: () => false,
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** Mounts Settings, records what it reports through `onStatusChange` and waits for the form. */
@@ -80,7 +85,7 @@ describe("Settings: loading", () => {
     await setup();
     expect(screen.getByText("Aucune")).toBeTruthy();
     expect((screen.getByLabelText("Désactiver la touche de verrouillage") as HTMLButtonElement).disabled).toBe(true);
-    await new Promise((r) => setTimeout(r, 600));
+    await advanceTimers(600);
     expect(saves()).toHaveLength(0);
   });
 });
@@ -126,7 +131,7 @@ describe("Settings: autosave", () => {
     await fireEvent.click(box);
     await fireEvent.click(box);
     expect(status()).toBe("saved");
-    await new Promise((r) => setTimeout(r, 600));
+    await advanceTimers(600);
     expect(saves()).toHaveLength(0);
   });
 
@@ -179,7 +184,7 @@ describe("Settings: autosave", () => {
     await fireEvent.click(screen.getByLabelText(/Double-tap/));
     await waitFor(() => expect(saves()).toHaveLength(1), SAVE_WAIT);
     await fireEvent.change(select(/Niveau de correction/), { target: { value: "clean" } });
-    await new Promise((r) => setTimeout(r, 600)); // the debounce fires while the first save is in flight
+    await advanceTimers(600); // the debounce fires while the first save is in flight
     expect(saves()).toHaveLength(1);
     commands({ save_settings: () => undefined });
     finish();
@@ -199,7 +204,7 @@ describe("Settings: autosave", () => {
     await fireEvent.click(box); // and to what is being saved
     finish();
     await waitFor(() => expect(status()).toBe("saved"));
-    await new Promise((r) => setTimeout(r, 600));
+    await advanceTimers(600);
     expect(saves()).toHaveLength(1);
   });
 
@@ -523,7 +528,7 @@ describe("Settings: hotkeys", () => {
     answer([0x41]); // a key that arrives after the cancel is ignored
     await waitFor(() => expect(screen.getByText("Espace")).toBeTruthy());
     expect(screen.queryByText(/saisie normale/)).toBeNull();
-    await new Promise((r) => setTimeout(r, 600));
+    await advanceTimers(600);
     expect(saves()).toHaveLength(0);
   });
 
@@ -613,7 +618,7 @@ describe("Settings: hotkeys", () => {
     expect(await screen.findByRole("button", { name: "Changer le raccourci de déclenchement" })).toBeTruthy();
     expect(screen.getByText("Alt droit (AltGr)")).toBeTruthy();
     expect(screen.queryByText(CAPTURE_TIMEOUT_MESSAGE)).toBeNull();
-    await new Promise((r) => setTimeout(r, 600));
+    await advanceTimers(600);
     expect(saves()).toHaveLength(0);
   });
 

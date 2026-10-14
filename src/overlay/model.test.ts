@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import type { OverlayEvent } from "../lib/api";
 import { barHeight, createOverlay, emptyLevels, LEVEL_BARS, pushLevel, reduce, toastActions, toastTimeout, type OverlayView } from "./model";
 

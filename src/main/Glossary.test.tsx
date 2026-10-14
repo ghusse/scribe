@@ -1,10 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/preact";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Term } from "../lib/api";
 import { calls, commands, resetTauri } from "../../tests/tauri";
 import Glossary from "./Glossary";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 
 const term = (id: number, t: string, variants: string[], note: string | null = null): Term => ({
   id, term: t, variants, note, source: "manual", use_count: id * 2, last_used_at: null, created_at: "2026-10-01T00:00:00Z",
@@ -78,7 +76,7 @@ describe("Glossary", () => {
 
     commands({ add_term: () => 10 });
     await fireEvent.submit(termInput.form!);
-    await vi.waitFor(() => expect(screen.queryByText("terme en double")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("terme en double")).toBeNull());
   });
 
   it("edits a term in place and saves it", async () => {
@@ -91,7 +89,7 @@ describe("Glossary", () => {
     await type(v, "cube,");
     await type(n, "");
     await fireEvent.click(screen.getByText("OK"));
-    await vi.waitFor(() => expect(screen.getByText("Modifier")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Modifier")).toBeTruthy());
     expect(calls("update_term")).toEqual([{ id: 1, term: "K8s", variants: ["cube"], note: null }]);
   });
 

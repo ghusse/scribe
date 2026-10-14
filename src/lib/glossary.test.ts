@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { joinVariants, noteOrNull, splitVariants } from "./glossary";
 
 describe("glossary fields", () => {

@@ -1,0 +1,6 @@
+[test]
+preload = ["./tests/dom.ts", "./tests/css-modules.ts", "./tests/setup.ts"]
+# `bun test --coverage` (bun run coverage:ui); the per-language gate is scripts/coverage-gate.ts, on the lcov report.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage/ui"
+coverageSkipTestFiles = true

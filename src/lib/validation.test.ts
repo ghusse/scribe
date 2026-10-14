@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { Settings } from "./api";
 import { checkModelId, checkNumbers, fieldHelp, NUMBER_FIELDS, parseNumber, rangeMessage, retentionOptions } from "./validation";
 

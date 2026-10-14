@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { render } from "@testing-library/preact";
 import { signal } from "@preact/signals";
 import { cx, useSyncEffect, useTick } from "./ui";

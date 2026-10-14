@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "bun:test";
 import { invoke, resetTauri } from "../../tests/tauri";
 import { api, effortLevels, type Provider, type Settings } from "./api";
 
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
 
 beforeEach(() => {
   resetTauri();

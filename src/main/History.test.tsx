@@ -1,13 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import type { Dictation } from "../lib/api";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
+import { advanceTimers } from "../../tests/timers";
 import { COPY_FEEDBACK_MS } from "../lib/history";
 import History, { type HistoryProps } from "./History";
 import styles from "./History.module.css";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
-vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
 
 const dictation = (id: number, over: Partial<Dictation> = {}): Dictation => ({
   id, created_at: "2026-10-05T10:00:00Z", mode: "hold", app_name: "Code", audio_path: `a${id}.wav`, duration_ms: 4200,
@@ -140,12 +138,14 @@ describe("History", () => {
   });
 
   it("copies a dictation, confirms it on the button and the card, then goes back to « Copier »", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     try {
       await mount();
       await fireEvent.click(button(1, "Copier"));
       expect(calls("copy_dictation")).toEqual([{ id: 1 }]);
-      await waitFor(() => expect(button(1, "✓ Copié").classList.contains(styles.copied)).toBe(true));
+      // Not waitFor: under fake timers it moves the clock 50 ms per retry, eating into the feedback delay measured below.
+      await advanceTimers(0);
+      expect(button(1, "✓ Copié").classList.contains(styles.copied)).toBe(true);
       expect(card(1).classList.contains(styles.justCopied)).toBe(true);
       expect(card(2).classList.contains(styles.justCopied)).toBe(false);
       expect(screen.getByText("Texte copié").getAttribute("aria-live")).toBe("polite");

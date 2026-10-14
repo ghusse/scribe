@@ -1,11 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
 import Overlay from "./Overlay";
 import styles from "./Overlay.module.css";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
-vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
 
 const toast = (over: Record<string, unknown> = {}) => ({
   kind: "toast", level: "info", message: "Inséré", preview: "Bonjour", dictation_id: 7, ...over,
@@ -109,7 +106,7 @@ describe("Overlay", () => {
     await Promise.resolve();
     expect(screen.getByText("Inséré")).toBeTruthy();
     vi.advanceTimersByTime(1);
-    await vi.waitFor(() => expect(screen.queryByText("Inséré")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Inséré")).toBeNull());
     expect(calls("overlay_dismiss")).toHaveLength(1);
   });
 
@@ -124,13 +121,16 @@ describe("Overlay", () => {
 
   it("logs a failed dismiss instead of leaving an unhandled rejection", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    commands({ overlay_dismiss: () => Promise.reject("fenêtre fermée") });
-    await mount();
-    await fire("overlay", toast());
-    await fireEvent.click(screen.getByLabelText("Fermer"));
-    await waitFor(() => expect(logged).toHaveBeenCalledWith("fenêtre fermée"));
-    expect(screen.queryByText("Inséré")).toBeNull();
-    logged.mockRestore();
+    try {
+      commands({ overlay_dismiss: () => Promise.reject("fenêtre fermée") });
+      await mount();
+      await fire("overlay", toast());
+      await fireEvent.click(screen.getByLabelText("Fermer"));
+      await waitFor(() => expect(logged).toHaveBeenCalledWith("fenêtre fermée"));
+      expect(screen.queryByText("Inséré")).toBeNull();
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("stops listening when unmounted", async () => {
