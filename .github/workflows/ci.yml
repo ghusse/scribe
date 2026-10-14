@@ -25,7 +25,7 @@ jobs:
           components: llvm-tools-preview, rustfmt
 
       - name: Rust format (cargo fmt)
-        run: bun run fmt:check
+        run: cargo fmt --all --check
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
