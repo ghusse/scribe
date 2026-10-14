@@ -1,10 +1,9 @@
-// @vitest-environment node
 // The prepare step of semantic-release (scripts/release-version.ts): the release commit must change exactly the
 // app version in package.json, src-tauri/Cargo.toml ([package]) and Cargo.lock (scribe-app), nothing else.
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   assertVersion,
   bumpVersion,
@@ -92,14 +91,18 @@ describe("setCargoLockVersion", () => {
 });
 
 describe("bumpVersion / main", () => {
-  let dir: string;
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
 
   function scratch(): string {
-    dir = mkdtempSync(join(tmpdir(), "release-version-"));
-    mkdirSync(join(dir, "src-tauri"));
-    for (const file of RELEASE_FILES) copyFileSync(new URL(file, repo), join(dir, file));
-    return dir;
+    const root = mkdtempSync(join(tmpdir(), "release-version-"));
+    dir = root;
+    mkdirSync(join(root, "src-tauri"));
+    for (const file of RELEASE_FILES) copyFileSync(new URL(file, repo), join(root, file));
+    return root;
   }
 
   it("writes the version into the three release files", () => {

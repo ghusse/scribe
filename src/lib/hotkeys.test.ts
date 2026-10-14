@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { assignHotkey, CAPTURE_GRACE_MS, captureOutcome, isTypingKey, normalizeLock, pendingSummary, swallowsKey } from "./hotkeys";
 
 const CTRL_R = 0xa3, CTRL_L = 0xa2, SHIFT_L = 0xa0, ALT_L = 0xa4, SPACE = 0x20, F8 = 0x77, A = 0x41, B = 0x42;
@@ -25,7 +25,7 @@ describe("assignHotkey", () => {
     });
   });
   it("refuses the lock key inside a combination, or a swap that would put a combination on the lock", () => {
-    const refused = { ok: false, note: "Espace est la touche de verrouillage : elle ne peut pas faire partie du raccourci." };
+    const refused = { ok: false as const, note: "Espace est la touche de verrouillage : elle ne peut pas faire partie du raccourci." };
     expect(assignHotkey("trigger", [CTRL_L, SPACE], cur)).toEqual(refused);
     expect(assignHotkey("trigger", [SPACE], { trigger_keys: [CTRL_L, A], lock_vk: SPACE })).toEqual(refused);
     // Side-less Ctrl in a combination: « Ctrl droit » as the lock would never work.

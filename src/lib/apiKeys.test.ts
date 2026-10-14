@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { Provider } from "./api";
 import { canSaveKey, deleteKeyQuestion, KEY_STATE_LABELS, keyPlaceholder, keyState, keyUsage, missingKeys, missingKeyWarning, needsSetup, rolesText, setupBannerParts, splitProviders, unsavedDraftMessage, unsavedDrafts } from "./apiKeys";
 

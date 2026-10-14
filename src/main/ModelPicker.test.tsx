@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/preact";
+import { describe, expect, it, vi } from "bun:test";
+import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import ModelPicker from "./ModelPicker";
 
@@ -63,7 +63,7 @@ describe("ModelPicker", () => {
     await fireEvent.change(select, { target: { value: "__custom__" } });
     const input = (await screen.findByLabelText(CUSTOM_LABEL)) as HTMLInputElement;
     expect(input.value).toBe("a-2");
-    await vi.waitFor(() => expect(document.activeElement).toBe(input));
+    await waitFor(() => expect(document.activeElement).toBe(input));
     expect(props.value).toBe("a-2");
     expect(props.onChange).not.toHaveBeenCalled();
   });

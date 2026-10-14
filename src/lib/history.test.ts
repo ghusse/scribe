@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { canCopy, canRetranscribe, currentText, displayText, editDraft, editPayload, latestOnly, OUTCOME_BADGES, STALE, timingLine } from "./history";
 
 const texts = (raw: string | null, final: string | null, edited: string | null) => ({ raw_text: raw, final_text: final, edited_text: edited });
@@ -88,7 +88,9 @@ describe("latestOnly", () => {
     const first = latest(a.promise);
     const second = latest(Promise.reject("latest failed"));
     a.reject("old failed");
-    await expect(first).resolves.toBe(STALE);
-    await expect(second).rejects.toBe("latest failed");
+    // bun's `.rejects` attaches no handler, so `second` must be handled before it rejects.
+    const [stale, failed] = await Promise.allSettled([first, second]);
+    expect(stale).toEqual({ status: "fulfilled", value: STALE });
+    expect(failed).toEqual({ status: "rejected", reason: "latest failed" });
   });
 });

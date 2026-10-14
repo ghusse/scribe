@@ -3,23 +3,31 @@
 ## Coverage rule (mandatory)
 
 At least **95 % line coverage on every language**: Rust, TypeScript and Preact components (TSX). Each language has
-its own gate: the Rust workspace total (cargo-llvm-cov), and in vitest one threshold per glob (`src/**/*.ts`,
-`src/**/*.tsx`) on top of the UI total, so a well-covered language cannot hide a poorly covered one. CI
-fails below any of them.
+its own gate: the Rust workspace total (cargo-llvm-cov), and for the UI one threshold per glob (`src/**/*.ts`,
+`src/**/*.tsx`) on top of the UI total (`scripts/coverage-gate.ts`), so a well-covered language cannot hide a poorly
+covered one. CI fails below any of them.
 
 ```bash
-bun run coverage:ui     # vitest on the bun runtime + @vitest/coverage-istanbul, thresholds in vitest.config.ts (lines: 95, per glob)
+bun run coverage:ui     # bun test --coverage (lcov, bunfig.toml), then scripts/coverage-gate.ts (lines: 95, per glob)
 bun run coverage:rust   # cargo llvm-cov --workspace --fail-under-lines 95 --ignore-filename-regex ...
 bun run coverage        # both, locally (CI runs them as two independent steps)
 ```
 
-Reports: UI in `coverage/ui/` (html + lcov); Rust in the terminal (`cargo llvm-cov --workspace --html` for html).
+Reports: UI in the terminal and `coverage/ui/lcov.info`; Rust in the terminal (`cargo llvm-cov --workspace --html`
+for html). bun only reports the files a test loaded: the gate fails on any measured source missing from the report.
 Prerequisites: `rustup component add llvm-tools-preview` and `cargo install cargo-llvm-cov`.
 
-Preact components are covered through component tests (`@testing-library/preact` + happy-dom, see
-`src/main/ModelPicker.test.tsx`, which also shows how to observe a controlled `value` / `onValueChange` prop pair); mock `@tauri-apps/api/core` (`invoke`) and `@tauri-apps/api/event` (`listen`)
-with `vi.mock` and the shared doubles in `tests/tauri.ts` (`commands({...})` answers each command, `emit` fires
-an event, `calls` lists a command's arguments), with settings and providers from `tests/fixtures.ts`; `tests/setup.ts` unmounts every render after each test.
+UI tests run with `bun test` (`bunfig.toml` preloads, in order: `tests/dom.ts` happy-dom globals, `tests/css-modules.ts`
+real CSS modules compiled by bun's bundler, `tests/setup.ts`). Every test file shares one process, so module mocks
+are global: `tests/setup.ts` installs the Tauri doubles of `tests/tauri.ts` for `@tauri-apps/api/core` (`invoke`)
+and `@tauri-apps/api/event` (`listen`) once, resets them (implementations included) before each test and unmounts
+every render after it; never `mock.module` / `vi.mock` them in a test file. `commands({...})` answers each command,
+`emit` fires an event, `calls` lists a command's arguments; settings and providers come from `tests/fixtures.ts`.
+Preact components are covered through component tests (`@testing-library/preact`, see
+`src/main/ModelPicker.test.tsx`, which also shows how to observe a controlled `value` / `onValueChange` prop pair).
+Wait with `@testing-library/preact`'s `waitFor` / `findBy*` (bun has no `vi.waitFor`); under fake timers it advances
+them 50 ms per retry. Bun has no `vi.advanceTimersByTimeAsync`: use `advanceTimers` from `tests/timers.ts`, and
+restore real timers in an `afterEach` so a failing test cannot leak them.
 Shared component hooks (`useTick`, `useSyncEffect`) and `cx` live in `src/lib/ui.ts`. Decision logic
 stays out of components (`src/overlay/model.ts`, `src/lib/history.ts`, `src/lib/glossary.ts`, ...) and is tested
 there as plain functions.
@@ -36,7 +44,7 @@ Excluding a file is allowed **only** for thin OS/framework adapters with no deci
 device/clipboard glue, Tauri bootstrap, UI entry files). Any logic in such a file must first be extracted into a
 tested module. Every exclusion is listed below and must match the tooling **exactly**.
 `tests/coverage-policy.test.ts` (run by `bun run test`) fails when the lines below and the tooling disagree: the
-threshold, the Rust regex and the set of Rust files it actually excludes, the vitest excludes and per-glob
+threshold, the Rust regex and the set of Rust files it actually excludes, the UI gate's excludes and per-glob
 thresholds, and the two CI coverage steps.
 
 - Threshold (lines, every language): `95`
@@ -53,9 +61,9 @@ thresholds, and the two CI coverage steps.
   `crates/scribe-platform/src/windows/hook.rs`, `crates/scribe-platform/src/windows/keys.rs`,
   `crates/scribe-platform/src/windows/mod.rs`, `crates/scribe-platform/src/windows/window.rs`, `src-tauri/src/main.rs`,
   `src-tauri/src/tray.rs`, `src-tauri/src/adapters.rs`
-- UI excludes (`vitest.config.ts` > `coverage.exclude`): `src/**/*.test.{ts,tsx}`, `src/main/main.tsx`,
-  `src/overlay/main.tsx`, `preview/**`
-- UI per-language thresholds (`vitest.config.ts` > `coverage.thresholds`): `src/**/*.ts`, `src/**/*.tsx`
+- UI excludes (`scripts/coverage-gate.ts` > `EXCLUDES`): `src/**/*.d.ts`, `src/**/*.test.{ts,tsx}`,
+  `src/main/main.tsx`, `src/overlay/main.tsx`, `preview/**`
+- UI per-language thresholds (`scripts/coverage-gate.ts` > `GLOBS`): `src/**/*.ts`, `src/**/*.tsx`
 
 | Excluded | Why |
 |---|---|
@@ -66,6 +74,7 @@ thresholds, and the two CI coverage steps.
 | `src-tauri/src/tray.rs` | Tauri tray icon and menu construction; each menu item calls one tested function. |
 | `src-tauri/src/adapters.rs` | Implementations of the app seams on Tauri/Win32/AppKit/cpal: `TauriUi` (`UiSink`: `emit_to`), `TauriOverlayWindow` (`OverlayWindow`: `emit_to` + show/hide), `CpalRecorder` (`Recorder`), `TauriAutostart` (`LaunchAtLogin`: tauri-plugin-autostart), `TauriUpdater` (`AppUpdater`: tauri-plugin-updater; startup check and messages are `update.rs`), overlay placement call, `show_main`. Needs a running Tauri app, a desktop and a microphone. |
 | `src/main/main.tsx`, `src/overlay/main.tsx` | UI entry files: a single `render(...)` call and the global stylesheet import. |
+| `src/**/*.d.ts` | Type declarations (CSS module typing): no runtime code. |
 | `src/**/*.test.{ts,tsx}`, `preview/**` | Tests themselves; local design previews (not shipped). |
 
 What is left in excluded files is wiring only; every decision lives in a tested module:

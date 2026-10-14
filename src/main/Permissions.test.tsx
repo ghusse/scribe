@@ -1,11 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/preact";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { calls, commands, resetTauri } from "../../tests/tauri";
+import { advanceTimers } from "../../tests/timers";
 import type { PermissionStatus } from "../lib/api";
 import Permissions from "./Permissions";
-
-vi.mock("@tauri-apps/api/core", () => import("../../tests/tauri").then((m) => m.coreModule));
-vi.mock("@tauri-apps/api/event", () => import("../../tests/tauri").then((m) => m.eventModule));
 
 let statuses: PermissionStatus[];
 
@@ -32,7 +30,7 @@ describe("Permissions", () => {
   it("shows nothing when every permission is granted (or on Windows, which asks for none)", async () => {
     statuses = [];
     render(<Permissions />);
-    await vi.waitFor(() => expect(calls("permissions")).toHaveLength(1));
+    await waitFor(() => expect(calls("permissions")).toHaveLength(1));
     expect(panel()).toBeNull();
   });
 
@@ -52,22 +50,22 @@ describe("Permissions", () => {
     expect(calls("open_permission_settings")).toEqual([{ permission: "microphone" }]);
     statuses = [{ permission: "accessibility", state: "granted" }, { permission: "microphone", state: "granted" }];
     await fireEvent.click(screen.getByRole("button", { name: "Autoriser" }));
-    await vi.waitFor(() => expect(panel()).toBeNull());
+    await waitFor(() => expect(panel()).toBeNull());
   });
 
   it("polls while something is missing, so a grant in System Settings shows up; a failed read keeps the state", async () => {
     vi.useFakeTimers();
     render(<Permissions />);
-    await vi.advanceTimersByTimeAsync(0);
+    await advanceTimers(0);
     expect(calls("permissions")).toHaveLength(1);
     commands({ permissions: () => { throw new Error("ipc"); } });
-    await vi.advanceTimersByTimeAsync(1500);
+    await advanceTimers(1500);
     expect(calls("permissions")).toHaveLength(2);
     expect(panel()).not.toBeNull();
     commands({ permissions: () => [] });
-    await vi.advanceTimersByTimeAsync(1500);
+    await advanceTimers(1500);
     expect(panel()).toBeNull();
-    await vi.advanceTimersByTimeAsync(3000);
+    await advanceTimers(3000);
     expect(calls("permissions")).toHaveLength(3);
   });
 
