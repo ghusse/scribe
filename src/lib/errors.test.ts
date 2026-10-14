@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AppError, Notice, ProviderError, SettingsError } from "./api";
 import { errorText, noticeText, providerErrorDetail, providerErrorText, settingsErrorText, storedErrorText } from "./errors";
 import { lang } from "./i18n";
+import { PRESETS, STYLES } from "../../tests/fixtures";
 
 describe("providerErrorText", () => {
   test.each<[ProviderError, string | null, string]>([
@@ -58,6 +59,32 @@ test.each<[SettingsError, string]>([
   [{ code: "model_required" }, "choisissez un modèle de transcription et un modèle de correction"],
 ])("settingsErrorText %o", (e, text) => {
   expect(settingsErrorText(e)).toBe(text);
+});
+
+describe("settingsErrorText: style errors name the style", () => {
+  const custom = { id: "u1", preset: null, name: "Compte rendu", keyword: "cr", aliases: ["c r"], custom_task: null };
+  const ctx = { styles: [...STYLES, custom], presets: PRESETS };
+  test.each<[SettingsError, string]>([
+    [{ code: "default_style_missing" }, "le style par défaut est obligatoire, et chaque autre style a besoin d'un mot-clé"],
+    [{ code: "duplicate_style_id" }, "deux styles ont le même identifiant"],
+    [{ code: "too_many_styles", max: 10 }, "10 styles au maximum"],
+    [{ code: "too_many_aliases", index: 3, max: 8 }, "Mail : 8 autres formes entendues au maximum"],
+    [{ code: "style_name_required", index: 4 }, "Compte rendu : donnez un nom au style"],
+    [{ code: "trigger_empty", index: 2 }, "Slack : un mot-clé ou une forme entendue doit contenir au moins une lettre ou un chiffre"],
+    [{ code: "duplicate_trigger", trigger: "c r" }, "Compte rendu : « c r » est déjà utilisé par un autre style"],
+    [{ code: "duplicate_trigger", trigger: "zz" }, "« zz » est utilisé par deux styles"],
+    [{ code: "task_empty", index: 0 }, "Par défaut : rédigez ses instructions"],
+    [{ code: "task_too_long", index: 1, max_chars: 4000 }, "Propre : instructions de plus de 4000 caractères"],
+  ])("%o", (e, text) => {
+    expect(settingsErrorText(e, ctx)).toBe(text);
+    expect(errorText({ code: "invalid_settings", error: e }, ctx)).toBe(text);
+  });
+
+  test("without the styles, a style is named by its position", () => {
+    expect(settingsErrorText({ code: "task_empty", index: 4 })).toBe("Style 5 : rédigez ses instructions");
+    lang.value = "en";
+    expect(settingsErrorText({ code: "duplicate_trigger", trigger: "x" })).toBe('"x" is used by two styles');
+  });
 });
 
 describe("errorText", () => {

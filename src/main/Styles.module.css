@@ -1,0 +1,21 @@
+.fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.fieldset.off { opacity: 0.55; }
+.head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.head h3 { flex: 1; margin: 0; }
+.task { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.task textarea { min-height: 9em; }
+.task textarea, .improve textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.taskFoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: -2px; }
+.language { flex: 1; font-size: 13px; color: var(--muted); }
+.improve { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); background: color-mix(in srgb, var(--accent) 4%, var(--card)); }
+.improve .task { margin: 0; }
+.improve textarea { min-height: 3.5em; }
+.buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.proposalGroup { display: flex; flex-direction: column; gap: 6px; }
+.label { font-size: 13px; color: var(--muted); }
+.proposal { white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card)); font: inherit; font-size: 13px; }
+.error { color: var(--danger); margin: 0; }
+.footer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.footer button:disabled, .head button:disabled, .taskFoot button:disabled, .improve button:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -1,5 +1,5 @@
 // Fake Tauri backend for the screenshot pages: answers every command of src/lib/api.ts with fictional data.
-import type { Dictation, Provider, Settings, Term } from "../../src/lib/api";
+import type { Dictation, PresetView, Provider, Settings, Style, Term } from "../../src/lib/api";
 
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 
@@ -8,7 +8,13 @@ const settings: Settings = {
   trigger_keys: [0x5c],
   lock_vk: 0x20,
   gesture: { hold_threshold_ms: 300, double_tap_window_ms: 350, double_tap_enabled: true, lock_key_enabled: true },
-  level: "formatted",
+  correction_enabled: true,
+  styles: [
+    { id: "default", preset: "default", name: null, keyword: null, aliases: [], custom_task: null },
+    { id: "slack", preset: "slack", name: null, keyword: "slack", aliases: [], custom_task: null },
+    { id: "mail", preset: "mail", name: null, keyword: "mail", aliases: ["email"], custom_task: null },
+  ] satisfies Style[],
+  offered_builtins: ["default", "clean", "slack", "mail"],
   stt_provider: "openai",
   stt_model: "gpt-transcribe",
   llm_provider: "anthropic",
@@ -25,6 +31,13 @@ const settings: Settings = {
   mute_audio_during_dictation: true,
   exclusive_microphone_during_dictation: false,
 };
+
+const presets: PresetView[] = [
+  { preset: "default", name: "Default", task: "- Fix misrecognised words, using the glossary above first.\n- Restore punctuation and capitalisation." },
+  { preset: "clean", name: "Clean", task: "- Fix misrecognised words.\n- Restore punctuation." },
+  { preset: "slack", name: "Slack", task: "- Write a Slack message ready to send, concise and direct." },
+  { preset: "mail", name: "Email", task: "- Lay the text out as an email: a greeting, short paragraphs, then a closing." },
+];
 
 const efforts = ["low", "medium", "high"];
 const providers: Provider[] = [
@@ -49,7 +62,7 @@ const providers: Provider[] = [
 function dictation(id: number, over: Partial<Dictation>): Dictation {
   return {
     id, created_at: minutesAgo(id * 17), mode: "hold", app_name: null, audio_path: "demo.wav", duration_ms: 8000,
-    raw_text: null, final_text: null, edited_text: null, level: "formatted", transcriber: "openai/gpt-transcribe",
+    raw_text: null, final_text: null, edited_text: null, style: "default", body_start: null, transcriber: "openai/gpt-transcribe",
     corrector: "anthropic/claude-opus-5-5", stt_ms: 620, llm_ms: 840, outcome: "pasted", error: null, ...over,
   };
 }
@@ -95,6 +108,7 @@ const routes: Record<string, (args: Record<string, unknown>) => unknown> = {
   language: () => "en",
   key_status: () => ({ openai: true, anthropic: true, mistral: false, groq: false }),
   providers: () => providers,
+  style_catalog: () => ({ presets, styles: presets.map((p) => ({ id: p.preset, name: p.name })), correction_enabled: true }),
   get_autostart: () => true,
   check_update: () => ({ current: "1.0.0", available: null }),
   permissions: () => [

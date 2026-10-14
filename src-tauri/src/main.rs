@@ -86,6 +86,7 @@ fn main() {
                 audio_mute,
                 secrets: secret_store,
                 providers: Box::new(providers::build),
+                corrector: Box::new(providers::build_corrector),
                 warm_up: Box::new(providers::warm_up),
                 overlay: Overlay::new(Arc::new(TauriOverlayWindow::new(app.handle().clone()))),
                 ui: Arc::new(TauriUi(app.handle().clone())),
@@ -177,6 +178,9 @@ fn main() {
             commands::install_update,
             commands::providers,
             commands::language,
+            commands::style_catalog,
+            commands::restore_builtin_styles,
+            commands::improve_style,
             commands::overlay_dismiss,
             commands::open_history,
         ])

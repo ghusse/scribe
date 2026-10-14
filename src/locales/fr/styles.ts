@@ -1,0 +1,35 @@
+import type { styles as En } from "../en/styles";
+
+export const styles: typeof En = {
+  help: "Commencez une dictée par le mot-clé d'un style (« Slack, … ») pour l'appliquer : le mot-clé n'est pas collé. Sans mot-clé, le style par défaut s'applique.",
+  correctionOff:
+    "La correction est désactivée : les styles ne s'appliquent pas. Un mot-clé dit en début de dictée est quand même retiré.",
+  defaultHint: "S'applique quand aucun mot-clé n'est dit.",
+  name: "Nom",
+  keyword: "Mot-clé",
+  aliases: "Autres formes entendues",
+  aliasesPlaceholder: "Séparées par des virgules (ex. formes mal entendues)",
+  task: "Instructions",
+  followsLanguage: "Suit la langue de l'application",
+  writtenIn: (language) => `Rédigées en ${language}`,
+  languages: { en: "anglais", fr: "français" },
+  reset: "Rétablir l'original",
+  delete: "Supprimer",
+  add: "Ajouter un style",
+  max: (max) => `${max} styles au maximum.`,
+  restore: "Rétablir les styles intégrés",
+  restoreFailed: (error) => `Impossible de rétablir les styles intégrés : ${error}`,
+  number: (n) => `Style ${n}`,
+  improve: {
+    request: "Que doit faire ce style ?",
+    placeholder: "ex. Traduire en anglais, phrases courtes, sans formule de politesse",
+    open: "Améliorer avec l'IA",
+    run: "Générer",
+    running: "Génération…",
+    cancel: "Annuler",
+    proposal: "Instructions proposées",
+    use: "Utiliser",
+    discard: "Ignorer",
+    failed: (error) => `Amélioration impossible : ${error}`,
+  },
+};

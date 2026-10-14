@@ -15,7 +15,7 @@ export interface TestLine {
   raw: string | null;
 }
 
-/** One line of the test result; `outcome` null means not used (raw level). */
+/** One line of the test result; `outcome` null means not used (correction off). */
 export function testLine(role: string, provider: string, model: string, outcome: TestOutcome | null): TestLine {
   const m = t.value.settings.test;
   const title = `${role} · ${provider} / ${model}`;

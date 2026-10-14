@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Level = "raw" | "clean" | "formatted";
 export type Outcome = "pasted" | "pasted_uncertain" | "clipboard" | "error";
 
 export interface Dictation {
@@ -13,7 +12,10 @@ export interface Dictation {
   raw_text: string | null;
   final_text: string | null;
   edited_text: string | null;
-  level: Level;
+  /** Id of the style whose task ran; null when correction was off. */
+  style: string | null;
+  /** Byte offset of the body in `raw_text` when a keyword was detected. */
+  body_start: number | null;
   transcriber: string | null;
   corrector: string | null;
   stt_ms: number | null;
@@ -51,7 +53,11 @@ export interface Settings {
   trigger_keys: number[];
   lock_vk: number;
   gesture: GestureConfig;
-  level: Level;
+  correction_enabled: boolean;
+  /** The default style first; validated by the backend (`style::validate`). */
+  styles: Style[];
+  /** Ids of the built-in styles already offered to this user (backend bookkeeping, sent back as is). */
+  offered_builtins: string[];
   stt_provider: string;
   stt_model: string;
   llm_provider: string;
@@ -70,6 +76,37 @@ export interface Settings {
   /** Other apps get no microphone input while recording (falls back to shared input when refused). */
   exclusive_microphone_during_dictation: boolean;
 }
+
+export type Preset = "default" | "clean" | "slack" | "mail";
+
+export interface CustomTask {
+  text: string;
+  /** UI language when the text was written: the text keeps it when the UI language changes. */
+  language: Language;
+}
+
+/** Mirror of `scribe_core::style::Style`. */
+export interface Style {
+  /** "default", a built-in id, or a UUID for a user style. */
+  id: string;
+  /** Built-in origin: name and task fallback, « reset » target. */
+  preset: Preset | null;
+  /** null: the preset's localized name. */
+  name: string | null;
+  /** null only for the default style. */
+  keyword: string | null;
+  aliases: string[];
+  /** null: the preset's task in the current UI language. */
+  custom_task: CustomTask | null;
+}
+
+/** A built-in preset in the current UI language. */
+export interface PresetView { preset: Preset; name: string; task: string }
+export interface StyleBadge { id: string; name: string }
+export interface StyleCatalog { presets: PresetView[]; styles: StyleBadge[]; correction_enabled: boolean }
+
+/** Mirror of `scribe_core::prompt::ImproveRequest`. */
+export interface ImproveRequest { name: string; keyword: string | null; draft: string; instructions: string }
 
 export interface LlmModel { id: string; efforts: string[] }
 export interface Provider {
@@ -126,7 +163,18 @@ export type SettingsError =
   | { code: "restore_delay_too_long"; max_ms: number }
   | { code: "correction_timeout_too_long" }
   | { code: "unknown_provider"; role: ProviderRole; id: string }
-  | { code: "model_required" };
+  | { code: "model_required" }
+  /** Style errors (`style::StyleError`): `index` is the style's position in `Settings.styles`. */
+  | { code: "default_style_missing" }
+  | { code: "duplicate_style_id" }
+  | { code: "too_many_styles"; max: number }
+  | { code: "too_many_aliases"; index: number; max: number }
+  | { code: "style_name_required"; index: number }
+  | { code: "trigger_empty"; index: number }
+  /** `trigger`: the later of the two, as typed. */
+  | { code: "duplicate_trigger"; trigger: string }
+  | { code: "task_empty"; index: number }
+  | { code: "task_too_long"; index: number; max_chars: number };
 
 /** A command's error (the rejection of `invoke`); mirror of `commands::AppError`. `detail` is untranslated. */
 export type AppError =
@@ -167,7 +215,7 @@ export type OverlayEvent =
   | { kind: "toast"; level: ToastLevel; message: Notice; preview: string | null; dictation_id: number | null };
 
 type Result<T> = { Ok: T } | { Err: ProviderError };
-/** Each call's duration in ms or its error; `llm` is null at the raw level (no correction tested). */
+/** Each call's duration in ms or its error; `llm` is null when correction is off (not tested). */
 export interface ProviderTest { stt: Result<number>; llm: Result<number> | null }
 
 export interface UpdateStatus {
@@ -213,6 +261,12 @@ export const api = {
   openPermissionSettings: (permission: Permission) => invoke<void>("open_permission_settings", { permission }),
   /** The language the UI must use: the saved choice, else the system's. Changes are sent as the `language` event. */
   language: () => invoke<Language>("language"),
+  /** Built-in presets, style names and the correction switch, in the current UI language. */
+  styleCatalog: () => invoke<StyleCatalog>("style_catalog"),
+  /** `styles` plus the missing built-ins whose id and keywords are free; nothing is saved. */
+  restoreBuiltinStyles: (styles: Style[]) => invoke<Style[]>("restore_builtin_styles", { styles }),
+  /** A new task text proposed by the corrector (only the correction key is needed). */
+  improveStyle: (request: ImproveRequest) => invoke<string>("improve_style", { request }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
 };

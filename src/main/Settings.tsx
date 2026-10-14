@@ -1,11 +1,11 @@
 import { untracked, useComputed, useSignal } from "@preact/signals";
 import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useState } from "preact/hooks";
-import { api, effortLevels, type LanguagePref, type Provider, type ProviderTest, type Settings as SettingsT } from "../lib/api";
+import { api, effortLevels, type LanguagePref, type PresetView, type Provider, type ProviderTest, type Settings as SettingsT } from "../lib/api";
 import { chordName, keyName } from "../lib/keys";
 import { editAction, SAVED_FADE_MS, staleGuard, statusView, testSignature, type SaveState } from "../lib/autosave";
 import { errorText } from "../lib/errors";
-import { t } from "../lib/i18n";
+import { lang, t } from "../lib/i18n";
 import { checkNumbers, fieldText, retentionOptions, type NumberFieldId } from "../lib/validation";
 import {
   assignHotkey,
@@ -34,12 +34,13 @@ import {
   type KeyRole,
 } from "../lib/apiKeys";
 import { testFailure, testLine } from "../lib/providerTest";
-import { effortLabel, keysHelp, languageOptions, levelOptions } from "../lib/settingsCopy";
+import { effortLabel, keysHelp, languageOptions } from "../lib/settingsCopy";
 import ModelPicker from "./ModelPicker";
 import NumberField from "./NumberField";
 import SaveStatusBar from "./SaveStatusBar";
 import SettingsNav, { type Category } from "./SettingsNav";
 import Startup from "./Startup";
+import Styles from "./Styles";
 import Updates from "./Updates";
 import { cx, useSyncEffect, useTick } from "../lib/ui";
 import styles from "./Settings.module.css";
@@ -65,6 +66,7 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   const providers = useSignal<Provider[]>([]);
   const keyStatus = useSignal<Record<string, boolean>>({});
   const keyDrafts = useSignal<Record<string, string>>({});
+  const presets = useSignal<PresetView[]>([]);
   // One category shown at a time; the others stay mounted so drafts and the autosave go on.
   const category = useSignal<Category>("general");
 
@@ -116,17 +118,18 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   const sttProvider = useComputed(() => providerOf(s.value?.stt_provider));
   const llmProvider = useComputed(() => providerOf(s.value?.llm_provider));
   const efforts = useComputed(() => (s.value ? effortLevels(llmProvider.value, s.value.llm_model) : []));
-  // Keys the current providers and level need (for the missing-key banner and the per-key status).
+  // Keys the current providers and correction need (for the missing-key banner and the per-key status).
   const usage = useComputed(() => (s.value ? keyUsage(s.value) : {}));
   const missing = useComputed(() => (s.value ? missingKeys(s.value, keyStatus.value) : []));
   const keyRows = useComputed(() => splitProviders(providers.value, usage.value));
   const labelOf = (id: string) => providerOf(id)?.label ?? id;
   const banner = useComputed(() => setupBannerParts(missing.value, labelOf));
-  const raw = useComputed(() => s.value?.level === "raw");
+  const raw = useComputed(() => s.value?.correction_enabled === false);
   const numberIssue = useComputed(() => (s.value ? checkNumbers(s.value) : null));
   const bar = useComputed(() => {
     const st = saveState.value;
-    const why = st === "failed" ? errorText(saveError.value) : st === "invalid" ? (numberIssue.value?.message ?? null) : null;
+    const ctx = { styles: s.value?.styles ?? [], presets: presets.value };
+    const why = st === "failed" ? errorText(saveError.value, ctx) : st === "invalid" ? (numberIssue.value?.message ?? null) : null;
     return statusView(st, why, flashing.value);
   });
   const attention = useComputed(() => ({ models: missing.value.length > 0, advanced: numberIssue.value !== null }));
@@ -165,6 +168,19 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
   useEffect(() => {
     load();
   }, []);
+
+  // Built-in presets in the backend's UI language: fetched again when it changes.
+  const uiLang = lang.value;
+  useEffect(() => {
+    let current = true;
+    api
+      .styleCatalog()
+      .then((c) => current && (presets.value = c.presets))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [uiLang]);
 
   // Safety net (App keeps the view mounted): never drop the last edit. A layout cleanup runs at unmount, a passive one only after paint.
   useLayoutEffect(
@@ -704,22 +720,19 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
 
             <section class={styles.section}>
               <h3 class={styles.heading}>{tr.correction.heading}</h3>
-              <label class={styles.row}>
-                {tr.correction.level}
-                <select
-                  value={cur.level}
-                  onChange={(e) => edit((d) => (d.level = e.currentTarget.value as SettingsT["level"]))}
-                >
-                  {levelOptions().map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+              <label class={cx(styles.row, styles.check)}>
+                <input
+                  type="checkbox"
+                  checked={cur.correction_enabled}
+                  onChange={(e) => edit((d) => (d.correction_enabled = e.currentTarget.checked))}
+                />{" "}
+                {tr.correction.enabled}
               </label>
             </section>
           </>,
         )}
+
+        {pane("styles", <Styles cur={cur} presets={presets.value} edit={edit} />)}
 
         {pane(
           "models",

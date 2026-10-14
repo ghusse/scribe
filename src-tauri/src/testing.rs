@@ -261,15 +261,19 @@ impl Transcriber for FakeStt {
     }
 }
 
-struct FakeLlm(Result<String, ProviderError>);
+struct FakeLlm {
+    answer: Result<String, ProviderError>,
+    prompts: Arc<Mutex<Vec<CorrectionPrompt>>>,
+}
 
 #[async_trait::async_trait]
 impl Corrector for FakeLlm {
     fn name(&self) -> Option<String> {
         Some("fake-llm".into())
     }
-    async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
-        self.0.clone()
+    async fn correct(&self, p: &CorrectionPrompt) -> Result<String, ProviderError> {
+        self.prompts.lock().unwrap().push(p.clone());
+        self.answer.clone()
     }
 }
 
@@ -323,6 +327,8 @@ pub struct Fixture {
     pub focus: Arc<FakeFocus>,
     pub secrets: Arc<MemorySecretStore>,
     pub plan: Arc<Mutex<ProviderPlan>>,
+    /// Every prompt the fake corrector received.
+    pub prompts: Arc<Mutex<Vec<CorrectionPrompt>>>,
     /// The transcription provider of each warm-up request.
     pub warm_ups: Arc<Mutex<Vec<String>>>,
     pub ctrl_rx: Receiver<ControllerMsg>,
@@ -352,6 +358,9 @@ impl Fixture {
         let secrets = Arc::new(MemorySecretStore::default());
         let plan = Arc::new(Mutex::new(ProviderPlan::default()));
         let factory_plan = plan.clone();
+        let corrector_plan = plan.clone();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let (factory_prompts, corrector_prompts) = (prompts.clone(), prompts.clone());
         let warm_ups = Arc::new(Mutex::new(Vec::new()));
         let warm_up_log = warm_ups.clone();
         let (tx, ctrl_rx) = mpsc::channel();
@@ -371,7 +380,12 @@ impl Fixture {
             providers: Box::new(move |_s, _store| {
                 let plan = factory_plan.lock().unwrap().clone();
                 plan.build?;
-                Ok((Box::new(FakeStt(plan.stt)), Box::new(FakeLlm(plan.llm))))
+                let llm = FakeLlm { answer: plan.llm, prompts: factory_prompts.clone() };
+                Ok((Box::new(FakeStt(plan.stt)), Box::new(llm)))
+            }),
+            corrector: Box::new(move |_s, _store| {
+                let answer = corrector_plan.lock().unwrap().llm.clone();
+                Box::new(FakeLlm { answer, prompts: corrector_prompts.clone() })
             }),
             warm_up: Box::new(move |s| warm_up_log.lock().unwrap().push(s.stt_provider.clone())),
             overlay: Overlay::new(window.clone()),
@@ -396,6 +410,7 @@ impl Fixture {
             focus,
             secrets,
             plan,
+            prompts,
             warm_ups,
             ctrl_rx,
             _dir: dir,
@@ -404,6 +419,10 @@ impl Fixture {
 
     pub fn plan(&self, f: impl FnOnce(&mut ProviderPlan)) {
         f(&mut self.plan.lock().unwrap());
+    }
+
+    pub fn last_prompt(&self) -> CorrectionPrompt {
+        self.prompts.lock().unwrap().last().expect("the corrector was called").clone()
     }
 
     pub fn wav_files(&self) -> Vec<std::path::PathBuf> {

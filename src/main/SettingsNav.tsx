@@ -1,8 +1,8 @@
 import { t } from "../lib/i18n";
 import styles from "./Settings.module.css";
 
-export type Category = "general" | "dictation" | "models" | "advanced";
-export const CATEGORIES: Category[] = ["general", "dictation", "models", "advanced"];
+export type Category = "general" | "dictation" | "styles" | "models" | "advanced";
+export const CATEGORIES: Category[] = ["general", "dictation", "styles", "models", "advanced"];
 
 export interface SettingsNavProps {
   current: Category;

@@ -4,8 +4,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use scribe_core::chord::{self, ChordError};
 use scribe_core::gesture::GestureConfig;
-use scribe_core::model::Level;
 use scribe_core::pipeline::{PipelineConfig, ProviderRole};
+use scribe_core::style::{self, Style, StyleError};
 use scribe_providers::catalog;
 
 use crate::locale::LanguagePref;
@@ -24,7 +24,12 @@ pub struct Settings {
     /// 0 = no lock key.
     pub lock_vk: u32,
     pub gesture: GestureConfig,
-    pub level: Level,
+    /// Off: the raw transcript is pasted (a style keyword is still stripped).
+    pub correction_enabled: bool,
+    /// Default style first (`style::catalog`), then the keyword styles in detection tie-break order.
+    pub styles: Vec<Style>,
+    /// Catalog style ids already offered to this user: a built-in they deleted is not seeded again.
+    pub offered_builtins: Vec<String>,
     /// Catalog provider id (`scribe_providers::catalog`); also the keyring entry of its API key.
     #[serde(alias = "stt_preset")]
     pub stt_provider: String,
@@ -55,7 +60,9 @@ impl Default for Settings {
             trigger_keys: vec![DEFAULT_TRIGGER],
             lock_vk: 0x20,
             gesture: GestureConfig::default(),
-            level: Level::Formatted,
+            correction_enabled: true,
+            styles: style::catalog(),
+            offered_builtins: style::catalog_ids(),
             stt_provider: "openai".into(),
             stt_model: "gpt-transcribe".into(),
             llm_provider: "anthropic".into(),
@@ -107,6 +114,40 @@ pub enum SettingsError {
     CorrectionTimeoutTooLong,
     UnknownProvider { role: ProviderRole, id: String },
     ModelRequired,
+    DefaultStyleMissing,
+    DuplicateStyleId,
+    TooManyStyles { max: usize },
+    TooManyAliases { index: usize, max: usize },
+    StyleNameRequired { index: usize },
+    TriggerEmpty { index: usize },
+    DuplicateTrigger { trigger: String },
+    TaskEmpty { index: usize },
+    TaskTooLong { index: usize, max_chars: usize },
+}
+
+impl From<StyleError> for SettingsError {
+    fn from(e: StyleError) -> Self {
+        match e {
+            StyleError::DefaultStyleMissing => SettingsError::DefaultStyleMissing,
+            StyleError::DuplicateStyleId => SettingsError::DuplicateStyleId,
+            StyleError::TooManyStyles { max } => SettingsError::TooManyStyles { max },
+            StyleError::TooManyAliases { index, max } => SettingsError::TooManyAliases { index, max },
+            StyleError::StyleNameRequired { index } => SettingsError::StyleNameRequired { index },
+            StyleError::TriggerEmpty { index } => SettingsError::TriggerEmpty { index },
+            StyleError::DuplicateTrigger { trigger } => SettingsError::DuplicateTrigger { trigger },
+            StyleError::TaskEmpty { index } => SettingsError::TaskEmpty { index },
+            StyleError::TaskTooLong { index, max_chars } => SettingsError::TaskTooLong { index, max_chars },
+        }
+    }
+}
+
+/// The correction level of files from before styles (`"level"`), read once by `load`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LegacyLevel {
+    Raw,
+    Clean,
+    Formatted,
 }
 
 impl From<ChordError> for SettingsError {
@@ -120,23 +161,70 @@ impl From<ChordError> for SettingsError {
 }
 
 impl Settings {
+    /// Reads the file, migrates a legacy `level`, seeds the catalog styles never offered, drops the styles that
+    /// break a rule, then falls back to the defaults when another setting is invalid.
     pub fn load(path: &Path) -> Settings {
-        match std::fs::read_to_string(path) {
-            Ok(text) => match serde_json::from_str::<Settings>(&text) {
-                Ok(s) => match s.validate() {
-                    Ok(()) => s.normalized(),
-                    Err(e) => {
-                        tracing::warn!("réglages invalides ({e:?}), valeurs par défaut utilisées");
-                        Settings::default()
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("réglages illisibles ({e}), valeurs par défaut utilisées");
-                    Settings::default()
-                }
-            },
-            Err(_) => Settings::default(),
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Settings::default();
+        };
+        let parsed = serde_json::from_str::<serde_json::Value>(&text).and_then(|value| {
+            let legacy = value.get("level").and_then(|l| LegacyLevel::deserialize(l).ok());
+            let had_styles = value.get("styles").is_some();
+            Ok(serde_json::from_value::<Settings>(value)?.migrated(legacy, had_styles))
+        });
+        let s = match parsed {
+            Ok(s) => s.seeded().repaired(),
+            Err(e) => {
+                tracing::warn!("réglages illisibles ({e}), valeurs par défaut utilisées");
+                return Settings::default();
+            }
+        };
+        match s.validate() {
+            Ok(()) => s.normalized(),
+            Err(e) => {
+                tracing::warn!("réglages invalides ({e:?}), valeurs par défaut utilisées");
+                Settings::default()
+            }
         }
+    }
+
+    /// `raw` turns the correction off; `clean` gives the default style the Clean task, unless the file already
+    /// has styles (never overwritten).
+    fn migrated(mut self, legacy: Option<LegacyLevel>, had_styles: bool) -> Self {
+        match legacy {
+            Some(LegacyLevel::Raw) => self.correction_enabled = false,
+            Some(LegacyLevel::Clean) if !had_styles => {
+                for s in self.styles.iter_mut().filter(|s| s.id == style::DEFAULT_STYLE_ID) {
+                    s.preset = Some(style::Preset::Clean);
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// Appends the catalog styles shipped since the last load, once.
+    fn seeded(mut self) -> Self {
+        let new: Vec<String> =
+            style::catalog_ids().into_iter().filter(|id| !self.offered_builtins.contains(id)).collect();
+        let ids: Vec<&str> = new.iter().map(String::as_str).collect();
+        let (styles, skipped) = style::with_builtins(std::mem::take(&mut self.styles), &ids);
+        if !skipped.is_empty() {
+            tracing::warn!("styles intégrés non ajoutés (id ou mot-clé déjà pris) : {skipped:?}");
+        }
+        self.styles = styles;
+        self.offered_builtins.extend(new);
+        self
+    }
+
+    /// Drops each style that breaks a rule, so one bad style never costs the other settings.
+    fn repaired(mut self) -> Self {
+        let (styles, errors) = style::repaired(std::mem::take(&mut self.styles));
+        for e in errors {
+            tracing::warn!("style ignoré : {e}");
+        }
+        self.styles = styles;
+        self
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -195,12 +283,13 @@ impl Settings {
         if self.stt_model.trim().is_empty() || self.llm_model.trim().is_empty() {
             return Err(SettingsError::ModelRequired);
         }
+        style::validate(&self.styles)?;
         Ok(())
     }
 
     pub fn pipeline_config(&self) -> PipelineConfig {
         PipelineConfig {
-            level: self.level,
+            correction_enabled: self.correction_enabled,
             hint_budget_chars: self.hint_budget_chars,
             llm_timeout_base_ms: self.llm_timeout_base_ms,
             llm_timeout_per_char_ms: self.llm_timeout_per_char_ms,
@@ -224,6 +313,9 @@ fn one_or_many<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
 
 #[cfg(test)]
 mod tests {
+    use scribe_core::lang::Language;
+    use scribe_core::style::{CustomTask, Preset};
+
     use super::*;
 
     #[test]
@@ -234,7 +326,9 @@ mod tests {
         assert_eq!(s.llm_provider, "anthropic");
         assert_eq!((s.llm_model.as_str(), s.llm_effort.as_str()), ("claude-opus-5-5", "low"));
         assert_eq!((s.min_recording_ms, s.max_recording_ms, s.restore_delay_ms), (300, 600_000, 150));
-        assert_eq!(s.level, Level::Formatted);
+        assert!(s.correction_enabled);
+        assert_eq!(s.styles, style::catalog());
+        assert_eq!(s.offered_builtins, ["default", "clean", "slack", "mail"]);
         assert!(s.mute_audio_during_dictation);
         assert!(!s.exclusive_microphone_during_dictation);
     }
@@ -268,11 +362,156 @@ mod tests {
         let s = Settings {
             stt_provider: "groq".into(),
             llm_provider: "mistral".into(),
-            level: Level::Clean,
+            correction_enabled: false,
             ..Default::default()
         };
         s.save(&path).unwrap();
         assert_eq!(Settings::load(&path), s);
+    }
+
+    fn load_json(json: &str) -> Settings {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, json).unwrap();
+        Settings::load(&path)
+    }
+
+    fn user_style(id: &str, keyword: &str) -> Style {
+        Style {
+            id: id.into(),
+            preset: None,
+            name: Some(id.to_uppercase()),
+            keyword: Some(keyword.into()),
+            aliases: vec![],
+            custom_task: Some(CustomTask { text: format!("- Style {id}."), language: Language::Fr }),
+        }
+    }
+
+    fn ids(s: &Settings) -> Vec<&str> {
+        s.styles.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    #[test]
+    fn the_legacy_level_is_migrated() {
+        let raw = load_json(r#"{"level":"raw"}"#);
+        assert!(!raw.correction_enabled);
+        assert_eq!(raw.styles, style::catalog());
+        let clean = load_json(r#"{"level":"clean"}"#);
+        assert!(clean.correction_enabled);
+        assert_eq!(clean.styles[0].preset, Some(Preset::Clean), "the default style runs the Clean task");
+        assert_eq!(clean.styles[1..], style::catalog()[1..]);
+        let formatted = load_json(r#"{"level":"formatted"}"#);
+        assert_eq!(formatted, Settings::default());
+        assert_eq!(load_json(r#"{"level":"unknown"}"#), Settings::default(), "an unknown level is ignored");
+    }
+
+    #[test]
+    fn a_migrated_file_reloads_identically_without_the_level() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for level in ["raw", "clean", "formatted"] {
+            std::fs::write(&path, format!(r#"{{"level":"{level}","llm_model":"claude-haiku-4-5"}}"#)).unwrap();
+            let first = Settings::load(&path);
+            first.save(&path).unwrap();
+            let json = std::fs::read_to_string(&path).unwrap();
+            assert!(!json.contains("\"level\"") && json.contains("\"correction_enabled\""), "{json}");
+            assert_eq!(Settings::load(&path), first, "{level}");
+        }
+    }
+
+    #[test]
+    fn a_legacy_clean_level_never_overwrites_saved_styles() {
+        let mut styles = style::catalog();
+        styles[0].custom_task = Some(CustomTask { text: "- Ma tâche.".into(), language: Language::Fr });
+        let json = serde_json::json!({"level": "clean", "styles": styles}).to_string();
+        let s = load_json(&json);
+        assert_eq!(s.styles, styles);
+        assert_eq!(s.styles[0].preset, Some(Preset::Default));
+    }
+
+    #[test]
+    fn a_new_catalog_style_is_seeded_once() {
+        let mut styles = style::catalog();
+        styles.truncate(3);
+        let json = serde_json::json!({"styles": styles, "offered_builtins": ["default", "clean", "slack"]});
+        let s = load_json(&json.to_string());
+        assert_eq!(ids(&s), ["default", "clean", "slack", "mail"], "shipped since the last load");
+        assert_eq!(s.offered_builtins, ["default", "clean", "slack", "mail"]);
+
+        let json = serde_json::json!({"styles": styles, "offered_builtins": ["default", "clean", "slack", "mail"]});
+        assert_eq!(ids(&load_json(&json.to_string())), ["default", "clean", "slack"], "deleted: not re-added");
+    }
+
+    #[test]
+    fn a_seeded_style_whose_keyword_is_taken_is_skipped() {
+        let mut styles = style::catalog();
+        styles.truncate(3);
+        styles.push(user_style("u1", "Mail"));
+        let json = serde_json::json!({"styles": styles, "offered_builtins": ["default", "clean", "slack"]});
+        let s = load_json(&json.to_string());
+        assert_eq!(ids(&s), ["default", "clean", "slack", "u1"]);
+        assert_eq!(s.offered_builtins, ["default", "clean", "slack", "mail"], "offered once, even when skipped");
+    }
+
+    #[test]
+    fn a_broken_style_costs_only_itself() {
+        let mut styles = style::catalog();
+        styles.push(user_style("u1", "slack"));
+        styles.push(user_style("u2", "jira"));
+        let json = serde_json::json!({"styles": styles, "llm_model": "claude-haiku-4-5", "trigger_keys": [162, 65]});
+        let s = load_json(&json.to_string());
+        assert_eq!(ids(&s), ["default", "clean", "slack", "mail", "u2"], "the later duplicate is dropped");
+        assert_eq!((s.llm_model.as_str(), s.trigger_keys.clone()), ("claude-haiku-4-5", vec![0xA2, 0x41]));
+
+        let s = load_json(r#"{"styles":[],"llm_model":"claude-haiku-4-5"}"#);
+        assert_eq!(ids(&s), ["default"], "the default style is put back");
+        assert_eq!(s.llm_model, "claude-haiku-4-5");
+
+        let mut styles: Vec<Style> =
+            (0..style::MAX_STYLES).map(|i| user_style(&format!("u{i}"), &format!("k{i}"))).collect();
+        styles.push(style::catalog().remove(0));
+        let json = serde_json::json!({"styles": styles, "llm_model": "claude-haiku-4-5"});
+        let s = load_json(&json.to_string());
+        assert_eq!((ids(&s).len(), ids(&s)[0]), (style::MAX_STYLES, "default"), "the last user style is dropped");
+        assert_eq!(s.llm_model, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn style_rules_are_part_of_the_validation() {
+        let mut s = Settings::default();
+        s.styles[2].keyword = Some("Mail".into());
+        assert_eq!(s.validate(), Err(SettingsError::DuplicateTrigger { trigger: "mail".into() }), "the later trigger");
+        s.styles = vec![];
+        assert_eq!(s.validate(), Err(SettingsError::DefaultStyleMissing));
+    }
+
+    #[test]
+    fn style_errors_keep_their_code_and_index() {
+        use serde_json::json;
+        let cases = [
+            (StyleError::DefaultStyleMissing, json!({"code": "default_style_missing"})),
+            (StyleError::DuplicateStyleId, json!({"code": "duplicate_style_id"})),
+            (StyleError::TooManyStyles { max: 10 }, json!({"code": "too_many_styles", "max": 10})),
+            (
+                StyleError::TooManyAliases { index: 2, max: 8 },
+                json!({"code": "too_many_aliases", "index": 2, "max": 8}),
+            ),
+            (StyleError::StyleNameRequired { index: 4 }, json!({"code": "style_name_required", "index": 4})),
+            (StyleError::TriggerEmpty { index: 1 }, json!({"code": "trigger_empty", "index": 1})),
+            (
+                StyleError::DuplicateTrigger { trigger: "Slack".into() },
+                json!({"code": "duplicate_trigger", "trigger": "Slack"}),
+            ),
+            (StyleError::TaskEmpty { index: 3 }, json!({"code": "task_empty", "index": 3})),
+            (
+                StyleError::TaskTooLong { index: 5, max_chars: 4000 },
+                json!({"code": "task_too_long", "index": 5, "max_chars": 4000}),
+            ),
+        ];
+        for (e, expected) in cases {
+            assert_eq!(serde_json::to_value(SettingsError::from(e.clone())).unwrap(), expected, "{e:?}");
+            assert_eq!(serde_json::to_value(&e).unwrap(), expected, "same code as scribe_core");
+        }
     }
 
     #[test]

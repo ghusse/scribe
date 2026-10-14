@@ -16,15 +16,15 @@ export function listText(items: string[]): string {
   return listParts(items).map((p) => p.value).join("");
 }
 
-type UsageSettings = Pick<Settings, "stt_provider" | "llm_provider" | "level">;
+type UsageSettings = Pick<Settings, "stt_provider" | "llm_provider" | "correction_enabled">;
 
 /**
  * Providers whose key the current settings need, with what for. Same rule as needs_setup in
- * src-tauri/src/bootstrap.rs: transcription always, correction unless the level is raw.
+ * src-tauri/src/bootstrap.rs: transcription always, correction when it is enabled.
  */
 export function keyUsage(s: UsageSettings): Record<string, KeyRole[]> {
   const usage: Record<string, KeyRole[]> = { [s.stt_provider]: ["transcription"] };
-  if (s.level !== "raw") (usage[s.llm_provider] ??= []).push("correction");
+  if (s.correction_enabled) (usage[s.llm_provider] ??= []).push("correction");
   return usage;
 }
 

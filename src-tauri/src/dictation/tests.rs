@@ -1,8 +1,11 @@
 use scribe_core::audio::TARGET_RATE;
 use scribe_core::focus::FocusState;
-use scribe_core::model::{Dictation, Level, TermSource};
+use scribe_core::lang::Language;
+use scribe_core::model::{Dictation, TermSource};
+use scribe_core::style::{self, Preset};
 
 use super::*;
+use crate::locale::LanguagePref;
 use crate::testing::{editable, Fixture, UiCall};
 
 fn speech(ms: u32) -> AudioClip {
@@ -136,7 +139,7 @@ fn build_record_for_a_failed_transcription() {
         (r.created_at.as_str(), r.mode, r.app_name.as_deref(), r.audio_path.as_deref(), r.duration_ms),
         ("2026-10-05T10:00:00.000Z", Mode::Hold, Some("Word"), Some("a.wav"), 1_234)
     );
-    assert_eq!(r.level, Level::Formatted);
+    assert_eq!((r.style, r.body_start), (None, None));
 }
 
 #[test]
@@ -147,6 +150,8 @@ fn build_record_for_a_delivered_dictation() {
         stt_ms: 10,
         llm_ms: Some(20),
         correction_error: Some(ProviderError::NoOutputTag),
+        style: Some("slack".into()),
+        body_start: Some(7),
     };
     let s = Settings::default();
     let done =
@@ -156,9 +161,10 @@ fn build_record_for_a_delivered_dictation() {
     assert_eq!((r.transcriber.as_deref(), r.corrector.as_deref()), (Some("stt"), Some("llm")));
     assert_eq!((r.stt_ms, r.llm_ms), (Some(10), Some(20)));
     assert_eq!((r.outcome, r.error), (Outcome::PastedUncertain, stored(&ProviderError::NoOutputTag)));
-    // What the pipeline returns at the raw level or for a short dictation: the corrector never ran.
+    assert_eq!((r.style.as_deref(), r.body_start), (Some("slack"), Some(7)));
+    // What the pipeline returns with correction off or for a short dictation: the corrector never ran.
     let uncorrected = PipelineOutput { llm_ms: None, correction_error: None, ..out.clone() };
-    let raw = Settings { level: Level::Raw, ..Default::default() };
+    let raw = Settings { correction_enabled: false, ..Default::default() };
     let done = |inserted| Delivery::Done {
         out: &uncorrected,
         transcriber: "stt".into(),
@@ -166,7 +172,7 @@ fn build_record_for_a_delivered_dictation() {
         inserted,
     };
     let r = build_record(&meta(), &raw, done(InsertResult::ClipboardFailed));
-    assert_eq!(r.corrector, None, "no corrector at the raw level");
+    assert_eq!(r.corrector, None, "no corrector with correction off");
     assert_eq!(r.outcome, Outcome::Error);
     // No model reached (missing correction key): the history shows no corrector, not a placeholder name.
     let unreachable = PipelineOutput { correction_error: Some(ProviderError::CorrectionDisabled), ..out.clone() };
@@ -406,15 +412,43 @@ fn unavailable_clipboard_keeps_the_text_in_the_history() {
 }
 
 #[test]
-fn raw_level_records_no_corrector() {
-    let f = Fixture::with_settings(Settings { level: Level::Raw, restore_delay_ms: 0, ..Default::default() });
+fn correction_off_records_no_corrector() {
+    let f = Fixture::with_settings(Settings { correction_enabled: false, restore_delay_ms: 0, ..Default::default() });
     run(&f, speech(1_000));
     let row = only_row(&f);
     assert_eq!(
         (row.final_text.as_deref(), row.corrector, row.llm_ms),
         (Some("bonjour scribe comment ça va"), None, None)
     );
-    assert_eq!(row.level, Level::Raw);
+    assert_eq!((row.style, row.body_start), (None, None));
+}
+
+#[test]
+fn correction_off_still_strips_the_style_keyword() {
+    let f = Fixture::with_settings(Settings { correction_enabled: false, restore_delay_ms: 0, ..Default::default() });
+    f.plan(|p| p.stt = Ok("Slack, on décale la réunion".into()));
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!((row.final_text.as_deref(), row.style, row.body_start), (Some("on décale la réunion"), None, Some(7)));
+    assert!(f.prompts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_spoken_keyword_applies_its_style_in_the_ui_language() {
+    let f = Fixture::with_settings(Settings { language: LanguagePref::En, restore_delay_ms: 0, ..Default::default() });
+    f.plan(|p| {
+        p.stt = Ok("Slack, on décale la réunion".into());
+        p.llm = Ok("<output>On décale la réunion.</output>".into());
+    });
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!(
+        (row.final_text.as_deref(), row.style.as_deref(), row.body_start),
+        (Some("On décale la réunion."), Some("slack"), Some(7))
+    );
+    let p = f.last_prompt();
+    assert!(p.system.contains(style::preset_task(Preset::Slack, Language::En)), "{}", p.system);
+    assert!(p.user.contains("<transcript>\non décale la réunion\n</transcript>"), "{}", p.user);
 }
 
 #[test]
@@ -492,7 +526,7 @@ fn retranscribe_keeps_the_error_outcome_when_the_copy_fails() {
 
 #[test]
 fn retranscribing_a_delivered_dictation_keeps_its_outcome_and_clipboard() {
-    let f = Fixture::with_settings(Settings { level: Level::Raw, ..Default::default() });
+    let f = Fixture::with_settings(Settings { correction_enabled: false, ..Default::default() });
     f.plan(|p| p.stt = Ok("nouveau texte".into()));
     let id = stored_row(&f, Outcome::PastedUncertain, true);
     retry(&f, id).unwrap();
@@ -502,6 +536,17 @@ fn retranscribing_a_delivered_dictation_keeps_its_outcome_and_clipboard() {
         (Outcome::PastedUncertain, Some("nouveau texte"), None)
     );
     assert_eq!(f.clipboard.text(), None);
+}
+
+#[test]
+fn retranscribing_detects_the_style_again() {
+    let f = Fixture::new();
+    f.plan(|p| p.stt = Ok("Mail : bonjour Paul, à demain".into()));
+    let id = stored_row(&f, Outcome::Error, true);
+    retry(&f, id).unwrap();
+    let d = get(&f, id);
+    assert_eq!((d.style.as_deref(), d.body_start), (Some("mail"), Some(7)));
+    assert!(f.last_prompt().user.contains("<transcript>\nbonjour Paul, à demain\n</transcript>"));
 }
 
 #[test]

@@ -21,8 +21,8 @@ export function needsAttention(state: SaveState): boolean {
 }
 
 /** The settings a provider test depends on: when it changes, a displayed test result is stale. */
-export function testSignature(s: Pick<Settings, "stt_provider" | "stt_model" | "llm_provider" | "llm_model" | "llm_effort" | "level">): string {
-  return JSON.stringify([s.stt_provider, s.stt_model, s.llm_provider, s.llm_model, s.llm_effort, s.level]);
+export function testSignature(s: Pick<Settings, "stt_provider" | "stt_model" | "llm_provider" | "llm_model" | "llm_effort" | "correction_enabled">): string {
+  return JSON.stringify([s.stt_provider, s.stt_model, s.llm_provider, s.llm_model, s.llm_effort, s.correction_enabled]);
 }
 
 /**

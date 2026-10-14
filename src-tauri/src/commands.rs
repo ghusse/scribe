@@ -6,10 +6,11 @@ use serde::Serialize;
 use tauri::State;
 
 use scribe_core::audio::{self, AudioClip, TARGET_RATE};
-use scribe_core::model::{Dictation, Level, Term, TermSource};
+use scribe_core::model::{Dictation, Term, TermSource};
 use scribe_core::permissions::{Permission, PermissionStatus};
-use scribe_core::pipeline::ProviderError;
-use scribe_core::prompt::CorrectionPrompt;
+use scribe_core::pipeline::{Corrector, ProviderError};
+use scribe_core::prompt::{self, CorrectionPrompt, ImproveRequest};
+use scribe_core::style::{self, Preset, Style, MAX_TASK_CHARS};
 use scribe_providers::catalog::{self, Provider};
 
 use crate::audio_mute;
@@ -17,6 +18,7 @@ use crate::controller::ControllerMsg;
 use crate::dictation;
 use crate::error::AppError;
 use crate::locale::Language;
+use crate::overlay::StyleBadge;
 use crate::secrets;
 use crate::services::{now_rfc3339, Services};
 use crate::settings::Settings;
@@ -26,6 +28,8 @@ type Svc<'a> = State<'a, Arc<Services>>;
 
 /// How long `capture_key` waits for the new hotkey.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long `improve_style` waits for the corrector: it writes a whole task, not a dictation.
+const IMPROVE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tauri::command]
 pub fn list_dictations(
@@ -133,7 +137,7 @@ pub fn set_api_key(svc: Svc<'_>, provider: String, key: String) -> Result<(), Ap
 pub struct ProviderTest {
     /// Duration of the call in ms, or the error.
     stt: Result<u64, ProviderError>,
-    /// None when the level is raw: no correction is made, so none is tested.
+    /// None when the correction is off: no correction is made, so none is tested.
     llm: Option<Result<u64, ProviderError>>,
 }
 
@@ -150,7 +154,7 @@ pub async fn test_providers(svc: Svc<'_>) -> Result<ProviderTest, AppError> {
     let wav = audio::encode_wav(&silence)?;
     let start = Instant::now();
     let stt_result = stt.transcribe(&wav, &[]).await.map(|_| elapsed_ms(start));
-    let llm_result = if settings.level == Level::Raw {
+    let llm_result = if !settings.correction_enabled {
         None
     } else {
         let p = CorrectionPrompt {
@@ -161,6 +165,67 @@ pub async fn test_providers(svc: Svc<'_>) -> Result<ProviderTest, AppError> {
         Some(llm.correct(&p).await.map(|_| elapsed_ms(start)))
     };
     Ok(ProviderTest { stt: stt_result, llm: llm_result })
+}
+
+/// A built-in task in the UI language, for the settings to show before the user edits it.
+#[derive(Debug, PartialEq, Serialize)]
+pub struct PresetView {
+    preset: Preset,
+    name: &'static str,
+    task: &'static str,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+pub struct StyleCatalog {
+    presets: Vec<PresetView>,
+    styles: Vec<StyleBadge>,
+    correction_enabled: bool,
+}
+
+/// The built-in tasks and the user's styles, named in the current UI language.
+#[tauri::command]
+pub fn style_catalog(svc: Svc<'_>) -> StyleCatalog {
+    let language = svc.language();
+    let settings = svc.settings.read().unwrap();
+    StyleCatalog {
+        presets: style::catalog()
+            .into_iter()
+            .filter_map(|s| s.preset)
+            .map(|preset| PresetView {
+                preset,
+                name: style::preset_name(preset, language),
+                task: style::preset_task(preset, language),
+            })
+            .collect(),
+        styles: settings
+            .styles
+            .iter()
+            .map(|s| StyleBadge { id: s.id.clone(), name: style::display_name(s, language) })
+            .collect(),
+        correction_enabled: settings.correction_enabled,
+    }
+}
+
+/// `styles` with the missing built-in styles appended (never changing the others); nothing is saved.
+#[tauri::command]
+pub fn restore_builtin_styles(styles: Vec<Style>) -> Vec<Style> {
+    let ids = style::catalog_ids();
+    style::with_builtins(styles, &ids.iter().map(String::as_str).collect::<Vec<_>>()).0
+}
+
+/// Asks the corrector for a new Task block for a style; works without a transcription key.
+#[tauri::command]
+pub async fn improve_style(svc: Svc<'_>, request: ImproveRequest) -> Result<String, AppError> {
+    let settings = svc.settings.read().unwrap().clone();
+    let corrector = svc.build_corrector(&settings);
+    improve(corrector.as_ref(), &prompt::build_improve_prompt(&request, svc.language()), IMPROVE_TIMEOUT).await
+}
+
+async fn improve(corrector: &dyn Corrector, p: &CorrectionPrompt, timeout: Duration) -> Result<String, AppError> {
+    let response =
+        tokio::time::timeout(timeout, corrector.correct(p)).await.map_err(|_| ProviderError::CorrectionTimeout)??;
+    let task = prompt::extract_output(&response).ok_or(ProviderError::NoOutputTag)?;
+    Ok(prompt::strip_tags(&task, prompt::PROMPT_TAGS).trim().chars().take(MAX_TASK_CHARS).collect())
 }
 
 /// Waits (max 10 s) for a key combination, returned once all its keys are released (virtual-key codes,

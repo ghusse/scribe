@@ -1,6 +1,13 @@
-import type { AppError, Notice, ProviderError, SettingsError } from "./api";
+import type { AppError, Notice, PresetView, ProviderError, SettingsError, Style } from "./api";
 import { t } from "./i18n";
 import { OS, type Os } from "./platform";
+import { styleName, triggerOwner } from "./styles";
+
+/** The styles a settings error refers to by index: the edited ones, named as in the Styles pane. */
+export interface StyleContext {
+  styles: Style[];
+  presets: PresetView[];
+}
 
 /** Summary of a provider error; `provider` (its label) names who refused the key. */
 export function providerErrorText(e: ProviderError, provider: string | null = null): string {
@@ -50,8 +57,9 @@ export function providerErrorDetail(e: ProviderError): string | null {
   }
 }
 
-export function settingsErrorText(e: SettingsError): string {
+export function settingsErrorText(e: SettingsError, ctx: StyleContext = { styles: [], presets: [] }): string {
   const m = t.value.errors.settings;
+  const name = (index: number) => styleName(ctx.styles[index], ctx.presets, index);
   switch (e.code) {
     case "invalid_hotkey":
       return m.invalidHotkey;
@@ -79,10 +87,30 @@ export function settingsErrorText(e: SettingsError): string {
       return m.unknownProvider(e.role, e.id);
     case "model_required":
       return m.modelRequired;
+    case "default_style_missing":
+      return m.defaultStyleMissing;
+    case "duplicate_style_id":
+      return m.duplicateStyleId;
+    case "too_many_styles":
+      return m.tooManyStyles(e.max);
+    case "too_many_aliases":
+      return m.tooManyAliases(name(e.index), e.max);
+    case "style_name_required":
+      return m.styleNameRequired(name(e.index));
+    case "trigger_empty":
+      return m.triggerEmpty(name(e.index));
+    case "duplicate_trigger": {
+      const owner = triggerOwner(ctx.styles, e.trigger);
+      return m.duplicateTrigger(e.trigger, owner === null ? null : name(owner));
+    }
+    case "task_empty":
+      return m.taskEmpty(name(e.index));
+    case "task_too_long":
+      return m.taskTooLong(name(e.index), e.max_chars);
   }
 }
 
-function appErrorText(e: AppError): string {
+function appErrorText(e: AppError, ctx?: StyleContext): string {
   const m = t.value.errors.app;
   switch (e.code) {
     case "system":
@@ -98,7 +126,7 @@ function appErrorText(e: AppError): string {
     case "duplicate_term":
       return m.duplicateTerm(e.term);
     case "invalid_settings":
-      return settingsErrorText(e.error);
+      return settingsErrorText(e.error, ctx);
     case "provider":
       return providerErrorText(e.error);
     case "no_update":
@@ -110,9 +138,9 @@ function isCoded(e: unknown): e is { code: string } {
   return typeof e === "object" && e !== null && typeof (e as { code?: unknown }).code === "string";
 }
 
-/** Text of a rejected command: an `AppError`, else whatever was thrown. */
-export function errorText(e: unknown): string {
-  return isCoded(e) ? appErrorText(e as AppError) : String(e);
+/** Text of a rejected command: an `AppError`, else whatever was thrown. `ctx` names the styles of a settings error. */
+export function errorText(e: unknown, ctx?: StyleContext): string {
+  return isCoded(e) ? appErrorText(e as AppError, ctx) : String(e);
 }
 
 /** A history row's error: a JSON `ProviderError`, or the plain text older versions stored. */

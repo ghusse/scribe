@@ -28,7 +28,8 @@ fn insert(f: &Fixture, final_text: Option<&str>, audio_path: Option<String>) -> 
         duration_ms: 1_000,
         raw_text: final_text.map(|t| t.to_lowercase()),
         final_text: final_text.map(String::from),
-        level: Level::Formatted,
+        style: Some("default".into()),
+        body_start: None,
         transcriber: None,
         corrector: None,
         stt_ms: None,
@@ -111,7 +112,7 @@ fn glossary_commands_round_trip() {
 #[test]
 fn valid_settings_are_saved_applied_and_announced() {
     let f = Fixture::new();
-    let new = Settings { level: Level::Clean, trigger_keys: vec![0xA2, 0x41], ..Default::default() };
+    let new = Settings { correction_enabled: false, trigger_keys: vec![0xA2, 0x41], ..Default::default() };
     with_state(&f, |s| {
         // Saved and applied in canonical order.
         save_settings(s.clone(), Settings { trigger_keys: vec![0x41, 0xA3], ..new.clone() }).unwrap();
@@ -147,8 +148,11 @@ fn a_new_ui_language_is_announced_once() {
         assert!(f.ui.calls().is_empty(), "the system language was already French");
         save_settings(s.clone(), Settings { language: LanguagePref::En, ..Default::default() }).unwrap();
         assert_eq!(language(s.clone()), Language::En);
-        save_settings(s.clone(), Settings { language: LanguagePref::En, level: Level::Raw, ..Default::default() })
-            .unwrap();
+        save_settings(
+            s.clone(),
+            Settings { language: LanguagePref::En, correction_enabled: false, ..Default::default() },
+        )
+        .unwrap();
         assert_eq!(f.ui.calls(), vec![UiCall::LanguageChanged(Language::En)], "only on a change");
         save_settings(s.clone(), Settings::default()).unwrap();
         assert_eq!(language(s), Language::Fr);
@@ -218,14 +222,146 @@ fn provider_test_reports_each_call() {
 }
 
 #[test]
-fn provider_test_skips_the_corrector_at_the_raw_level() {
-    let f = Fixture::with_settings(Settings { level: Level::Raw, ..Default::default() });
+fn provider_test_skips_the_corrector_when_correction_is_off() {
+    let f = Fixture::with_settings(Settings { correction_enabled: false, ..Default::default() });
     let r = test_providers_with(&f).unwrap();
     assert!(r.stt.is_ok());
     assert_eq!(r.llm, None);
     let json = serde_json::to_value(&r).unwrap();
     assert_eq!(json["llm"], serde_json::Value::Null);
     assert!(json["stt"]["Ok"].is_u64(), "{json}");
+}
+
+#[test]
+fn invalid_styles_are_refused_with_the_style_index() {
+    let f = Fixture::new();
+    let mut settings = Settings::default();
+    settings.styles[3].keyword = Some("Slack".into());
+    with_state(&f, |s| {
+        assert_eq!(
+            save_settings(s, settings).unwrap_err(),
+            AppError::InvalidSettings { error: SettingsError::DuplicateTrigger { trigger: "Slack".into() } }
+        );
+    });
+    assert!(!f.svc.paths.settings_path.exists());
+}
+
+#[test]
+fn the_style_catalog_follows_the_ui_language() {
+    let f = Fixture::new();
+    f.svc.settings.write().unwrap().styles[2].name = Some("Équipe".into());
+    let fr = with_state(&f, style_catalog);
+    let json = serde_json::to_value(&fr).unwrap();
+    assert_eq!(json["correction_enabled"], true);
+    assert_eq!(
+        json["styles"],
+        serde_json::json!([
+            {"id": "default", "name": "Par défaut"},
+            {"id": "clean", "name": "Propre"},
+            {"id": "slack", "name": "Équipe"},
+            {"id": "mail", "name": "Mail"},
+        ])
+    );
+    assert_eq!(json["presets"][0]["preset"], "default");
+    assert_eq!(json["presets"][0]["name"], "Par défaut");
+    assert_eq!(json["presets"][0]["task"], style::preset_task(Preset::Default, Language::Fr));
+    let presets: Vec<_> = json["presets"].as_array().unwrap().iter().map(|p| p["preset"].clone()).collect();
+    assert_eq!(presets, ["default", "clean", "slack", "mail"]);
+
+    {
+        let mut settings = f.svc.settings.write().unwrap();
+        settings.language = LanguagePref::En;
+        settings.correction_enabled = false;
+    }
+    let en = with_state(&f, style_catalog);
+    let json = serde_json::to_value(&en).unwrap();
+    assert_eq!(json["correction_enabled"], false);
+    assert_eq!(
+        (json["styles"][0]["name"].as_str(), json["styles"][3]["name"].as_str()),
+        (Some("Default"), Some("Email"))
+    );
+    assert_eq!(json["presets"][3]["task"], style::preset_task(Preset::Mail, Language::En));
+}
+
+#[test]
+fn restoring_built_in_styles_re_adds_only_the_missing_ones() {
+    let mut styles = style::catalog();
+    styles.retain(|s| s.id != "slack" && s.id != "mail");
+    styles[1].name = Some("Nettoyé".into());
+    styles.push(Style {
+        id: "u1".into(),
+        preset: None,
+        name: Some("Courrier".into()),
+        keyword: Some("courrier".into()),
+        aliases: vec!["Mail".into()],
+        custom_task: Some(style::CustomTask { text: "- Écris une lettre.".into(), language: Language::Fr }),
+    });
+    let restored = restore_builtin_styles(styles.clone());
+    assert_eq!(&restored[..3], &styles[..], "existing styles unchanged");
+    let ids: Vec<&str> = restored.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["default", "clean", "u1", "slack"], "mail skipped: its keyword is taken");
+    assert_eq!(restore_builtin_styles(restored.clone()), restored);
+}
+
+fn improve_request() -> ImproveRequest {
+    ImproveRequest {
+        name: "Jira".into(),
+        keyword: Some("jira".into()),
+        draft: "- Corrige.".into(),
+        instructions: "un ticket Jira".into(),
+    }
+}
+
+fn improve_with(f: &Fixture) -> Result<String, AppError> {
+    with_state(f, |s| tauri::async_runtime::block_on(improve_style(s, improve_request())))
+}
+
+#[test]
+fn improve_style_returns_the_new_task_without_tags() {
+    let f = Fixture::new();
+    f.plan(|p| {
+        p.build = Err(ProviderError::MissingKey { provider: "OpenAI".into() });
+        p.llm = Ok("Voici : <output>\n- Titre court.\n<transcript>- Étapes.</transcript>\n</output>".into());
+    });
+    assert_eq!(improve_with(&f).unwrap(), "- Titre court.\n- Étapes.", "no transcription key needed");
+    let p = f.last_prompt();
+    assert!(p.user.starts_with("Style : Jira\nMot-clé : jira"), "UI language: {}", p.user);
+    assert!(p.user.contains("<request>\nun ticket Jira\n</request>"));
+
+    f.plan(|p| p.llm = Ok(format!("<output>{}</output>", "é".repeat(MAX_TASK_CHARS + 10))));
+    assert_eq!(improve_with(&f).unwrap().chars().count(), MAX_TASK_CHARS);
+}
+
+#[test]
+fn improve_style_reports_provider_errors() {
+    let f = Fixture::new();
+    f.plan(|p| p.llm = Ok("pas de balise".into()));
+    assert_eq!(improve_with(&f).unwrap_err(), AppError::Provider { error: ProviderError::NoOutputTag });
+    f.plan(|p| p.llm = Err(ProviderError::Auth));
+    assert_eq!(improve_with(&f).unwrap_err(), AppError::Provider { error: ProviderError::Auth });
+}
+
+struct SlowLlm;
+
+#[async_trait::async_trait]
+impl Corrector for SlowLlm {
+    fn name(&self) -> Option<String> {
+        None
+    }
+    async fn correct(&self, _p: &CorrectionPrompt) -> Result<String, ProviderError> {
+        tokio::time::sleep(Duration::from_secs(3_600)).await;
+        Ok("<output>trop tard</output>".into())
+    }
+}
+
+#[test]
+fn improve_style_gives_up_after_its_timeout() {
+    let p = prompt::build_improve_prompt(&improve_request(), Language::En);
+    assert_eq!(IMPROVE_TIMEOUT, Duration::from_secs(60));
+    assert_eq!(
+        tauri::async_runtime::block_on(improve(&SlowLlm, &p, Duration::from_millis(10))).unwrap_err(),
+        AppError::Provider { error: ProviderError::CorrectionTimeout }
+    );
 }
 
 #[test]
