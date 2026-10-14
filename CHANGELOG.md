@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/ghusse/scribe/compare/v0.5.0...v0.6.0) (2026-10-14)
+
+### Features
+
+* dictation styles triggered by a spoken keyword ([#26](https://github.com/ghusse/scribe/issues/26)) ([b13897e](https://github.com/ghusse/scribe/commit/b13897e821328314a910a7eeb82365b27530c854))
+
 ## [0.5.0](https://github.com/ghusse/scribe/compare/v0.4.2...v0.5.0) (2026-10-14)
 
 ### Features
