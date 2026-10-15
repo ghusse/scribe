@@ -50,6 +50,8 @@ export const errors: typeof En = {
     noSpeech: "aucune parole détectée",
     duplicateTerm: (term) => `terme déjà présent dans le glossaire : ${term}`,
     noUpdate: "aucune mise à jour disponible",
+    styleNotFound: "ce style n'existe plus",
+    nothingToRestyle: "cette dictée n'a pas de transcription à réécrire",
   },
   notice: {
     pasted: "Texte inséré",
@@ -66,5 +68,8 @@ export const errors: typeof En = {
     hookUnavailable: (detail) => `Raccourci indisponible : ${detail}`,
     updateAvailable: (version) => `Scribe ${version} est disponible : Réglages > Général`,
     copyFailed: (detail) => `Copie impossible : ${detail}`,
+    restyled: "Texte remplacé",
+    restyleCopied: "Nouveau texte copié",
+    restyleFailed: (why) => `Réécriture impossible : ${why}`,
   },
 };

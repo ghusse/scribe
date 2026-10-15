@@ -317,5 +317,11 @@ pub fn open_history(svc: Svc<'_>, id: Option<i64>) {
     }
 }
 
+/// From an overlay toast: rewrites a dictation with another style; the result comes as a toast.
+#[tauri::command]
+pub async fn restyle_dictation(svc: Svc<'_>, id: i64, style_id: String) -> Result<(), AppError> {
+    dictation::restyle(svc.inner().clone(), id, &style_id).await
+}
+
 #[cfg(test)]
 mod tests;

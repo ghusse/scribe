@@ -50,6 +50,8 @@ export const errors = {
     noSpeech: "no speech detected",
     duplicateTerm: (term: string) => `term already in the vocabulary: ${term}`,
     noUpdate: "no update available",
+    styleNotFound: "this style no longer exists",
+    nothingToRestyle: "this dictation has no transcript to rewrite",
   },
   notice: {
     pasted: "Text inserted",
@@ -66,5 +68,8 @@ export const errors = {
     hookUnavailable: (detail: string) => `Shortcut unavailable: ${detail}`,
     updateAvailable: (version: string) => `Scribe ${version} is available: Settings > General`,
     copyFailed: (detail: string) => `Could not copy: ${detail}`,
+    restyled: "Text replaced",
+    restyleCopied: "New text copied",
+    restyleFailed: (why: string) => `Could not rewrite the text: ${why}`,
   },
 };

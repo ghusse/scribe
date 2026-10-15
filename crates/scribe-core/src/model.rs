@@ -137,6 +137,17 @@ pub struct TranscriptionUpdate {
     pub error: Option<String>,
 }
 
+/// A new correction of the same transcript, with another style.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CorrectionUpdate {
+    pub final_text: Option<String>,
+    pub style: Option<String>,
+    pub corrector: Option<String>,
+    pub llm_ms: Option<i64>,
+    pub outcome: Outcome,
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

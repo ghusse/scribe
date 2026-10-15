@@ -4,8 +4,8 @@ use dispatch2::DispatchQueue;
 use objc2::ffi::object_setClass;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, NSObject};
-use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, MainThreadMarker};
-use objc2_app_kit::{NSCursor, NSEvent, NSPanel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask};
+use objc2::{define_class, msg_send, sel, AllocAnyThread, ClassType, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{NSCursor, NSEvent, NSPanel, NSResponder, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask};
 use objc2_foundation::{NSObjectProtocol, NSRect};
 
 use crate::overlay_pointer::{Cursor, OverlayAreas, PointerChange, PointerState, PointerTracker};
@@ -67,6 +67,23 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY: NSPanel has no subclassing requirements and this class adds no ivar and implements no Drop.
+    #[unsafe(super(NSPanel, NSWindow, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "ScribeOverlayPanel"]
+    struct OverlayPanel;
+
+    impl OverlayPanel {
+        /// A non-activating panel still becomes key on a click: the restyle keystrokes would then reach the
+        /// overlay instead of the target app.
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool {
+            false
+        }
+    }
+);
+
 /// Converts the event to overlay coordinates (CSS pixels from the top-left of the web view, which fills the window).
 fn moved(event: &NSEvent) {
     let Some(mtm) = MainThreadMarker::new() else { return };
@@ -122,10 +139,11 @@ unsafe fn window<'a>(raw: isize) -> &'a NSWindow {
 }
 
 /// The overlay must never take focus, or the paste would land in it instead of the user's field: it becomes a
-/// non-activating panel (a click on it does not activate Scribe). Called once at setup, on the main thread.
+/// non-activating panel that never becomes key (a click on it does not activate Scribe). Called once at setup, on
+/// the main thread.
 pub fn prepare_overlay(raw: isize) {
     unsafe {
-        object_setClass(raw as *mut AnyObject, NSPanel::class());
+        object_setClass(raw as *mut AnyObject, OverlayPanel::class());
         let w = window(raw);
         w.setStyleMask(w.styleMask() | NSWindowStyleMask::NonactivatingPanel);
         // AppKit ignores NonactivatingPanel set after the window exists: without the WindowServer tag, a click

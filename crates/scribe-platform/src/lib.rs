@@ -17,6 +17,7 @@ mod macos;
 pub mod output_mute;
 pub mod overlay_pointer;
 pub mod wasapi_rules;
+pub mod win_keys;
 #[cfg(windows)]
 mod windows;
 

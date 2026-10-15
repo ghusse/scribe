@@ -5,13 +5,14 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationValuePattern,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
+    IUIAutomationValuePattern, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
     UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowThreadProcessId};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
-use scribe_core::insert::FieldReader;
+use scribe_core::insert::{caret_units, FieldReader, Selection};
 
 use crate::focus_rules::{classify, process_stem, utf16_prefix, UiaFacts};
 
@@ -79,6 +80,64 @@ impl FieldReader for UiaFieldReader {
     fn focused_text(&self) -> Option<String> {
         unsafe { focused_text().ok().flatten() }
     }
+
+    fn before_caret(&self) -> Option<String> {
+        unsafe { before_caret().ok().flatten() }
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        unsafe { selected_text().ok().flatten() }
+    }
+
+    fn select_before_caret(&self, suffix: &str) -> Selection {
+        Selection::of(unsafe { select_before_caret(suffix).unwrap_or(false) })
+    }
+}
+
+/// The focused field's text pattern (`None`: a password field or a field without one, such as a value-only field).
+unsafe fn text_pattern() -> windows::core::Result<Option<IUIAutomationTextPattern>> {
+    let element = focused_element()?;
+    if element.CurrentIsPassword()?.as_bool() {
+        return Ok(None);
+    }
+    Ok(element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId).ok())
+}
+
+unsafe fn selection(pattern: &IUIAutomationTextPattern) -> windows::core::Result<IUIAutomationTextRange> {
+    pattern.GetSelection()?.GetElement(0)
+}
+
+/// The caret as an empty range (`None` while text is selected).
+unsafe fn caret(pattern: &IUIAutomationTextPattern) -> windows::core::Result<Option<IUIAutomationTextRange>> {
+    let sel = selection(pattern)?;
+    let empty = sel.CompareEndpoints(TextPatternRangeEndpoint_Start, &sel, TextPatternRangeEndpoint_End)? == 0;
+    Ok(empty.then_some(sel))
+}
+
+unsafe fn before_caret() -> windows::core::Result<Option<String>> {
+    let Some(pattern) = text_pattern()? else { return Ok(None) };
+    let Some(caret) = caret(&pattern)? else { return Ok(None) };
+    let range = pattern.DocumentRange()?;
+    range.MoveEndpointByRange(TextPatternRangeEndpoint_End, &caret, TextPatternRangeEndpoint_Start)?;
+    Ok(Some(range.GetText(-1)?.to_string()))
+}
+
+unsafe fn selected_text() -> windows::core::Result<Option<String>> {
+    let Some(pattern) = text_pattern()? else { return Ok(None) };
+    Ok(Some(selection(&pattern)?.GetText(-1)?.to_string()))
+}
+
+/// Characters are the provider's own (graphemes, code points or UTF-16 units): the caller checks the selection.
+unsafe fn select_before_caret(suffix: &str) -> windows::core::Result<bool> {
+    let Some(pattern) = text_pattern()? else { return Ok(false) };
+    let Some(caret) = caret(&pattern)? else { return Ok(false) };
+    let Ok(n) = i32::try_from(caret_units(suffix).graphemes) else { return Ok(false) };
+    let range = caret.Clone()?;
+    if range.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -n)? != -n {
+        return Ok(false);
+    }
+    range.Select()?;
+    Ok(true)
 }
 
 unsafe fn focused_text() -> windows::core::Result<Option<String>> {

@@ -1,13 +1,15 @@
+use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 use std::ptr::NonNull;
+use std::sync::Mutex;
 
-use objc2_application_services::{AXError, AXUIElement};
-use objc2_core_foundation::{CFRetained, CFString, CFType};
+use objc2_application_services::{AXError, AXUIElement, AXValue, AXValueType};
+use objc2_core_foundation::{CFBoolean, CFIndex, CFRange, CFRetained, CFString, CFType};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot};
-use scribe_core::insert::FieldReader;
+use scribe_core::insert::{caret_units, FieldReader, Selection};
 
-use crate::focus_rules::{classify_ax, process_stem, AxFacts, AX_SECURE_TEXT_FIELD};
+use crate::focus_rules::{classify_ax, prefix_utf16, process_stem, AxFacts, AX_SECURE_TEXT_FIELD};
 
 /// An app that does not answer within this delay is treated as unknown (`snapshot_with_timeout` also bounds it).
 const MESSAGING_TIMEOUT_S: f32 = 0.5;
@@ -29,11 +31,26 @@ fn string_attr(element: &AXUIElement, name: &'static str) -> Option<String> {
     Some(attr(element, name)?.downcast::<CFString>().ok()?.to_string())
 }
 
-fn value_settable(element: &AXUIElement) -> Option<bool> {
+fn settable(element: &AXUIElement, name: &'static str) -> Option<bool> {
     let mut settable: u8 = 0;
-    let err =
-        unsafe { element.is_attribute_settable(&CFString::from_static_str("AXValue"), NonNull::from(&mut settable)) };
+    let err = unsafe { element.is_attribute_settable(&CFString::from_static_str(name), NonNull::from(&mut settable)) };
     (err == AXError::Success).then_some(settable != 0)
+}
+
+/// Applications that accepted `AXManualAccessibility`.
+static MANUAL_ACCESSIBILITY: Mutex<BTreeSet<libc::pid_t>> = Mutex::new(BTreeSet::new());
+
+/// Chromium (Electron apps such as Slack) builds no accessibility tree for other apps until asked. Costly for the
+/// app (and VS Code switches to its screen reader mode): only a style switch asks.
+fn enable_manual_accessibility(app: &AXUIElement) {
+    let Some(pid) = pid(app) else { return };
+    if MANUAL_ACCESSIBILITY.lock().unwrap_or_else(|p| p.into_inner()).contains(&pid) {
+        return;
+    }
+    let name = CFString::from_static_str("AXManualAccessibility");
+    if unsafe { app.set_attribute_value(&name, CFBoolean::new(true)) } == AXError::Success {
+        MANUAL_ACCESSIBILITY.lock().unwrap_or_else(|p| p.into_inner()).insert(pid);
+    }
 }
 
 fn focused_app() -> Option<CFRetained<AXUIElement>> {
@@ -42,6 +59,35 @@ fn focused_app() -> Option<CFRetained<AXUIElement>> {
     let app = element_attr(&system, "AXFocusedApplication")?;
     unsafe { app.set_messaging_timeout(MESSAGING_TIMEOUT_S) };
     Some(app)
+}
+
+/// The app's focused element, unless it is a password field.
+fn field_of(app: &AXUIElement) -> Option<CFRetained<AXUIElement>> {
+    let element = element_attr(app, "AXFocusedUIElement")?;
+    (string_attr(&element, "AXSubrole").as_deref() != Some(AX_SECURE_TEXT_FIELD)).then_some(element)
+}
+
+fn focused_field() -> Option<CFRetained<AXUIElement>> {
+    field_of(&*focused_app()?)
+}
+
+/// The focused field for a style switch, which needs the caret even in an Electron app.
+fn caret_field() -> Option<CFRetained<AXUIElement>> {
+    let app = focused_app()?;
+    enable_manual_accessibility(&app);
+    field_of(&app)
+}
+
+/// The selection, in UTF-16 units.
+fn selected_range(element: &AXUIElement) -> Option<CFRange> {
+    let value = attr(element, "AXSelectedTextRange")?.downcast::<AXValue>().ok()?;
+    let mut range = CFRange { location: 0, length: 0 };
+    unsafe { value.value(AXValueType::CFRange, NonNull::from(&mut range).cast()) }.then_some(range)
+}
+
+/// The caret position when nothing is selected.
+fn caret(element: &AXUIElement) -> Option<CFIndex> {
+    selected_range(element).filter(|r| r.length == 0).map(|r| r.location)
 }
 
 fn pid(element: &AXUIElement) -> Option<libc::pid_t> {
@@ -77,7 +123,7 @@ impl FocusDetector for AxFocusDetector {
         let facts = element_attr(&app, "AXFocusedUIElement").map(|el| AxFacts {
             role: string_attr(&el, "AXRole").unwrap_or_default(),
             subrole: string_attr(&el, "AXSubrole").unwrap_or_default(),
-            value_settable: value_settable(&el),
+            value_settable: settable(&el, "AXValue"),
         });
         FocusSnapshot {
             app_name: pid.and_then(process_name),
@@ -92,11 +138,33 @@ pub struct AxFieldReader;
 
 impl FieldReader for AxFieldReader {
     fn focused_text(&self) -> Option<String> {
-        let app = focused_app()?;
-        let element = element_attr(&app, "AXFocusedUIElement")?;
-        if string_attr(&element, "AXSubrole").as_deref() == Some(AX_SECURE_TEXT_FIELD) {
-            return None;
-        }
-        string_attr(&element, "AXValue")
+        string_attr(&*focused_field()?, "AXValue")
     }
+
+    fn before_caret(&self) -> Option<String> {
+        let element = caret_field()?;
+        let caret = usize::try_from(caret(&element)?).ok()?;
+        prefix_utf16(&string_attr(&element, "AXValue")?, caret)
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        string_attr(&*focused_field()?, "AXSelectedText")
+    }
+
+    fn select_before_caret(&self, suffix: &str) -> Selection {
+        Selection::of(select_before_caret(suffix).is_some())
+    }
+}
+
+fn select_before_caret(suffix: &str) -> Option<()> {
+    let element = caret_field()?;
+    let caret = caret(&element)?;
+    let units = CFIndex::try_from(caret_units(suffix).utf16).ok()?;
+    if units > caret || settable(&element, "AXSelectedTextRange") != Some(true) {
+        return None;
+    }
+    let mut range = CFRange { location: caret - units, length: units };
+    let value = unsafe { AXValue::new(AXValueType::CFRange, NonNull::from(&mut range).cast()) }?;
+    let err = unsafe { element.set_attribute_value(&CFString::from_static_str("AXSelectedTextRange"), &value) };
+    (err == AXError::Success).then_some(())
 }

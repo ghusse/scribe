@@ -4,7 +4,7 @@ use std::path::Path;
 use turso::params::IntoParams;
 use turso::{Builder, Connection, Database, Row};
 
-use crate::model::{Dictation, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
+use crate::model::{CorrectionUpdate, Dictation, NewDictation, Outcome, Term, TermSource, TranscriptionUpdate};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -349,6 +349,30 @@ impl Db {
                 search,
                 u.style.clone(),
                 u.body_start,
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// A style switch replaces the corrected text: like a retranscription, a user edit of the previous one is stale.
+    pub fn update_correction(&self, id: i64, u: &CorrectionUpdate) -> Result<()> {
+        let raw = self.first("SELECT raw_text FROM dictations WHERE id = ?1", (id,), |r| r.get::<Option<String>>(0))?;
+        let Some(raw) = raw else {
+            return Ok(());
+        };
+        let search = search_text(raw.as_deref(), u.final_text.as_deref(), None);
+        self.execute(
+            "UPDATE dictations SET final_text = ?2, edited_text = NULL, style = ?3, corrector = ?4, llm_ms = ?5, \
+             outcome = ?6, error = ?7, search_text = ?8 WHERE id = ?1",
+            (
+                id,
+                u.final_text.clone(),
+                u.style.clone(),
+                u.corrector.clone(),
+                u.llm_ms,
+                u.outcome.as_str(),
+                u.error.clone(),
+                search,
             ),
         )?;
         Ok(())
@@ -764,6 +788,54 @@ mod tests {
         let d = db.get_dictation(id).unwrap().unwrap();
         assert_eq!((d.final_text.as_deref(), d.outcome, d.error), (Some("Final."), Outcome::Clipboard, None));
         assert_eq!((d.style.as_deref(), d.body_start), (Some("slack"), Some(7)));
+    }
+
+    #[test]
+    fn update_correction_replaces_the_corrected_text_and_clears_the_edit() {
+        let db = Db::open_in_memory().unwrap();
+        let mut nd = new_dictation("2026-10-05T10:00:00.000Z", "Salut Kubernetes", None);
+        nd.raw_text = Some("Slack, salut kubernetes".into());
+        nd.style = Some("slack".into());
+        nd.body_start = Some(7);
+        let id = db.insert_dictation(&nd).unwrap();
+        db.set_edited_text(id, Some("Salut Tauri")).unwrap();
+        db.update_correction(
+            id,
+            &CorrectionUpdate {
+                final_text: Some("Bonjour, salut Été.".into()),
+                style: Some("mail".into()),
+                corrector: Some("c2".into()),
+                llm_ms: Some(42),
+                outcome: Outcome::Clipboard,
+                error: None,
+            },
+        )
+        .unwrap();
+        let d = db.get_dictation(id).unwrap().unwrap();
+        assert_eq!(
+            (d.final_text.as_deref(), d.edited_text, d.style.as_deref(), d.corrector.as_deref(), d.llm_ms, d.outcome),
+            (Some("Bonjour, salut Été."), None, Some("mail"), Some("c2"), Some(42), Outcome::Clipboard)
+        );
+        assert_eq!(
+            (d.raw_text.as_deref(), d.body_start, d.transcriber.as_deref(), d.stt_ms),
+            (Some("Slack, salut kubernetes"), Some(7), Some("gpt-4o-transcribe"), Some(800)),
+            "the transcript is kept"
+        );
+        let found = |q: &str| db.list_dictations(Some(q), 10, 0).unwrap().len();
+        assert_eq!((found("été"), found("tauri"), found("slack, salut")), (1, 0, 1), "search follows the new text");
+        db.update_correction(
+            9_999,
+            &CorrectionUpdate {
+                final_text: Some("x".into()),
+                style: None,
+                corrector: None,
+                llm_ms: None,
+                outcome: Outcome::Error,
+                error: Some("e".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(db.list_dictations(None, 10, 0).unwrap().len(), 1, "an unknown id changes nothing");
     }
 
     #[test]

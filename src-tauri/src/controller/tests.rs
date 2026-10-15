@@ -942,3 +942,45 @@ fn spawn_prefix_transcribes_and_reports_the_text() {
     let _task = spawn_prefix(f.svc.clone(), PrefixJob { id: 5, clip }, tx);
     assert!(rx.recv_timeout(Duration::from_secs(10)).is_err(), "a failure sends nothing");
 }
+
+fn busy(h: &Harness) -> bool {
+    h.f.svc.session_busy.load(Ordering::Relaxed)
+}
+
+#[test]
+fn the_session_is_busy_from_the_start_of_a_recording_until_it_is_idle_again() {
+    let mut h = Harness::new();
+    assert!(!busy(&h));
+    h.key(TRIGGER, true, 0);
+    assert!(busy(&h), "recording");
+    h.key(TRIGGER, false, 800);
+    assert!(busy(&h), "processing");
+    h.c.handle(ControllerMsg::ProcessingDone);
+    assert!(!busy(&h), "processing done");
+
+    h.key(TRIGGER, true, 2_000);
+    h.key(TRIGGER, false, 2_100);
+    h.tick(2_500);
+    assert_eq!(h.stopped(), 2);
+    assert!(!busy(&h), "short tap discarded");
+
+    h.key(TRIGGER, true, 4_000);
+    h.f.svc.hook_cfg.paused.store(true, Ordering::Relaxed);
+    h.c.handle(ControllerMsg::PauseChanged(true));
+    assert!(!busy(&h), "discarded by a pause");
+    h.f.svc.hook_cfg.paused.store(false, Ordering::Relaxed);
+    h.c.handle(ControllerMsg::PauseChanged(false));
+    h.key(TRIGGER, false, 4_100);
+
+    *h.rec.start_error.lock().unwrap() = Some("aucun périphérique".into());
+    h.key(TRIGGER, true, 6_000);
+    assert!(!busy(&h), "the microphone failed to start");
+    h.key(TRIGGER, false, 6_100);
+
+    *h.rec.start_error.lock().unwrap() = None;
+    *h.rec.stop_error.lock().unwrap() = Some("micro débranché".into());
+    h.key(TRIGGER, true, 8_000);
+    assert!(busy(&h));
+    h.key(TRIGGER, false, 8_800);
+    assert!(!busy(&h), "recording lost");
+}

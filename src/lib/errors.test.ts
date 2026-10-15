@@ -98,6 +98,8 @@ describe("errorText", () => {
     [{ code: "invalid_settings", error: { code: "model_required" } }, "choisissez un modèle de transcription et un modèle de correction"],
     [{ code: "provider", error: { code: "timeout" } }, "fournisseur injoignable"],
     [{ code: "no_update" }, "aucune mise à jour disponible"],
+    [{ code: "style_not_found" }, "ce style n'existe plus"],
+    [{ code: "nothing_to_restyle" }, "cette dictée n'a pas de transcription à réécrire"],
   ])("%o", (e, text) => {
     expect(errorText(e)).toBe(text);
   });
@@ -132,6 +134,10 @@ describe("noticeText", () => {
     [{ code: "hook_unavailable", detail: "x" }, "Raccourci indisponible : x", null],
     [{ code: "update_available", version: "1.2.0" }, "Scribe 1.2.0 est disponible : Réglages > Général", null],
     [{ code: "copy_failed", detail: "occupé" }, "Copie impossible : occupé", null],
+    [{ code: "restyled" }, "Texte remplacé", null],
+    [{ code: "restyle_copied" }, "Nouveau texte copié", null],
+    [{ code: "restyle_failed", error: { code: "timeout" } }, "Réécriture impossible : fournisseur injoignable", null],
+    [{ code: "restyle_refused", detail: "ce style n'existe plus" }, "Réécriture impossible : ce style n'existe plus", null],
   ])("%o", (n, title, detail) => {
     expect(noticeText(n, "windows")).toEqual({ title, detail });
   });

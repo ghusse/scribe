@@ -764,3 +764,331 @@ fn transcribe_prefix_returns_the_text_or_none() {
     assert_eq!(prefix(), None);
     assert!(rows(&f).is_empty(), "a peek is never recorded");
 }
+
+// --- last paste ---------------------------------------------------------------------------------
+
+#[test]
+fn only_a_pasted_dictation_becomes_the_last_paste() {
+    let f = Fixture::new();
+    run(&f, speech(1_000));
+    let pasted = PastedText {
+        dictation_id: only_row(&f).id,
+        focus: editable("Notepad"),
+        text: "Bonjour Scribe, comment ça va ?".into(),
+    };
+    assert_eq!(*f.svc.last_paste.lock().unwrap(), Some(pasted.clone()));
+    set_end_focus(&f, FocusState::NotEditable);
+    run(&f, speech(1_000));
+    assert_eq!(*f.svc.last_paste.lock().unwrap(), Some(pasted), "a copied dictation is not pasted");
+
+    let f = Fixture::new();
+    set_end_focus(&f, FocusState::Unknown);
+    run(&f, speech(1_000));
+    assert_eq!(f.svc.last_paste.lock().unwrap().as_ref().map(|p| p.focus.state), Some(FocusState::Unknown));
+}
+
+// --- restyle ------------------------------------------------------------------------------------
+
+const PASTED: &str = "On se voit demain.";
+const NEW: &str = "Bonjour,\n\nOn se voit demain.\n\nBonne journée";
+
+fn newest_id(f: &Fixture) -> i64 {
+    rows(f).iter().map(|d| d.id).max().unwrap()
+}
+
+/// A « Slack, … » dictation pasted in Notepad, then the corrector answering `NEW` and a field holding the pasted
+/// text before its caret, which pastes as asked.
+fn pasted_slack(f: &Fixture) -> i64 {
+    f.plan(|p| {
+        p.stt = Ok("Slack, on se voit demain".into());
+        p.llm = Ok(format!("<output>{PASTED}</output>"));
+    });
+    run(f, speech(1_000));
+    f.plan(|p| p.llm = Ok(format!("<output>{NEW}</output>")));
+    *f.field.before_caret.lock().unwrap() = Some(format!("Objet : {PASTED}"));
+    *f.field.selectable.lock().unwrap() = true;
+    f.field.script(&[Some(&format!("Objet : {PASTED}")), Some(&format!("Objet : {NEW}"))]);
+    *f.clipboard.content.lock().unwrap() = Some("ancien contenu".into());
+    newest_id(f)
+}
+
+fn restyle_to(f: &Fixture, id: i64, style: &str) -> Result<(), AppError> {
+    tauri::async_runtime::block_on(restyle(f.svc.clone(), id, style))
+}
+
+fn badge(id: &str, name: &str) -> Option<StyleBadge> {
+    Some(StyleBadge { id: id.into(), name: name.into() })
+}
+
+fn mail() -> Option<StyleBadge> {
+    badge("mail", "Mail")
+}
+
+#[test]
+fn the_text_to_restyle_is_the_body_except_for_the_default_style() {
+    let styles = style::catalog();
+    let (default, slack) = (&styles[0], style::find(&styles, "slack").unwrap());
+    let raw = "Slack, on se voit demain  ";
+    assert_eq!(restyle_source(raw, Some(7), slack), "on se voit demain");
+    assert_eq!(restyle_source(raw, Some(7), default), raw, "the default style gets the keyword back");
+    assert_eq!(restyle_source(raw, None, slack), raw, "no keyword was detected");
+    for wrong in [-1, 99] {
+        assert_eq!(restyle_source(raw, Some(wrong), slack), raw);
+    }
+    assert_eq!(restyle_source("é, x", Some(1), slack), "é, x", "not a char boundary");
+}
+
+#[test]
+fn a_style_switch_replaces_the_pasted_text_in_place() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    restyle_to(&f, id, "mail").unwrap();
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 2);
+    assert!(f.keys.presses.lock().unwrap().is_empty(), "selected through accessibility");
+    assert_eq!(f.field.selected.lock().unwrap().as_deref(), Some(PASTED));
+    assert_eq!(f.clipboard.text().as_deref(), Some("ancien contenu"), "clipboard restored");
+    assert_eq!(f.window.last_event(), Some(badged_toast(ToastLevel::Info, Notice::Restyled, None, Some(id), mail())));
+    assert_eq!(f.svc.last_paste.lock().unwrap().as_ref().map(|p| p.text.as_str()), Some(NEW));
+    let row = get(&f, id);
+    assert_eq!(
+        (row.final_text.as_deref(), row.style.as_deref(), row.outcome, row.edited_text),
+        (Some(NEW), Some("mail"), Outcome::Pasted, None)
+    );
+    assert_eq!((row.raw_text.as_deref(), row.body_start), (Some("Slack, on se voit demain"), Some(7)));
+    assert_eq!(row.corrector.as_deref(), Some("fake-llm"));
+    assert!(f.last_prompt().user.contains("<transcript>\non se voit demain\n</transcript>"));
+    assert!(f.last_prompt().system.contains(style::preset_task(Preset::Mail, Language::Fr)));
+    assert_eq!(f.ui.count(&UiCall::HistoryChanged), 2);
+}
+
+#[test]
+fn a_style_switch_copies_the_text_when_replacing_is_not_safe() {
+    type Setup = fn(&Fixture);
+    let cases: [(&str, Setup); 6] = [
+        ("other window", |f| f.focus.0.lock().unwrap().window_id = Some(8)),
+        ("terminal", |f| set_end_focus(f, FocusState::Terminal)),
+        ("caret unreadable", |f| *f.field.before_caret.lock().unwrap() = None),
+        ("text moved", |f| *f.field.before_caret.lock().unwrap() = Some("autre chose".into())),
+        ("not the last paste", |f| *f.svc.last_paste.lock().unwrap() = None),
+        ("too long", |f| {
+            let long = "a".repeat(MAX_SELECT_GRAPHEMES + 1);
+            f.svc.last_paste.lock().unwrap().as_mut().unwrap().text = long.clone();
+            *f.field.before_caret.lock().unwrap() = Some(long);
+        }),
+    ];
+    for (name, setup) in cases {
+        let f = Fixture::new();
+        let id = pasted_slack(&f);
+        setup(&f);
+        restyle_to(&f, id, "mail").unwrap();
+        assert_eq!(*f.keys.pastes.lock().unwrap(), 1, "{name}: no keys sent");
+        assert!(f.keys.presses.lock().unwrap().is_empty(), "{name}");
+        assert_eq!(f.clipboard.text().as_deref(), Some(NEW), "{name}");
+        assert_eq!(
+            f.window.last_event(),
+            Some(badged_toast(ToastLevel::Copied, Notice::RestyleCopied, Some(NEW), Some(id), mail())),
+            "{name}"
+        );
+        let row = get(&f, id);
+        assert_eq!((row.final_text.as_deref(), row.outcome), (Some(NEW), Outcome::Clipboard), "{name}");
+        assert_ne!(f.svc.last_paste.lock().unwrap().as_ref().map(|p| p.text.as_str()), Some(NEW), "{name}");
+    }
+}
+
+/// The rewrite is saved, but the user's clipboard is never overwritten by a text no toast can announce.
+fn assert_kept_in_history_only(f: &Fixture, id: i64, shown: Option<OverlayEvent>) {
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1);
+    assert!(f.keys.presses.lock().unwrap().is_empty());
+    assert_eq!(f.clipboard.text().as_deref(), Some("ancien contenu"));
+    assert_eq!(f.window.last_event(), shown);
+    let row = get(f, id);
+    assert_eq!(
+        (row.final_text.as_deref(), row.style.as_deref(), row.outcome),
+        (Some(NEW), Some("mail"), Outcome::Pasted)
+    );
+    assert_eq!(f.ui.count(&UiCall::HistoryChanged), 2);
+}
+
+#[test]
+fn a_switch_landing_during_a_new_dictation_leaves_the_clipboard_alone() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    f.svc.session_busy.store(true, Ordering::Relaxed);
+    let shown = f.window.last_event();
+    restyle_to(&f, id, "mail").unwrap();
+    assert_kept_in_history_only(&f, id, shown);
+    assert_ne!(f.svc.last_paste.lock().unwrap().as_ref().map(|p| p.text.as_str()), Some(NEW));
+}
+
+#[test]
+fn a_switch_landing_on_a_newer_dictations_toast_leaves_the_clipboard_alone() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    *f.svc.last_paste.lock().unwrap() = None;
+    f.svc.overlay.toast(ToastLevel::Copied, Notice::Copied { correction: None }, None, Some(id + 1));
+    let shown = f.window.last_event();
+    restyle_to(&f, id, "mail").unwrap();
+    assert_kept_in_history_only(&f, id, shown);
+}
+
+#[test]
+fn a_selection_the_field_never_shows_leaves_the_new_text_in_the_clipboard() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    *f.field.selectable.lock().unwrap() = false;
+    *f.field.selected.lock().unwrap() = Some("partiel".into());
+    restyle_to(&f, id, "mail").unwrap();
+    let steps = insert::caret_units(PASTED).graphemes;
+    assert_eq!(
+        *f.keys.presses.lock().unwrap(),
+        vec![(insert::NavKey::Left, true, steps), (insert::NavKey::Right, false, 1)],
+        "arrow fallback, then the selection is collapsed"
+    );
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1);
+    assert_eq!(f.clipboard.text().as_deref(), Some(NEW));
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(ToastLevel::Copied, Notice::RestyleCopied, Some(NEW), Some(id), mail()))
+    );
+}
+
+#[test]
+fn an_unavailable_clipboard_keeps_the_new_text_in_the_history() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    *f.svc.last_paste.lock().unwrap() = None;
+    *f.clipboard.fail.lock().unwrap() = true;
+    restyle_to(&f, id, "mail").unwrap();
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(
+            ToastLevel::Error,
+            Notice::ClipboardUnavailable { correction: None },
+            Some(NEW),
+            Some(id),
+            mail()
+        ))
+    );
+    assert_eq!((get(&f, id).final_text.as_deref(), get(&f, id).outcome), (Some(NEW), Outcome::Error));
+}
+
+#[test]
+fn a_rewrite_identical_to_the_pasted_text_sends_no_keys() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    f.plan(|p| p.llm = Ok(format!("<output>{PASTED}</output>")));
+    restyle_to(&f, id, "clean").unwrap();
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1);
+    assert!(f.keys.presses.lock().unwrap().is_empty());
+    assert_eq!(f.clipboard.text().as_deref(), Some("ancien contenu"));
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(ToastLevel::Info, Notice::Restyled, None, Some(id), badge("clean", "Propre")))
+    );
+    assert_eq!((get(&f, id).style.as_deref(), get(&f, id).outcome), (Some("clean"), Outcome::Pasted));
+}
+
+#[test]
+fn a_failed_rewrite_says_so_and_changes_nothing() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    let before = get(&f, id);
+    f.plan(|p| p.llm = Err(ProviderError::Auth));
+    restyle_to(&f, id, "mail").unwrap();
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(
+            ToastLevel::Error,
+            Notice::RestyleFailed { error: ProviderError::Auth },
+            None,
+            Some(id),
+            mail()
+        ))
+    );
+    assert_eq!(get(&f, id), before);
+    assert_eq!(*f.keys.pastes.lock().unwrap(), 1);
+    assert_eq!(f.ui.count(&UiCall::HistoryChanged), 1);
+}
+
+#[test]
+fn switching_to_the_default_style_corrects_the_whole_transcript() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    restyle_to(&f, id, style::DEFAULT_STYLE_ID).unwrap();
+    assert!(f.last_prompt().user.contains("<transcript>\nSlack, on se voit demain\n</transcript>"));
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(ToastLevel::Info, Notice::Restyled, None, Some(id), badge("default", "Par défaut")))
+    );
+    assert_eq!(get(&f, id).style.as_deref(), Some(style::DEFAULT_STYLE_ID));
+}
+
+#[test]
+fn the_body_is_sliced_where_it_was_detected_even_after_the_keyword_changed() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    for s in f.svc.settings.write().unwrap().styles.iter_mut().filter(|s| s.id == "slack") {
+        s.keyword = Some("messagerie".into());
+    }
+    restyle_to(&f, id, "slack").unwrap();
+    assert!(f.last_prompt().user.contains("<transcript>\non se voit demain\n</transcript>"));
+}
+
+#[test]
+fn a_style_switch_needs_no_transcription_key() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    f.plan(|p| p.build = Err(ProviderError::MissingKey { provider: "OpenAI".into() }));
+    restyle_to(&f, id, "mail").unwrap();
+    assert_eq!(get(&f, id).final_text.as_deref(), Some(NEW));
+}
+
+#[test]
+fn a_style_switch_refuses_unknown_styles_and_dictations_without_transcript() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    assert_eq!(restyle_to(&f, id, "gone").unwrap_err(), AppError::StyleNotFound);
+    assert_eq!(restyle_to(&f, 999, "mail").unwrap_err(), AppError::DictationNotFound);
+    f.plan(|p| p.stt = Err(ProviderError::Auth));
+    run(&f, speech(1_000));
+    assert_eq!(restyle_to(&f, newest_id(&f), "mail").unwrap_err(), AppError::NothingToRestyle);
+    assert_eq!(f.svc.restyle_seq.load(Ordering::SeqCst), 0, "nothing was asked of the corrector");
+}
+
+#[test]
+fn a_late_switch_result_never_covers_a_new_recording() {
+    let f = Fixture::new();
+    let id = pasted_slack(&f);
+    *f.svc.last_paste.lock().unwrap() = None;
+    let recording = OverlayEvent::Recording { locked: false, warning: None, style: None };
+    f.svc.overlay.emit(recording.clone());
+    restyle_to(&f, id, "mail").unwrap();
+    assert_kept_in_history_only(&f, id, Some(recording));
+}
+
+#[test]
+fn only_the_last_switch_asked_is_applied_whatever_order_they_finish_in() {
+    for newer_first in [false, true] {
+        let f = Fixture::new();
+        let id = pasted_slack(&f);
+        *f.svc.last_paste.lock().unwrap() = None;
+        let block = |rw: Rewrite| tauri::async_runtime::block_on(apply_rewrite(&f.svc, rw)).unwrap();
+        f.plan(|p| p.llm = Ok("<output>Propre.</output>".into()));
+        let older = tauri::async_runtime::block_on(rewrite(&f.svc, id, "clean")).unwrap();
+        f.plan(|p| p.llm = Ok(format!("<output>{NEW}</output>")));
+        let newer = tauri::async_runtime::block_on(rewrite(&f.svc, id, "mail")).unwrap();
+        let toasts_before = f.window.events().len();
+        if newer_first {
+            block(newer);
+            block(older);
+        } else {
+            block(older);
+            block(newer);
+        }
+        assert_eq!(f.window.events().len(), toasts_before + 1, "newer first: {newer_first}");
+        assert_eq!(f.clipboard.text().as_deref(), Some(NEW));
+        let row = get(&f, id);
+        assert_eq!((row.final_text.as_deref(), row.style.as_deref()), (Some(NEW), Some("mail")));
+        assert_eq!(f.ui.count(&UiCall::HistoryChanged), 2);
+    }
+}

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { styleCatalog } from "../../tests/fixtures";
 import { calls, commands, emit, resetTauri } from "../../tests/tauri";
+import { advanceTimers } from "../../tests/timers";
 import { lang } from "../lib/i18n";
 import Overlay from "./Overlay";
 import styles from "./Overlay.module.css";
@@ -25,7 +27,7 @@ const fire = async (name: string, payload: unknown) => {
 
 beforeEach(() => {
   resetTauri();
-  commands({ overlay_dismiss: () => undefined, copy_dictation: () => undefined, open_history: () => undefined, overlay_hit_areas: () => undefined });
+  commands({ overlay_dismiss: () => undefined, copy_dictation: () => undefined, open_history: () => undefined, overlay_hit_areas: () => undefined, style_catalog: () => styleCatalog() });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -162,11 +164,13 @@ describe("Overlay", () => {
     await mount();
     expect(calls("overlay_hit_areas")).toEqual([{ surface: null, buttons: [] }]);
     await fire("overlay", toast({ style: SLACK, message: { code: "pasted" } }));
-    expect(calls("overlay_hit_areas")).toHaveLength(2);
-    expect(calls("overlay_hit_areas")[1]!.surface).not.toBeNull();
-    expect((calls("overlay_hit_areas")[1]!.buttons as unknown[]).length).toBe(screen.getAllByRole("button").length);
+    await advanceTimers(0);
+    // Once the catalog arrives, the badge becomes the style switch button.
+    expect(calls("overlay_hit_areas")).toHaveLength(3);
+    expect(calls("overlay_hit_areas")[2]!.surface).not.toBeNull();
+    expect((calls("overlay_hit_areas")[2]!.buttons as unknown[]).length).toBe(screen.getAllByRole("button").length);
     await fire("audio-level", 0.5);
-    expect(calls("overlay_hit_areas")).toHaveLength(2);
+    expect(calls("overlay_hit_areas")).toHaveLength(3);
     await fire("overlay-pointer", { inside: true, button: 0 });
     expect(screen.getAllByRole("button")[0].hasAttribute("data-hover")).toBe(true);
     vi.advanceTimersByTime(20000);
@@ -226,7 +230,7 @@ describe("Overlay", () => {
     expect(screen.getByRole("alert").textContent).toBe("Microphone not exclusive: other apps can hear you");
     await fire("overlay", toast({ style: SLACK }));
     expect(screen.getByText("Text copied to the clipboard")).toBeTruthy();
-    expect(screen.getByTitle("Style: Slack")).toBeTruthy();
+    expect(await screen.findByTitle("Change style")).toBeTruthy();
     expect(screen.getByText("Copy")).toBeTruthy();
     await fire("language", "fr");
     expect(await screen.findByText(COPIED)).toBeTruthy();
@@ -244,5 +248,120 @@ describe("Overlay", () => {
     const { unmount } = await mount();
     unmount();
     await waitFor(() => expect(emit("overlay", { kind: "processing", style: null }) + emit("audio-level", 0.5) + emit("overlay-pointer", { inside: false, button: null })).toBe(0));
+  });
+
+  describe("style switch", () => {
+    const PASTED = toast({ message: { code: "pasted" }, preview: null, style: SLACK });
+    const chips = () => screen.getByRole("group", { name: "Styles" });
+
+    async function picker() {
+      const r = await mount();
+      await fire("overlay", PASTED);
+      await fireEvent.click(await screen.findByTitle("Changer de style"));
+      return r;
+    }
+
+    it("opens one scrollable row of style chips in the toast, the current style marked", async () => {
+      const { container } = await picker();
+      const row = chips();
+      expect(row.className).toBe(styles.chips);
+      // happy-dom applies no stylesheet: the row's own rule makes it scroll sideways.
+      expect(await Bun.file(new URL("./Overlay.module.css", import.meta.url)).text()).toMatch(/\.chips \{[^}]*overflow-x: auto/);
+      expect(row.closest("[data-surface]")).toBe(container.querySelector(`.${styles.toast}`));
+      const buttons = [...row.querySelectorAll("button")];
+      expect(buttons.map((b) => b.textContent)).toEqual(["Par défaut", "Propre", "Slack", "Mail"]);
+      const current = screen.getByRole("button", { name: "Slack" }) as HTMLButtonElement;
+      expect(current.getAttribute("aria-pressed")).toBe("true");
+      expect(current.disabled).toBe(true);
+      expect(current.className).toBe(styles.current);
+      expect(screen.getByRole("button", { name: "Mail" }).getAttribute("aria-pressed")).toBe("false");
+      expect(screen.queryByText("Copier")).toBeNull();
+      expect(screen.queryByTitle("Changer de style")).toBeNull();
+      expect(screen.getByLabelText("Fermer")).toBeTruthy();
+      const enabled = screen.getAllByRole("button").filter((b) => !(b as HTMLButtonElement).disabled);
+      expect((calls("overlay_hit_areas").at(-1)!.buttons as unknown[]).length).toBe(enabled.length);
+    });
+
+    it("rewrites with the chip clicked, then shows the backend's result", async () => {
+      commands({ restyle_dictation: () => undefined });
+      await picker();
+      await fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+      expect(calls("restyle_dictation")).toEqual([{ id: 7, styleId: "mail" }]);
+      expect(screen.getByText("Réécriture en style Mail…")).toBeTruthy();
+      expect(screen.queryByRole("group", { name: "Styles" })).toBeNull();
+      expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Fermer"]);
+      await fire("overlay", toast({ message: { code: "restyled" }, preview: null, style: { id: "mail", name: "Mail" } }));
+      expect(screen.getByText("Texte remplacé")).toBeTruthy();
+      expect(await screen.findByTitle("Changer de style")).toBeTruthy();
+    });
+
+    it("a refused restyle shows an error toast", async () => {
+      commands({ restyle_dictation: () => Promise.reject({ code: "style_not_found" }) });
+      await picker();
+      await fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+      expect(await screen.findByText("Réécriture impossible : ce style n'existe plus")).toBeTruthy();
+      expect(screen.queryByTitle("Changer de style")).toBeNull();
+    });
+
+    it("the picker stays open past the toast's delay", async () => {
+      vi.useFakeTimers();
+      await mount();
+      await fire("overlay", PASTED);
+      await advanceTimers(0);
+      await fireEvent.click(screen.getByTitle("Changer de style"));
+      await advanceTimers(30000);
+      expect(chips()).toBeTruthy();
+      expect(calls("overlay_dismiss")).toHaveLength(0);
+    });
+
+    it("no style switch when correction is off", async () => {
+      commands({ style_catalog: () => styleCatalog({ correction_enabled: false }) });
+      await mount();
+      await fire("overlay", PASTED);
+      await waitFor(() => expect(calls("style_catalog")).toHaveLength(1));
+      await Promise.resolve();
+      expect(screen.queryByTitle("Changer de style")).toBeNull();
+      expect(screen.getByText("Slack").tagName).toBe("SPAN");
+    });
+
+    it("no style switch on a toast without a badge", async () => {
+      await mount();
+      await fire("overlay", PASTED);
+      expect(await screen.findByTitle("Changer de style")).toBeTruthy();
+      await fire("overlay", toast({ style: null }));
+      expect(screen.getByText("Texte copié dans le presse-papier")).toBeTruthy();
+      expect(screen.queryByTitle("Changer de style")).toBeNull();
+    });
+
+    it("a vertical wheel scrolls the chips sideways", async () => {
+      await picker();
+      const row = chips();
+      Object.defineProperty(row, "scrollWidth", { value: 600 });
+      Object.defineProperty(row, "clientWidth", { value: 300 });
+      const wheel = new WheelEvent("wheel", { deltaY: 40, cancelable: true });
+      row.dispatchEvent(wheel);
+      expect(row.scrollLeft).toBe(40);
+      expect(wheel.defaultPrevented).toBe(true);
+    });
+
+    it("sends the chips' areas again when the row scrolls", async () => {
+      await picker();
+      const row = chips();
+      const sent = calls("overlay_hit_areas").length;
+      const mail = screen.getByRole("button", { name: "Mail" });
+      mail.getBoundingClientRect = () => ({ x: 1, y: 2, width: 3, height: 4 }) as DOMRect;
+      row.getBoundingClientRect = () => ({ x: 0, y: 0, width: 400, height: 30 }) as DOMRect;
+      await fireEvent.scroll(row);
+      expect(calls("overlay_hit_areas")).toHaveLength(sent + 1);
+      expect(calls("overlay_hit_areas").at(-1)!.buttons).toContainEqual([1, 2, 3, 4]);
+    });
+
+    it("renames the chips when the language changes", async () => {
+      await picker();
+      commands({ style_catalog: () => styleCatalog({ styles: [{ id: "default", name: "Default" }, SLACK] }) });
+      await fire("language", "en");
+      expect(await screen.findByRole("button", { name: "Default" })).toBeTruthy();
+      expect(screen.getByRole("group", { name: "Styles" })).toBeTruthy();
+    });
   });
 });

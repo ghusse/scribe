@@ -14,6 +14,10 @@
 .badge { font-size: 12px; font-weight: 600; color: #e0e7ff; background: rgba(99,102,241,.25); border: 1px solid #818cf8;
   box-sizing: border-box; height: 22px; line-height: 20px; padding: 0 8px; border-radius: 999px; max-width: 140px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+.switch { display: inline-flex; align-items: center; gap: 4px; font-family: inherit; cursor: pointer; transition: background-color .12s; }
+.switch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.switch svg { flex: none; }
+.switch:hover, .switch[data-hover] { background: rgba(99,102,241,.45); }
 .head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; line-height: 20px; flex: none; }
 .spinner { width: 14px; height: 14px; border: 2px solid #a5b4fc; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 .text { flex: 1; min-width: 0; font-size: 13px; display: flex; flex-direction: column; max-height: calc(100vh - 28px); overflow: hidden; }
@@ -28,5 +32,13 @@
 .actions button.close { background: transparent; padding: 0 5px; }
 .actions button.close:hover, .actions button.close[data-hover] { background: rgba(255, 255, 255, .14); }
 .actions button.close svg { display: block; }
+.chips { display: flex; gap: 6px; margin-top: 6px; padding-bottom: 4px; overflow-x: auto; overflow-y: hidden; flex: none; }
+.chips::-webkit-scrollbar { height: 4px; }
+.chips::-webkit-scrollbar-thumb { background: #565677; border-radius: 2px; }
+.chips button { flex: none; box-sizing: border-box; height: 22px; line-height: 20px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid #565677; background: #3f3f56; color: #fff; font-size: 12px; cursor: pointer; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background-color .12s, border-color .12s; }
+.chips button:hover, .chips button[data-hover] { background: #565677; border-color: #818cf8; }
+.chips button.current { cursor: default; font-weight: 600; color: #e0e7ff; background: rgba(99,102,241,.25); border-color: #818cf8; }
 @keyframes pulse { 50% { opacity: .4; } }
 @keyframes spin { to { transform: rotate(360deg); } }

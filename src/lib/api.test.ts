@@ -44,6 +44,7 @@ describe("api", () => {
     ["improveStyle", () => api.improveStyle(request), "improve_style", { request }],
     ["overlayDismiss", () => api.overlayDismiss(), "overlay_dismiss", undefined],
     ["openHistory", () => api.openHistory(null), "open_history", { id: null }],
+    ["restyleDictation", () => api.restyleDictation(3, "mail"), "restyle_dictation", { id: 3, styleId: "mail" }],
     ["overlayHitAreas", () => api.overlayHitAreas({ surface: [0, 0, 9, 9], buttons: [[1, 2, 3, 4]] }), "overlay_hit_areas", { surface: [0, 0, 9, 9], buttons: [[1, 2, 3, 4]] }],
   ];
 

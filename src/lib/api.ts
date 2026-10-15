@@ -186,7 +186,11 @@ export type AppError =
   | { code: "duplicate_term"; term: string }
   | { code: "invalid_settings"; error: SettingsError }
   | { code: "provider"; error: ProviderError }
-  | { code: "no_update" };
+  | { code: "no_update" }
+  /** The style asked for is no longer in the settings. */
+  | { code: "style_not_found" }
+  /** The dictation has no transcript to rewrite. */
+  | { code: "nothing_to_restyle" };
 
 /** What a toast says; mirror of `overlay::Notice`. `correction`: why the text was not corrected. */
 export type Notice =
@@ -203,8 +207,16 @@ export type Notice =
   | { code: "recording_lost"; detail: string }
   | { code: "hook_unavailable"; detail: string }
   | { code: "update_available"; version: string }
+  /** A style switch replaced the pasted text in place. */
+  | { code: "restyled" }
+  /** A style switch could not replace the pasted text: the new text is in the clipboard. */
+  | { code: "restyle_copied" }
+  /** A style switch could not rewrite the text; nothing changed. */
+  | { code: "restyle_failed"; error: ProviderError }
   /** Raised by the overlay itself when its « Copy » button fails. */
-  | { code: "copy_failed"; detail: string };
+  | { code: "copy_failed"; detail: string }
+  /** Raised by the overlay itself when the backend refuses a style switch (`restyle_dictation` rejected). */
+  | { code: "restyle_refused"; detail: string };
 
 /** Shown under the pill for the whole recording. */
 export type RecordingWarning = "shared_microphone";
@@ -285,5 +297,7 @@ export const api = {
   improveStyle: (request: ImproveRequest) => invoke<string>("improve_style", { request }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
+  /** Rewrites a dictation with another style; the result arrives as an overlay toast. */
+  restyleDictation: (id: number, styleId: string) => invoke<void>("restyle_dictation", { id, styleId }),
   overlayHitAreas: (areas: OverlayAreas) => invoke<void>("overlay_hit_areas", { ...areas }),
 };

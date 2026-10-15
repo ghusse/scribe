@@ -138,12 +138,21 @@ mod tests {
 
     #[test]
     fn a_paste_is_never_verified() {
-        assert_eq!(field_reader().focused_text(), None);
+        let field = field_reader();
+        assert_eq!(field.focused_text(), None);
+        assert_eq!(field.before_caret(), None);
+        assert_eq!(field.selected_text(), None);
+        assert_eq!(
+            field.select_before_caret("text"),
+            scribe_core::insert::Selection::Unsupported,
+            "a restyle copies the new text instead"
+        );
     }
 
     #[test]
     fn paste_simulation_fails_so_the_text_stays_in_the_clipboard() {
         assert_eq!(key_sender().send_paste(), Err("keyboard simulation not available on this platform".into()));
+        assert!(key_sender().press(scribe_core::insert::NavKey::Left, true, 3).is_err());
     }
 
     #[test]

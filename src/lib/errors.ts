@@ -131,6 +131,10 @@ function appErrorText(e: AppError, ctx?: StyleContext): string {
       return providerErrorText(e.error);
     case "no_update":
       return m.noUpdate;
+    case "style_not_found":
+      return m.styleNotFound;
+    case "nothing_to_restyle":
+      return m.nothingToRestyle;
   }
 }
 
@@ -192,6 +196,14 @@ export function noticeText(n: Notice, os: Os = OS): NoticeLines {
       return line(m.hookUnavailable(n.detail));
     case "update_available":
       return line(m.updateAvailable(n.version));
+    case "restyled":
+      return line(m.restyled);
+    case "restyle_copied":
+      return line(m.restyleCopied);
+    case "restyle_failed":
+      return line(m.restyleFailed(providerErrorText(n.error)));
+    case "restyle_refused":
+      return line(m.restyleFailed(n.detail));
     case "copy_failed":
       return line(m.copyFailed(n.detail));
   }

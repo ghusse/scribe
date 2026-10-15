@@ -1,13 +1,16 @@
 use std::io::ErrorKind;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
 use scribe_core::audio::{self, AudioClip};
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::Mode;
-use scribe_core::insert::{self, InsertResult};
-use scribe_core::model::{NewDictation, Outcome, TranscriptionUpdate};
-use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError, StyleInputs};
+use scribe_core::insert::{
+    self, FieldReader, InsertPlan, InsertResult, PastedText, ReplacePlan, ReplaceRefusal, MAX_SELECT_GRAPHEMES,
+};
+use scribe_core::model::{CorrectionUpdate, NewDictation, Outcome, TranscriptionUpdate};
+use scribe_core::pipeline::{self, Correction, PipelineError, PipelineOutput, ProviderError, StyleInputs};
 use scribe_core::prompt;
 use scribe_core::storage::Db;
 use scribe_core::style::{self, Style};
@@ -140,19 +143,30 @@ pub fn build_record(meta: &RecordMeta, settings: &Settings, delivery: Delivery<'
     record
 }
 
-/// Pastes (or copies) the text, checking that the focus did not move since the recording started.
-async fn deliver(svc: &Arc<Services>, start: FocusSnapshot, text: String, restore_delay_ms: u64) -> InsertResult {
+/// Pastes (or copies) the text, checking that the focus did not move since the recording started. Also returns the
+/// focus it pasted into.
+async fn deliver(
+    svc: &Arc<Services>,
+    start: FocusSnapshot,
+    text: String,
+    restore_delay_ms: u64,
+) -> (InsertResult, FocusSnapshot) {
     let svc = svc.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _insert = svc.insert_lock.lock().unwrap();
         let end = focus::snapshot_with_timeout(svc.focus.clone(), FOCUS_TIMEOUT_MS);
         let plan = insert::decide(&start, &end);
         let field = insert::TimedFieldReader::new(svc.field.clone(), FIELD_READ_TIMEOUT_MS);
-        insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), &field, restore_delay_ms, &|ms| {
-            std::thread::sleep(Duration::from_millis(ms))
-        })
+        let inserted =
+            insert::perform(plan, &text, svc.clipboard.as_ref(), svc.keys.as_ref(), &field, restore_delay_ms, &sleep);
+        (inserted, end)
     })
     .await
-    .unwrap_or(InsertResult::ClipboardFailed)
+    .unwrap_or((InsertResult::ClipboardFailed, FocusSnapshot::unknown()))
+}
+
+fn sleep(ms: u64) {
+    std::thread::sleep(Duration::from_millis(ms))
 }
 
 pub async fn process(svc: Arc<Services>, cap: Captured) {
@@ -212,7 +226,8 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
             svc.overlay.emit(failure_feedback(&e, id));
         }
         Ok((out, transcriber, corrector)) => {
-            let inserted = deliver(&svc, cap.focus_start, out.final_text.clone(), settings.restore_delay_ms).await;
+            let (inserted, end) =
+                deliver(&svc, cap.focus_start, out.final_text.clone(), settings.restore_delay_ms).await;
             let record = build_record(&meta, &settings, Delivery::Done { out: &out, transcriber, corrector, inserted });
             let id = {
                 let db = svc.db.lock().unwrap();
@@ -221,6 +236,10 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
                 let _ = db.bump_term_usage(&used, &meta.created_at);
                 id
             };
+            if let (Some(dictation_id), InsertResult::Pasted | InsertResult::PastedUncertain) = (id, inserted) {
+                let pasted = PastedText { dictation_id, focus: end, text: out.final_text.clone() };
+                *svc.last_paste.lock().unwrap() = Some(pasted);
+            }
             let badge = StyleBadge::keyword(&settings.styles, out.style.as_deref(), language);
             svc.overlay.emit(feedback(inserted, out.correction_error.as_ref(), &out.final_text, id, badge));
         }
@@ -288,6 +307,165 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), AppError> {
     svc.db.lock().unwrap().update_transcription(id, &update)?;
     svc.ui.history_changed();
     Ok(())
+}
+
+/// What a style switch rewrites: the whole transcript for the default style, so a keyword said by mistake comes
+/// back; otherwise the body after the keyword detected when the dictation was made (even if renamed since).
+pub fn restyle_source<'a>(raw: &'a str, body_start: Option<i64>, style: &Style) -> &'a str {
+    if style.id == style::DEFAULT_STYLE_ID {
+        return raw;
+    }
+    body_start.and_then(|b| usize::try_from(b).ok()).and_then(|b| raw.get(b..)).map_or(raw, str::trim_end)
+}
+
+/// A dictation rewritten with another style, waiting to be applied.
+struct Rewrite {
+    id: i64,
+    /// Its number in `Services::restyle_seq`.
+    seq: u64,
+    style: Style,
+    correction: Correction,
+    corrector: Option<String>,
+    /// The row's outcome before the switch, kept when the text already reads as the new one.
+    outcome: Outcome,
+}
+
+/// Rewrites a dictation with another style, then replaces the pasted text in place when that is safe, else copies
+/// the new text. When several switches overlap, only the last one asked is applied.
+pub async fn restyle(svc: Arc<Services>, id: i64, style_id: &str) -> Result<(), AppError> {
+    let rewrite = rewrite(&svc, id, style_id).await?;
+    apply_rewrite(&svc, rewrite).await
+}
+
+async fn rewrite(svc: &Services, id: i64, style_id: &str) -> Result<Rewrite, AppError> {
+    let settings = svc.settings.read().unwrap().clone();
+    let style = style::find(&settings.styles, style_id).ok_or(AppError::StyleNotFound)?.clone();
+    let (dictation, terms) = {
+        let db = svc.db.lock().unwrap();
+        (db.get_dictation(id)?, db.list_terms().unwrap_or_default())
+    };
+    let dictation = dictation.ok_or(AppError::DictationNotFound)?;
+    let raw = dictation.raw_text.as_deref().ok_or(AppError::NothingToRestyle)?;
+    let seq = svc.restyle_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let inputs = StyleInputs {
+        styles: &settings.styles,
+        language: svc.language(),
+        terms: &terms,
+        app_name: dictation.app_name.as_deref(),
+    };
+    let corrector = svc.build_corrector(&settings);
+    let text = restyle_source(raw, dictation.body_start, &style);
+    let correction = pipeline::correct(&settings.pipeline_config(), text, &style, &inputs, corrector.as_ref()).await;
+    Ok(Rewrite { id, seq, style, correction, corrector: corrector.name(), outcome: dictation.outcome })
+}
+
+async fn apply_rewrite(svc: &Arc<Services>, rw: Rewrite) -> Result<(), AppError> {
+    let _turn = svc.restyle_lock.lock().await;
+    if svc.restyle_seq.load(Ordering::SeqCst) != rw.seq {
+        return Ok(());
+    }
+    let id = rw.id;
+    // Any style, the default one included: the toast keeps offering the switch.
+    let badge = Some(StyleBadge::of(&rw.style, svc.language()));
+    if let Some(error) = rw.correction.error {
+        let toast = OverlayEvent::Toast {
+            level: ToastLevel::Error,
+            message: Notice::RestyleFailed { error },
+            preview: None,
+            dictation_id: Some(id),
+            style: badge,
+        };
+        svc.overlay.emit_for_dictation(id, toast);
+        return Ok(());
+    }
+    let text = rw.correction.final_text;
+    let restore_delay_ms = svc.settings.read().unwrap().restore_delay_ms;
+    let delivered = {
+        let (svc, text) = (svc.clone(), text.clone());
+        tauri::async_runtime::spawn_blocking(move || deliver_rewrite(&svc, id, &text, restore_delay_ms))
+            .await
+            .unwrap_or(Delivered::Inserted(InsertResult::ClipboardFailed))
+    };
+    let outcome = match delivered {
+        Delivered::Inserted(r) => r.outcome(),
+        Delivered::Unchanged | Delivered::HistoryOnly => rw.outcome,
+    };
+    let update = CorrectionUpdate {
+        final_text: Some(text.clone()),
+        style: Some(rw.style.id.clone()),
+        corrector: rw.corrector,
+        llm_ms: rw.correction.llm_ms.map(|v| v as i64),
+        outcome,
+        error: None,
+    };
+    svc.db.lock().unwrap().update_correction(id, &update)?;
+    if let Some(toast) = rewrite_feedback(delivered, &text, id, badge) {
+        svc.overlay.emit_for_dictation(id, toast);
+    }
+    svc.ui.history_changed();
+    Ok(())
+}
+
+/// What became of a rewritten text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivered {
+    /// The pasted text already reads as the new one.
+    Unchanged,
+    /// No toast could say it was copied (a newer dictation runs or shows its toast): the clipboard is left alone.
+    HistoryOnly,
+    Inserted(InsertResult),
+}
+
+/// Puts a rewritten text where its dictation went: over the pasted text when `insert::plan_replace` allows it, else
+/// in the clipboard.
+fn deliver_rewrite(svc: &Services, id: i64, text: &str, restore_delay_ms: u64) -> Delivered {
+    let _insert = svc.insert_lock.lock().unwrap();
+    let field = insert::TimedFieldReader::new(svc.field.clone(), FIELD_READ_TIMEOUT_MS);
+    let last = svc.last_paste.lock().unwrap().clone().filter(|l| l.dictation_id == id);
+    let plan = match &last {
+        None => ReplacePlan::CopyOnly(ReplaceRefusal::NotLastPaste),
+        Some(last) if last.text == text => return Delivered::Unchanged,
+        Some(last) => {
+            let now = focus::snapshot_with_timeout(svc.focus.clone(), FOCUS_TIMEOUT_MS);
+            let idle = !svc.session_busy.load(Ordering::Relaxed);
+            insert::plan_replace(last, &now, field.before_caret().as_deref(), idle, MAX_SELECT_GRAPHEMES)
+        }
+    };
+    let (clipboard, keys) = (svc.clipboard.as_ref(), svc.keys.as_ref());
+    let inserted = match plan {
+        ReplacePlan::Replace { suffix, graphemes } => {
+            insert::replace(&suffix, graphemes, text, clipboard, keys, &field, restore_delay_ms, &sleep)
+        }
+        ReplacePlan::CopyOnly(reason) => {
+            if reason == ReplaceRefusal::Busy || !svc.overlay.free_for_dictation(id) {
+                tracing::info!("style switch kept in the history only: {reason:?}");
+                return Delivered::HistoryOnly;
+            }
+            tracing::info!("style switch copied instead of replaced: {reason:?}");
+            insert::perform(InsertPlan::ClipboardOnly, text, clipboard, keys, &field, restore_delay_ms, &sleep)
+        }
+    };
+    if inserted == InsertResult::Pasted {
+        if let Some(last) = svc.last_paste.lock().unwrap().as_mut().filter(|l| l.dictation_id == id) {
+            last.text = text.to_string();
+        }
+    }
+    Delivered::Inserted(inserted)
+}
+
+/// The toast of an applied style switch, if any.
+fn rewrite_feedback(delivered: Delivered, text: &str, id: i64, style: Option<StyleBadge>) -> Option<OverlayEvent> {
+    let (level, message, preview) = match delivered {
+        Delivered::HistoryOnly => return None,
+        Delivered::Unchanged | Delivered::Inserted(InsertResult::Pasted | InsertResult::PastedUncertain) => {
+            (ToastLevel::Info, Notice::Restyled, None)
+        }
+        Delivered::Inserted(InsertResult::ClipboardFailed) => {
+            (ToastLevel::Error, Notice::ClipboardUnavailable { correction: None }, Some(preview(text)))
+        }
+        Delivered::Inserted(_) => (ToastLevel::Copied, Notice::RestyleCopied, Some(preview(text))),
+    };
+    Some(OverlayEvent::Toast { level, message, preview, dictation_id: Some(id), style })
 }
 
 pub fn purge_audio(svc: &Services) {

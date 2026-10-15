@@ -8,7 +8,7 @@ use scribe_core::chord;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
 use scribe_core::peek::{PeekTimer, PEEK_CLIP_MS};
-use scribe_core::session::{self, Session, SessionAction};
+use scribe_core::session::{self, Session, SessionAction, SessionState};
 use scribe_core::style;
 use scribe_platform::audio_capture::{LevelCallback, RecordOptions, RecordingStart};
 use scribe_platform::HookEvent;
@@ -260,6 +260,11 @@ impl Controller {
     }
 
     pub fn handle(&mut self, msg: ControllerMsg) {
+        self.dispatch(msg);
+        self.svc.session_busy.store(self.session.state() != SessionState::Idle, Ordering::Relaxed);
+    }
+
+    fn dispatch(&mut self, msg: ControllerMsg) {
         match msg {
             ControllerMsg::Key(ev) => {
                 // A pending hotkey capture takes every key until the combination is released, even while paused.

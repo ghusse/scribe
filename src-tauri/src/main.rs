@@ -20,6 +20,7 @@ mod testing;
 mod tray;
 mod update;
 
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -95,6 +96,11 @@ fn main() {
                 updater: Arc::new(TauriUpdater(app.handle().clone())),
                 key_capture: KeyCapture::new(hook_cfg.clone()),
                 ctrl_tx: Mutex::new(tx.clone()),
+                last_paste: Mutex::default(),
+                insert_lock: Mutex::default(),
+                session_busy: AtomicBool::default(),
+                restyle_seq: AtomicU64::default(),
+                restyle_lock: tokio::sync::Mutex::default(),
             });
             app.manage(svc.clone());
             adapters::create_main_window(app.handle())?;
@@ -184,6 +190,7 @@ fn main() {
             commands::improve_style,
             commands::overlay_dismiss,
             commands::open_history,
+            commands::restyle_dictation,
             commands::overlay_hit_areas,
         ])
         .build(tauri::generate_context!())
