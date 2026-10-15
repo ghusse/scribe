@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0](https://github.com/ghusse/scribe/compare/v0.6.0...v0.7.0) (2026-10-15)
+
+### Features
+
+* change the style of a dictation after speaking ([#28](https://github.com/ghusse/scribe/issues/28)) ([0e01eb7](https://github.com/ghusse/scribe/commit/0e01eb77331ef161a92c67f7fa3e3d89fb9d0a61))
+
 ## [0.6.0](https://github.com/ghusse/scribe/compare/v0.5.0...v0.6.0) (2026-10-14)
 
 ### Features
