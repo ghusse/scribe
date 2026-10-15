@@ -9,9 +9,10 @@ use scribe_platform::key_filter::KeyFilter;
 use scribe_platform::RawKey;
 
 use super::*;
-use crate::overlay::OverlayEvent;
+use crate::overlay::{OverlayEvent, StyleBadge};
 use crate::settings::Settings;
 use crate::testing::{editable, Fixture, MuteCall, UiCall};
+use scribe_core::pipeline::ProviderError;
 
 const TRIGGER: u32 = crate::settings::DEFAULT_TRIGGER;
 /// The left key of TRIGGER's modifier group: Ctrl, or Command on macOS.
@@ -31,6 +32,9 @@ struct FakeRecorder {
     on_level: Mutex<Option<LevelCallback>>,
     /// Runs when the microphone stops, before it returns.
     on_stop: Mutex<Option<OnStop>>,
+    /// What a peek returns; each peek's `max_ms` is logged in `peeks`.
+    peek: Mutex<Option<AudioClip>>,
+    peeks: Arc<Mutex<Vec<u64>>>,
 }
 
 type OnStop = Arc<dyn Fn() + Send + Sync>;
@@ -40,11 +44,17 @@ struct FakeRecording {
     error: Option<String>,
     stopped: Arc<AtomicU32>,
     on_stop: Option<OnStop>,
+    peek: Option<AudioClip>,
+    peeks: Arc<Mutex<Vec<u64>>>,
 }
 
 impl Recording for FakeRecording {
     fn started(&self) -> RecordingStart {
         self.started
+    }
+    fn peek(&self, max_ms: u64) -> Option<AudioClip> {
+        self.peeks.lock().unwrap().push(max_ms);
+        self.peek.clone()
     }
     fn stop(self: Box<Self>) -> Result<AudioClip, String> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
@@ -72,6 +82,8 @@ impl Recorder for FakeRecorder {
             error: self.stop_error.lock().unwrap().clone(),
             stopped: self.stopped.clone(),
             on_stop: self.on_stop.lock().unwrap().clone(),
+            peek: self.peek.lock().unwrap().clone(),
+            peeks: self.peeks.clone(),
         }))
     }
 }
@@ -82,6 +94,9 @@ struct Harness {
     rec: Arc<FakeRecorder>,
     now: Arc<AtomicU64>,
     jobs: Arc<Mutex<Vec<Job>>>,
+    /// The prefix jobs spawned, and how many of their tasks were aborted.
+    prefixes: Arc<Mutex<Vec<PrefixJob>>>,
+    aborted: Arc<AtomicU32>,
     /// Turns raw keys into hook events as the real hook does.
     filter: KeyFilter,
     /// Physical key state, as `GetAsyncKeyState` reports it.
@@ -102,15 +117,25 @@ impl Harness {
         let spawned = jobs.clone();
         let pressed = Arc::new(Mutex::new(HashSet::new()));
         let state = pressed.clone();
+        let prefixes = Arc::new(Mutex::new(Vec::new()));
+        let aborted = Arc::new(AtomicU32::new(0));
+        let (spawned_prefixes, aborts) = (prefixes.clone(), aborted.clone());
         let deps = ControllerDeps {
             recorder: rec.clone(),
             clock: Arc::new(move || clock_now.load(Ordering::SeqCst)),
             spawn_processing: Box::new(move |_svc, job, _tx| spawned.lock().unwrap().push(job)),
+            spawn_prefix: Box::new(move |_svc, job, _tx| {
+                spawned_prefixes.lock().unwrap().push(job);
+                let aborts = aborts.clone();
+                PrefixTask::new(move || {
+                    aborts.fetch_add(1, Ordering::SeqCst);
+                })
+            }),
             is_pressed: Arc::new(move |vk| state.lock().unwrap().contains(&vk)),
         };
         let (tx, done_rx) = mpsc::channel();
         let c = Controller::new(f.svc.clone(), tx, deps);
-        Self { f, c, rec, now, jobs, filter: KeyFilter::new(), pressed, _done_rx: done_rx }
+        Self { f, c, rec, now, jobs, prefixes, aborted, filter: KeyFilter::new(), pressed, _done_rx: done_rx }
     }
 
     fn key(&mut self, vk: u32, down: bool, t_ms: u64) {
@@ -215,12 +240,12 @@ fn hold_records_then_processes_in_hold_mode() {
     let mut h = Harness::new();
     h.key(TRIGGER, true, 0);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
     h.key(0x41, true, 100); // other keys do nothing
     h.key(0x41, false, 150);
     h.key(TRIGGER, false, 800);
     assert_eq!(h.stopped(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing { style: None }));
     assert_eq!(h.job_modes(), vec![Mode::Hold]);
     let job = h.jobs.lock().unwrap().pop().unwrap();
     assert_eq!(job.clip.samples.len(), 16);
@@ -256,7 +281,7 @@ fn lock_key_switches_to_locked_mode() {
     let mut h = Harness::new();
     h.key(TRIGGER, true, 0);
     h.key(LOCK, true, 50);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None, style: None }));
     h.key(LOCK, false, 60);
     h.key(TRIGGER, false, 900);
     assert_eq!(h.stopped(), 0, "still recording once locked");
@@ -275,7 +300,8 @@ fn unavailable_microphone_aborts_and_resets() {
             level: ToastLevel::Error,
             message: Notice::MicrophoneUnavailable { detail: "aucun périphérique".into() },
             preview: None,
-            dictation_id: None
+            dictation_id: None,
+            style: None
         })
     );
     h.key(TRIGGER, false, 800);
@@ -284,7 +310,7 @@ fn unavailable_microphone_aborts_and_resets() {
     *h.rec.start_error.lock().unwrap() = None;
     h.key(TRIGGER, true, 2_000);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
 }
 
 #[test]
@@ -299,7 +325,7 @@ fn microphone_failure_resets_the_detector_for_a_quick_retry() {
     *h.rec.start_error.lock().unwrap() = None;
     h.key(TRIGGER, true, 200);
     assert_eq!(h.started(), 1);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
 }
 
 #[test]
@@ -314,7 +340,8 @@ fn lost_recording_is_reported_and_the_session_goes_idle() {
             level: ToastLevel::Error,
             message: Notice::RecordingLost { detail: "micro débranché".into() },
             preview: None,
-            dictation_id: None
+            dictation_id: None,
+            style: None
         })
     );
     assert!(h.jobs.lock().unwrap().is_empty());
@@ -334,7 +361,7 @@ fn recording_stops_at_the_maximum_duration() {
     assert!(h.jobs.lock().unwrap().is_empty());
     h.tick(10_000);
     assert_eq!(h.job_modes(), vec![Mode::Locked]);
-    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing));
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing { style: None }));
     // The detector was reset: the next press after processing starts a new recording.
     h.c.handle(ControllerMsg::ProcessingDone);
     h.key(TRIGGER, true, 11_000);
@@ -554,6 +581,7 @@ fn spawned_controller_handles_messages_on_its_thread() {
         recorder: Arc::new(FakeRecorder::default()),
         clock: Arc::new(|| 0),
         spawn_processing: Box::new(|_, _, _| {}),
+        spawn_prefix: Box::new(|_, _, _| PrefixTask::new(|| {})),
         is_pressed: Arc::new(|_| true),
     };
     spawn(f.svc.clone(), rx, tx.clone(), deps);
@@ -645,7 +673,7 @@ fn exclusive(refused: bool) -> Harness {
 }
 
 fn warning(locked: bool) -> Option<OverlayEvent> {
-    Some(OverlayEvent::Recording { locked, warning: Some(RecordingWarning::SharedMicrophone) })
+    Some(OverlayEvent::Recording { locked, warning: Some(RecordingWarning::SharedMicrophone), style: None })
 }
 
 #[test]
@@ -663,9 +691,9 @@ fn no_microphone_warning_when_exclusive_access_is_obtained_or_not_asked() {
     *not_asked.rec.exclusive_refused.lock().unwrap() = true;
     for mut h in [exclusive(false), not_asked] {
         h.key(TRIGGER, true, 0);
-        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None }));
+        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
         h.key(LOCK, true, 50);
-        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None }));
+        assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None, style: None }));
     }
 }
 
@@ -752,4 +780,165 @@ fn a_locked_recording_stays_muted_until_it_stops() {
     h.key(TRIGGER, true, 5_000);
     assert_eq!(h.job_modes(), vec![Mode::Locked]);
     assert_eq!(h.mute_calls(), muted_then_restored());
+}
+
+// --- peek ---------------------------------------------------------------------------------------
+
+fn peeked() -> AudioClip {
+    AudioClip { samples: vec![3; 48], sample_rate: TARGET_RATE }
+}
+
+fn slack() -> Option<StyleBadge> {
+    Some(StyleBadge { id: "slack".into(), name: "Slack".into() })
+}
+
+/// Recording from t = 0 with a clip to peek at.
+fn peeking(settings: Settings) -> Harness {
+    let h = Harness::with(Fixture::with_settings(settings));
+    *h.rec.peek.lock().unwrap() = Some(peeked());
+    h
+}
+
+fn prefix_ids(h: &Harness) -> Vec<u64> {
+    h.prefixes.lock().unwrap().iter().map(|j| j.id).collect()
+}
+
+#[test]
+fn the_start_of_the_recording_is_transcribed_once_when_the_peek_is_due() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    for t in (30..2_500).step_by(30) {
+        h.tick(t);
+    }
+    assert!(h.prefixes.lock().unwrap().is_empty(), "not due yet");
+    h.tick(2_500);
+    h.tick(2_530);
+    assert_eq!(prefix_ids(&h), vec![1]);
+    assert_eq!(h.prefixes.lock().unwrap()[0].clip, peeked());
+    assert_eq!(*h.rec.peeks.lock().unwrap(), vec![scribe_core::peek::PEEK_CLIP_MS]);
+}
+
+#[test]
+fn nothing_is_spawned_when_nothing_was_captured_yet() {
+    let mut h = Harness::new();
+    h.key(TRIGGER, true, 0);
+    h.tick(2_500);
+    assert_eq!(h.rec.peeks.lock().unwrap().len(), 1);
+    assert!(h.prefixes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn no_peek_with_correction_off_or_without_a_keyword_style() {
+    let defaults = Settings::default();
+    let only_default = Settings { styles: defaults.styles[..1].to_vec(), ..Settings::default() };
+    for settings in [Settings { correction_enabled: false, ..Settings::default() }, only_default] {
+        assert!(!peeks(&settings));
+        let mut h = peeking(settings);
+        h.key(TRIGGER, true, 0);
+        h.tick(3_000);
+        assert!(h.rec.peeks.lock().unwrap().is_empty());
+        assert!(h.prefixes.lock().unwrap().is_empty());
+    }
+    assert!(peeks(&defaults));
+}
+
+#[test]
+fn the_microphone_level_feeds_the_peek_timer() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    let on_level = h.rec.on_level.lock().unwrap().clone().unwrap();
+    on_level(0.5);
+    h.tick(900);
+    on_level(0.0);
+    h.tick(1_000);
+    h.tick(1_200);
+    assert!(h.prefixes.lock().unwrap().is_empty());
+    h.tick(1_300);
+    assert_eq!(prefix_ids(&h), vec![1], "a pause after 1 s, well before 2.5 s");
+}
+
+#[test]
+fn a_prefix_sets_the_badge_and_a_later_one_replaces_it() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Euh, Slack".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: slack() }));
+    let sent = h.f.window.events().len();
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Slack, salut".into() });
+    assert_eq!(h.f.window.events().len(), sent, "same badge: nothing sent");
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Je pense que".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
+}
+
+#[test]
+fn stale_or_late_prefixes_are_ignored() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.c.handle(ControllerMsg::Prefix { id: 7, text: "Slack, salut".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
+    h.key(TRIGGER, false, 800);
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Slack, salut".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing { style: None }));
+}
+
+#[test]
+fn the_badge_is_kept_when_the_recording_locks_and_carried_to_processing() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Slack".into() });
+    h.key(LOCK, true, 50);
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: true, warning: None, style: slack() }));
+    h.key(LOCK, false, 60);
+    h.key(TRIGGER, false, 900);
+    h.key(TRIGGER, true, 5_000);
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Processing { style: slack() }));
+}
+
+#[test]
+fn each_recording_starts_without_a_badge() {
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Slack".into() });
+    h.key(TRIGGER, false, 800);
+    h.c.handle(ControllerMsg::ProcessingDone);
+    h.key(TRIGGER, true, 3_000);
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
+    h.c.handle(ControllerMsg::Prefix { id: 1, text: "Slack".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: None }));
+    h.c.handle(ControllerMsg::Prefix { id: 2, text: "Slack".into() });
+    assert_eq!(h.last_overlay(), Some(OverlayEvent::Recording { locked: false, warning: None, style: slack() }));
+}
+
+#[test]
+fn the_prefix_task_is_aborted_when_the_recording_ends() {
+    // Finished.
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.tick(2_500);
+    assert_eq!(h.aborted.load(Ordering::SeqCst), 0);
+    h.key(TRIGGER, false, 2_600);
+    assert_eq!((h.job_modes().len(), h.aborted.load(Ordering::SeqCst)), (1, 1));
+    // Discarded (pause).
+    let mut h = peeking(Settings::default());
+    h.key(TRIGGER, true, 0);
+    h.tick(2_500);
+    toggle_pause(&h.f.svc);
+    h.c.handle(ControllerMsg::PauseChanged(true));
+    assert_eq!((h.stopped(), h.aborted.load(Ordering::SeqCst)), (1, 1));
+}
+
+#[test]
+fn spawn_prefix_transcribes_and_reports_the_text() {
+    let f = Fixture::new();
+    let (tx, rx) = mpsc::channel();
+    let clip = AudioClip { samples: vec![0; 160], sample_rate: TARGET_RATE };
+    let _task = spawn_prefix(f.svc.clone(), PrefixJob { id: 4, clip: clip.clone() }, tx);
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(ControllerMsg::Prefix { id, text }) => assert_eq!((id, text.as_str()), (4, "bonjour scribe comment ça va")),
+        _ => panic!("no prefix"),
+    }
+    f.plan(|p| p.stt = Err(ProviderError::Auth));
+    let (tx, rx) = mpsc::channel();
+    let _task = spawn_prefix(f.svc.clone(), PrefixJob { id: 5, clip }, tx);
+    assert!(rx.recv_timeout(Duration::from_secs(10)).is_err(), "a failure sends nothing");
 }

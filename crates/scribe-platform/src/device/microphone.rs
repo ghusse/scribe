@@ -11,16 +11,17 @@ use crate::exclusive_mic::{self, InputOpener, OpenStream};
 
 /// cpal streams are not `Send` on every platform, so each recording owns a dedicated thread.
 pub fn start_recording(options: RecordOptions, on_level: LevelCallback) -> Result<RecordingHandle, String> {
-    audio_capture::spawn_recorder(Box::new(move |stop_rx, ready_tx| record(options, stop_rx, ready_tx, on_level)))
+    let capture = Arc::new(CaptureBuffer::new(on_level));
+    let c = capture.clone();
+    audio_capture::spawn_recorder(capture, Box::new(move |stop_rx, ready_tx| record(options, stop_rx, ready_tx, c)))
 }
 
 fn record(
     options: RecordOptions,
     stop_rx: mpsc::Receiver<()>,
     ready_tx: mpsc::Sender<Result<RecordingStart, String>>,
-    on_level: LevelCallback,
+    capture: Arc<CaptureBuffer>,
 ) -> Result<AudioClip, String> {
-    let capture = Arc::new(CaptureBuffer::new(on_level));
     let exclusive = crate::exclusive_input();
     let (open, started) =
         match exclusive_mic::open_input(options.exclusive_microphone, &exclusive, &CpalInput, capture.clone()) {

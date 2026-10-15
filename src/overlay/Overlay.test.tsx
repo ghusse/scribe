@@ -6,8 +6,9 @@ import Overlay from "./Overlay";
 import styles from "./Overlay.module.css";
 
 const toast = (over: Record<string, unknown> = {}) => ({
-  kind: "toast", level: "info", message: { code: "copied", correction: null }, preview: "Bonjour", dictation_id: 7, ...over,
+  kind: "toast", level: "info", message: { code: "copied", correction: null }, preview: "Bonjour", dictation_id: 7, style: null, ...over,
 });
+const SLACK = { id: "slack", name: "Slack" };
 
 async function mount() {
   const r = render(<Overlay />);
@@ -24,7 +25,7 @@ const fire = async (name: string, payload: unknown) => {
 
 beforeEach(() => {
   resetTauri();
-  commands({ overlay_dismiss: () => undefined, copy_dictation: () => undefined, open_history: () => undefined });
+  commands({ overlay_dismiss: () => undefined, copy_dictation: () => undefined, open_history: () => undefined, overlay_hit_areas: () => undefined });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -38,34 +39,34 @@ describe("Overlay", () => {
 
   it("shows the recording pill with a live meter and the lock tag", async () => {
     const { container } = await mount();
-    await fire("overlay", { kind: "recording", locked: false, warning: null });
+    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
     const bars = () => [...container.querySelectorAll<HTMLElement>(`.${styles.bars} span`)].map((b) => b.style.height);
     expect(bars()).toHaveLength(12);
     expect(screen.queryByText("Verrouillé")).toBeNull();
     await fire("audio-level", 1);
     expect(bars().at(-1)).toBe("28px");
-    await fire("overlay", { kind: "recording", locked: true, warning: null });
+    await fire("overlay", { kind: "recording", locked: true, warning: null, style: null });
     expect(screen.getByText("Verrouillé")).toBeTruthy();
     expect(bars().at(-1)).toBe("28px"); // locking keeps the meter
   });
 
   it("warns under the pill when the microphone is not exclusive, locked or not", async () => {
     await mount();
-    await fire("overlay", { kind: "recording", locked: false, warning: null });
+    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
     expect(screen.queryByRole("alert")).toBeNull();
     const text = "Micro non exclusif : les autres applications vous entendent";
-    await fire("overlay", { kind: "recording", locked: false, warning: "shared_microphone" });
+    await fire("overlay", { kind: "recording", locked: false, warning: "shared_microphone", style: null });
     expect(screen.getByRole("alert").textContent).toBe(text);
-    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone" });
+    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone", style: null });
     expect(screen.getByRole("alert").textContent).toBe(text);
     expect(screen.getByText("Verrouillé")).toBeTruthy();
-    await fire("overlay", { kind: "processing" });
+    await fire("overlay", { kind: "processing", style: null });
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the processing pill", async () => {
     await mount();
-    await fire("overlay", { kind: "processing" });
+    await fire("overlay", { kind: "processing", style: null });
     expect(screen.getByText("Transcription…")).toBeTruthy();
   });
 
@@ -113,6 +114,86 @@ describe("Overlay", () => {
     expect(calls("overlay_dismiss")).toHaveLength(1);
   });
 
+  it("shows the style badge while recording, locked, processing and on the toast", async () => {
+    const { container } = await mount();
+    const badge = () => container.querySelector<HTMLElement>(`.${styles.badge}`);
+    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
+    expect(badge()).toBeNull();
+    await fire("overlay", { kind: "recording", locked: false, warning: null, style: SLACK });
+    expect(badge()!.textContent).toBe("Slack");
+    expect(badge()!.title).toBe("Style : Slack");
+    expect(badge()!.closest(`.${styles.pill}`)).toBeTruthy();
+    await fire("overlay", { kind: "recording", locked: true, warning: null, style: SLACK });
+    expect(badge()!.textContent).toBe("Slack");
+    expect(screen.getByText("Verrouillé")).toBeTruthy();
+    await fire("overlay", { kind: "processing", style: null });
+    expect(badge()).toBeNull();
+    await fire("overlay", { kind: "processing", style: { id: "mail", name: "Mail" } });
+    expect(badge()!.textContent).toBe("Mail");
+    await fire("overlay", toast({ style: SLACK }));
+    expect(badge()!.closest(`.${styles.toast}`)).toBeTruthy();
+    expect(badge()!.textContent).toBe("Slack");
+    await fire("overlay", toast());
+    expect(badge()).toBeNull();
+  });
+
+  it("a keyword-style paste ends on an « inserted » toast with its badge, kept while hovered", async () => {
+    vi.useFakeTimers();
+    const { container } = await mount();
+    await fire("overlay", toast({ message: { code: "pasted" }, preview: null, style: SLACK }));
+    expect(screen.getByText("Texte inséré")).toBeTruthy();
+    expect(container.querySelector(`.${styles.badge}`)!.textContent).toBe("Slack");
+    const root = container.querySelector(`.${styles.toast}`)!;
+    await fireEvent.mouseEnter(root);
+    vi.advanceTimersByTime(20000);
+    await Promise.resolve();
+    expect(screen.getByText("Texte inséré")).toBeTruthy();
+    await fireEvent.mouseLeave(root);
+    vi.advanceTimersByTime(999);
+    await Promise.resolve();
+    expect(screen.getByText("Texte inséré")).toBeTruthy();
+    vi.advanceTimersByTime(1);
+    await waitFor(() => expect(screen.queryByText("Texte inséré")).toBeNull());
+    expect(calls("overlay_dismiss")).toHaveLength(1);
+  });
+
+  it("sends its buttons' areas when they change, and follows the native hover", async () => {
+    vi.useFakeTimers();
+    await mount();
+    expect(calls("overlay_hit_areas")).toEqual([{ surface: null, buttons: [] }]);
+    await fire("overlay", toast({ style: SLACK, message: { code: "pasted" } }));
+    expect(calls("overlay_hit_areas")).toHaveLength(2);
+    expect(calls("overlay_hit_areas")[1]!.surface).not.toBeNull();
+    expect((calls("overlay_hit_areas")[1]!.buttons as unknown[]).length).toBe(screen.getAllByRole("button").length);
+    await fire("audio-level", 0.5);
+    expect(calls("overlay_hit_areas")).toHaveLength(2);
+    await fire("overlay-pointer", { inside: true, button: 0 });
+    expect(screen.getAllByRole("button")[0].hasAttribute("data-hover")).toBe(true);
+    vi.advanceTimersByTime(20000);
+    await Promise.resolve();
+    expect(screen.getByText("Texte inséré")).toBeTruthy();
+    await fire("overlay-pointer", { inside: false, button: null });
+    expect(screen.getAllByRole("button")[0].hasAttribute("data-hover")).toBe(false);
+    vi.advanceTimersByTime(1000);
+    await waitFor(() => expect(screen.queryByText("Texte inséré")).toBeNull());
+    expect(calls("overlay_hit_areas").at(-1)).toEqual({ surface: null, buttons: [] });
+  });
+
+  it("logs a failed hit-area update", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    commands({ overlay_hit_areas: () => Promise.reject(new Error("boom")) });
+    await mount();
+    await waitFor(() => expect(error).toHaveBeenCalledWith(new Error("boom")));
+    error.mockRestore();
+  });
+
+  it("shows a notice's explanation on its own line under the title", async () => {
+    await mount();
+    await fire("overlay", toast({ level: "copied", message: { code: "not_pasted", correction: { code: "timeout" } } }));
+    expect(screen.getByText("Non corrigé : fournisseur injoignable").className).toBe(styles.detail);
+    expect(screen.getByText(/^Non inséré : texte copié/).tagName).toBe("STRONG");
+  });
+
   it("a failed copy shows an error toast instead of an unhandled rejection", async () => {
     commands({ copy_dictation: () => Promise.reject("presse-papier occupé") });
     await mount();
@@ -139,12 +220,13 @@ describe("Overlay", () => {
   it("speaks English, and follows a language change while shown", async () => {
     lang.value = "en";
     await mount();
-    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone" });
+    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone", style: null });
     expect(screen.getByRole("status", { name: "Recording" })).toBeTruthy();
     expect(screen.getByText("Locked")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe("Microphone not exclusive: other apps can hear you");
-    await fire("overlay", toast());
+    await fire("overlay", toast({ style: SLACK }));
     expect(screen.getByText("Text copied to the clipboard")).toBeTruthy();
+    expect(screen.getByTitle("Style: Slack")).toBeTruthy();
     expect(screen.getByText("Copy")).toBeTruthy();
     await fire("language", "fr");
     expect(await screen.findByText(COPIED)).toBeTruthy();
@@ -154,13 +236,13 @@ describe("Overlay", () => {
   it("starts in the backend's language", async () => {
     commands({ language: () => "en" });
     await mount();
-    await fire("overlay", { kind: "processing" });
+    await fire("overlay", { kind: "processing", style: null });
     expect(await screen.findByText("Transcribing…")).toBeTruthy();
   });
 
   it("stops listening when unmounted", async () => {
     const { unmount } = await mount();
     unmount();
-    await waitFor(() => expect(emit("overlay", { kind: "processing" }) + emit("audio-level", 0.5)).toBe(0));
+    await waitFor(() => expect(emit("overlay", { kind: "processing", style: null }) + emit("audio-level", 0.5) + emit("overlay-pointer", { inside: false, button: null })).toBe(0));
   });
 });

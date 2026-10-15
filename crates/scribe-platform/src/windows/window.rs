@@ -58,3 +58,8 @@ pub fn hide_overlay(raw: isize) {
         let _ = ShowWindowAsync(hwnd(raw), SW_HIDE);
     }
 }
+
+/// Windows sends mouse events to the overlay's web view whatever the active window: hover and the cursor already work.
+pub fn on_overlay_pointer(_f: Box<dyn Fn(crate::overlay_pointer::PointerState) + Send + Sync>) {}
+
+pub fn set_overlay_hit_areas(_areas: crate::overlay_pointer::OverlayAreas) {}

@@ -9,10 +9,16 @@ body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); col
 button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); padding: 6px 12px; }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 button.danger { color: var(--danger); }
+button { transition: background-color .12s, border-color .12s, color .12s; }
+/* Same specificity as `button`: any class-based component style wins over the generic hover. */
+button:where(:not(:disabled):hover) { background: color-mix(in srgb, var(--text) 7%, var(--card));
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border)); }
+button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 82%, #000); border-color: color-mix(in srgb, var(--accent) 82%, #000); }
+button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, var(--card)); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
 button:has(> .icon) { display: inline-flex; align-items: center; gap: 6px; }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 button.ghost:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
-button.ghost.danger, button.ghost.danger:hover:not(:disabled) { color: var(--danger); }
+button.ghost.danger, button.ghost.danger:hover:not(:disabled) { color: var(--danger); border-color: transparent; }
 button.accent { color: var(--link); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 button.accent:hover:not(:disabled), button.accent[aria-expanded="true"] { background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
 input, textarea, select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); }

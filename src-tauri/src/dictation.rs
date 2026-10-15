@@ -10,9 +10,10 @@ use scribe_core::model::{NewDictation, Outcome, TranscriptionUpdate};
 use scribe_core::pipeline::{self, PipelineError, PipelineOutput, ProviderError, StyleInputs};
 use scribe_core::prompt;
 use scribe_core::storage::Db;
+use scribe_core::style::{self, Style};
 
 use crate::error::AppError;
-use crate::overlay::{Notice, OverlayEvent, ToastLevel};
+use crate::overlay::{Notice, OverlayEvent, StyleBadge, ToastLevel};
 use crate::services::{now_rfc3339, Services};
 use crate::settings::Settings;
 
@@ -36,20 +37,28 @@ fn preview(text: &str) -> String {
 }
 
 /// What the overlay shows once a transcribed dictation was delivered (or not). Spec §7: a correction failure is
-/// always mentioned, whatever the insertion result.
+/// always mentioned, whatever the insertion result. `style`: the badge of the keyword style that ran, whose clean
+/// paste also gets a toast.
 pub fn feedback(
     inserted: InsertResult,
     correction_error: Option<&ProviderError>,
     final_text: &str,
     id: Option<i64>,
+    style: Option<StyleBadge>,
 ) -> OverlayEvent {
-    let toast =
-        |level, message, preview: Option<String>| OverlayEvent::Toast { level, message, preview, dictation_id: id };
+    let toast = |level, message, preview: Option<String>| OverlayEvent::Toast {
+        level,
+        message,
+        preview,
+        dictation_id: id,
+        style: style.clone(),
+    };
     let p = Some(preview(final_text));
     let correction = correction_error.cloned();
     match inserted {
         InsertResult::Pasted => match correction {
             Some(correction) => toast(ToastLevel::Info, Notice::PastedWithoutCorrection { correction }, None),
+            None if style.is_some() => toast(ToastLevel::Info, Notice::Pasted, None),
             None => OverlayEvent::Idle,
         },
         InsertResult::PastedUncertain => toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction }, p),
@@ -68,6 +77,7 @@ pub fn failure_feedback(e: &ProviderError, id: Option<i64>) -> OverlayEvent {
         message: Notice::TranscriptionFailed { error: e.clone() },
         preview: None,
         dictation_id: id,
+        style: None,
     }
 }
 
@@ -174,16 +184,18 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
         audio_path,
         duration_ms: duration,
     };
-    let inputs = StyleInputs {
-        styles: &settings.styles,
-        language: svc.language(),
-        terms: &terms,
-        app_name: meta.app_name.as_deref(),
+    let language = svc.language();
+    let inputs = StyleInputs { styles: &settings.styles, language, terms: &terms, app_name: meta.app_name.as_deref() };
+    // Authoritative: replaces the badge peeked at while recording.
+    let on_detected = |s: Option<&Style>| {
+        svc.overlay.emit(OverlayEvent::Processing { style: s.map(|s| StyleBadge::of(s, language)) });
     };
     let result = match svc.build_providers(&settings) {
-        Ok((stt, llm)) => pipeline::run(&settings.pipeline_config(), &wav, &inputs, stt.as_ref(), llm.as_ref())
-            .await
-            .map(|out| (out, stt.name(), llm.name())),
+        Ok((stt, llm)) => {
+            pipeline::run(&settings.pipeline_config(), &wav, &inputs, &on_detected, stt.as_ref(), llm.as_ref())
+                .await
+                .map(|out| (out, stt.name(), llm.name()))
+        }
         Err(e) => Err(PipelineError::Transcription(e)),
     };
 
@@ -209,10 +221,25 @@ pub async fn process(svc: Arc<Services>, cap: Captured) {
                 let _ = db.bump_term_usage(&used, &meta.created_at);
                 id
             };
-            svc.overlay.emit(feedback(inserted, out.correction_error.as_ref(), &out.final_text, id));
+            let badge = StyleBadge::keyword(&settings.styles, out.style.as_deref(), language);
+            svc.overlay.emit(feedback(inserted, out.correction_error.as_ref(), &out.final_text, id, badge));
         }
     }
     svc.ui.history_changed();
+}
+
+/// Transcribes the start of a recording to peek at its style, with the style keywords as hints. None on any
+/// failure: the final transcription decides anyway.
+pub async fn transcribe_prefix(svc: &Services, clip: AudioClip) -> Option<String> {
+    let settings = svc.settings.read().unwrap().clone();
+    let wav = audio::encode_wav(&clip).ok()?;
+    let cfg = settings.pipeline_config();
+    let hints = prompt::transcriber_hints(&style::keywords(&settings.styles), &[], cfg.hint_budget_chars);
+    let transcribed = match svc.build_providers(&settings) {
+        Ok((stt, _)) => pipeline::transcribe(&cfg, &wav, &hints, stt.as_ref()).await,
+        Err(e) => Err(PipelineError::Transcription(e)),
+    };
+    transcribed.map(|(text, _)| text).inspect_err(|e| tracing::debug!("peek transcription failed: {e}")).ok()
 }
 
 /// Re-runs the pipeline on a stored recording (after a failure, or with new settings/glossary).
@@ -232,7 +259,7 @@ pub async fn retranscribe(svc: Arc<Services>, id: i64) -> Result<(), AppError> {
         terms: &terms,
         app_name: dictation.app_name.as_deref(),
     };
-    let out = pipeline::run(&settings.pipeline_config(), &wav, &inputs, stt.as_ref(), llm.as_ref()).await?;
+    let out = pipeline::run(&settings.pipeline_config(), &wav, &inputs, &|_| {}, stt.as_ref(), llm.as_ref()).await?;
     // A failed dictation was never delivered: hand the new text over through the clipboard, and
     // only record « Clipboard » when that copy actually happened.
     let outcome = if dictation.outcome == Outcome::Error {

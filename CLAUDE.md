@@ -97,7 +97,13 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   Remaining branches: AX error / downcast `?`s and the secure-field guard of `AxFieldReader`.
 - `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit/Carbon calls and re-exports only (which key
   pastes on the active layout is `mac_keys::paste_keycode`, which flag tells a modifier is down `mac_keys::modifier_mask`;
-  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). Overlay
+  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). In `window.rs`, the
+  overlay's web view gets no mouse event while another app is active: an always-active tracking area feeds
+  `overlay_pointer::PointerTracker` (over the visible surface sent by the overlay, which button is under the pointer,
+  which cursor to set), which decides the `overlay-pointer` event (toast kept under the pointer, hovered button styled,
+  payload `overlay::OverlayPointer`) and the cursor; `hide_overlay` makes it forget the pointer (no `mouseExited:` once
+  ordered out). Remaining branches: the `contentView` / main-thread `let else`s, the cursor `match` and the re-assert
+  while over a button. Overlay
   `show`/`hide` post to the main queue (`DispatchQueue::main().exec_async`), never wait (same rule as Windows).
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
   `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`

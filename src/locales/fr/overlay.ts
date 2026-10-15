@@ -6,6 +6,7 @@ export const overlay: typeof En = {
   processing: "Transcription…",
   copy: "Copier",
   view: "Voir",
+  style: (name) => `Style : ${name}`,
   close: "Fermer",
   warnings: { shared_microphone: "Micro non exclusif : les autres applications vous entendent" },
 };

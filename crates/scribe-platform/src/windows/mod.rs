@@ -18,7 +18,7 @@ pub mod window;
 pub use audio_output::boot_time_ms;
 pub use hook::{start as start_keyboard_hook, HookHandle};
 pub use keys::is_key_pressed;
-pub use window::{hide_overlay, prepare_overlay, show_overlay};
+pub use window::{hide_overlay, on_overlay_pointer, prepare_overlay, set_overlay_hit_areas, show_overlay};
 
 pub fn focus_detector() -> Arc<dyn FocusDetector> {
     Arc::new(focus::UiaFocusDetector)

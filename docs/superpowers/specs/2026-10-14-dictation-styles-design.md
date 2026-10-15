@@ -435,7 +435,16 @@ New `Notice` variants: `Pasted` (success toast hosting the badge and, from PR 3,
   - A clean paste emits `Toast { level: Info, message: Pasted, style, dictation_id, preview: None }` only when a
     keyword style was detected and correction is on. Otherwise it stays `Idle`, as today.
   - Other notices (`PastedUncertain`, `Copied`, …) carry the badge when a keyword style was detected.
-  - The overlay auto-dismisses the `Pasted` toast after 4 s (`toastTimeout`).
+  - The overlay auto-dismisses every non-error toast carrying a badge (`Pasted`, `Copied`, `NotPasted`,
+    `PastedUncertain`, …) after 8 s instead of 6 s (`toastTimeout`), long enough to reach a style chip (PR 3); error
+    toasts keep 10 s. No toast hides under the pointer: when its delay runs out while hovered, it goes `LEAVE_GRACE_MS` (1 s)
+    after the pointer leaves.
+  - macOS sends no mouse event to the overlay's web view while another app is active: an always-active native
+    tracking area feeds `scribe_platform::overlay_pointer` with the visible surface (pill or toast, not the transparent
+    window) and the button areas the overlay sends (`overlay_hit_areas`), which drives the `overlay-pointer` event
+    (hover state, hovered button styled) and the pointing-hand cursor (set only when entering or leaving a button).
+    Hiding the overlay forgets the pointer position (no `mouseExited:` once ordered out), and the overlay forgets its
+    hover state whenever it stops showing a toast.
 - `Overlay.last` becomes `Mutex<(Kind, Option<i64>)>`: the kind and, for a toast, its `dictation_id`.
 - New `Overlay::emit_for_dictation(dictation_id, ev) -> bool`: emits only when the overlay is Idle, or showing a
   Toast for the same `dictation_id`. A late style-switch result therefore never covers a new recording, nor the
@@ -526,8 +535,8 @@ v1 producer (batch peek), the only one shipped:
   `clip = handle.peek(PEEK_CLIP_MS)` and `deps.spawn_prefix(PrefixJob { id, clip })`, which returns an abortable
   `PrefixTask`. The copy and resample of ≤ 3 s runs once per recording on the controller thread; the network call
   never does.
-- Production `spawn_prefix`: a one-line `tauri::async_runtime::spawn` in `main.rs` of `dictation::transcribe_prefix(svc,
-  clip) -> Option<String>` (`encode_wav`, `build_providers`, `pipeline::transcribe` with keyword hints only; errors
+- Production `spawn_prefix`: `controller::spawn_prefix` (wired in `main.rs`), a `tauri::async_runtime::spawn` of
+  `dictation::transcribe_prefix(svc, clip) -> Option<String>` (`encode_wav`, `build_providers`, `pipeline::transcribe` with keyword hints only; errors
   return None with a debug log), which sends `Prefix { id, text }`.
 - `FinishRecording` and `DiscardRecording` call `PrefixTask::abort()`. A late `Prefix` is ignored by the id and state
   check. Once recording stops, only `process` emits a style.
@@ -839,7 +848,7 @@ translates the dictation into English, showing that a style may translate.
 - `device/microphone.rs`: takes the `Arc<CaptureBuffer>`;
 - `adapters.rs`: `CpalRecording::peek`;
 - `main.rs`: commands, the corrector factory, `last_paste`, `insert_lock`, `session_busy`, `restyle_seq`, the
-  one-line `spawn_prefix`.
+  `controller::spawn_prefix` wiring.
 
 Update the "remaining branches" in `CLAUDE.md` in the PR that adds them: Windows focus (degenerate-selection guard,
 TextPattern absent, `Select()` result); macOS focus (`AXSelectedTextRange` read, length and settable guards,
@@ -895,7 +904,8 @@ Acceptance:
 
 - The badge appears during recording about 2.5 s in, or at the first pause.
 - A wrong peek is corrected at Processing; a short dictation gets its badge at Processing.
-- A dictation with a keyword style ends on a 4 s toast with the badge; other dictations show no new toast.
+- A dictation with a keyword style ends on an 8 s toast with the badge (kept while hovered); any other non-error toast
+  with a badge also lasts 8 s; dictations without a keyword style show no new toast.
 - No peek request with correction off or without a keyword style.
 - All checks in `CLAUDE.md` pass.
 

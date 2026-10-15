@@ -34,7 +34,17 @@ fn only_row(f: &Fixture) -> Dictation {
 }
 
 fn toast(level: ToastLevel, message: Notice, preview: Option<&str>, id: Option<i64>) -> OverlayEvent {
-    OverlayEvent::Toast { level, message, preview: preview.map(String::from), dictation_id: id }
+    badged_toast(level, message, preview, id, None)
+}
+
+fn badged_toast(
+    level: ToastLevel,
+    message: Notice,
+    preview: Option<&str>,
+    id: Option<i64>,
+    style: Option<StyleBadge>,
+) -> OverlayEvent {
+    OverlayEvent::Toast { level, message, preview: preview.map(String::from), dictation_id: id, style }
 }
 
 fn stored(e: &ProviderError) -> Option<String> {
@@ -71,31 +81,31 @@ fn feedback_for_each_insertion_result() {
     let id = Some(3);
     let timeout = ProviderError::Timeout;
     let note = || Some(timeout.clone());
-    assert_eq!(feedback(InsertResult::Pasted, None, "t", id), OverlayEvent::Idle);
+    assert_eq!(feedback(InsertResult::Pasted, None, "t", id, None), OverlayEvent::Idle);
     assert_eq!(
-        feedback(InsertResult::Pasted, Some(&timeout), "t", id),
+        feedback(InsertResult::Pasted, Some(&timeout), "t", id, None),
         toast(ToastLevel::Info, Notice::PastedWithoutCorrection { correction: timeout.clone() }, None, id)
     );
     assert_eq!(
-        feedback(InsertResult::PastedUncertain, None, "t", id),
+        feedback(InsertResult::PastedUncertain, None, "t", id, None),
         toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction: None }, Some("t"), id)
     );
     assert_eq!(
-        feedback(InsertResult::PastedUncertain, Some(&timeout), "t", id),
+        feedback(InsertResult::PastedUncertain, Some(&timeout), "t", id, None),
         toast(ToastLevel::Uncertain, Notice::PastedUncertain { correction: note() }, Some("t"), id)
     );
     for r in [InsertResult::ClipboardOnly, InsertResult::PasteFailed] {
         assert_eq!(
-            feedback(r, None, "t", None),
+            feedback(r, None, "t", None, None),
             toast(ToastLevel::Copied, Notice::Copied { correction: None }, Some("t"), None)
         );
     }
     assert_eq!(
-        feedback(InsertResult::NotPasted, Some(&timeout), "t", id),
+        feedback(InsertResult::NotPasted, Some(&timeout), "t", id, None),
         toast(ToastLevel::Copied, Notice::NotPasted { correction: note() }, Some("t"), id)
     );
     assert_eq!(
-        feedback(InsertResult::ClipboardFailed, Some(&timeout), "t", id),
+        feedback(InsertResult::ClipboardFailed, Some(&timeout), "t", id, None),
         toast(ToastLevel::Error, Notice::ClipboardUnavailable { correction: note() }, Some("t"), id)
     );
 }
@@ -659,4 +669,98 @@ fn purge_audio_uses_the_configured_retention() {
     purge_audio(&f.svc);
     assert!(!wav.exists());
     assert_eq!(get(&f, id).audio_path, None);
+}
+
+// --- style badge ---------------------------------------------------------------------------------
+
+fn slack() -> Option<StyleBadge> {
+    Some(StyleBadge { id: "slack".into(), name: "Slack".into() })
+}
+
+fn processing(f: &Fixture) -> Vec<OverlayEvent> {
+    f.window.events().into_iter().filter(|e| matches!(e, OverlayEvent::Processing { .. })).collect()
+}
+
+#[test]
+fn feedback_carries_the_badge_and_toasts_a_clean_paste_only_with_a_style() {
+    let id = Some(3);
+    assert_eq!(
+        feedback(InsertResult::Pasted, None, "t", id, slack()),
+        badged_toast(ToastLevel::Info, Notice::Pasted, None, id, slack())
+    );
+    assert_eq!(
+        feedback(InsertResult::Pasted, Some(&ProviderError::Auth), "t", id, slack()),
+        badged_toast(
+            ToastLevel::Info,
+            Notice::PastedWithoutCorrection { correction: ProviderError::Auth },
+            None,
+            id,
+            slack()
+        )
+    );
+    assert_eq!(
+        feedback(InsertResult::NotPasted, None, "t", id, slack()),
+        badged_toast(ToastLevel::Copied, Notice::NotPasted { correction: None }, Some("t"), id, slack())
+    );
+}
+
+#[test]
+fn a_keyword_style_shows_its_badge_from_processing_to_the_final_toast() {
+    let f = Fixture::new();
+    f.plan(|p| p.stt = Ok("Slack, on décale la réunion à demain".into()));
+    run(&f, speech(1_000));
+    let row = only_row(&f);
+    assert_eq!(processing(&f), vec![OverlayEvent::Processing { style: slack() }]);
+    assert_eq!(
+        f.window.last_event(),
+        Some(badged_toast(ToastLevel::Info, Notice::Pasted, None, Some(row.id), slack()))
+    );
+}
+
+#[test]
+fn without_a_keyword_processing_clears_the_badge_and_the_paste_stays_silent() {
+    let f = Fixture::new();
+    run(&f, speech(1_000));
+    assert_eq!(processing(&f), vec![OverlayEvent::Processing { style: None }]);
+    assert_eq!(f.window.last_event(), Some(OverlayEvent::Idle));
+}
+
+#[test]
+fn with_correction_off_a_keyword_shows_no_badge() {
+    let f = Fixture::with_settings(Settings { correction_enabled: false, restore_delay_ms: 0, ..Default::default() });
+    f.plan(|p| p.stt = Ok("Slack, on décale la réunion à demain".into()));
+    run(&f, speech(1_000));
+    assert_eq!(only_row(&f).final_text.as_deref(), Some("on décale la réunion à demain"));
+    assert!(processing(&f).is_empty());
+    assert_eq!(f.window.last_event(), Some(OverlayEvent::Idle));
+}
+
+#[test]
+fn the_badge_follows_the_ui_language() {
+    let f = Fixture::with_settings(Settings { language: LanguagePref::En, restore_delay_ms: 0, ..Default::default() });
+    f.plan(|p| p.stt = Ok("Mail, bonjour Paul, on se voit demain".into()));
+    set_end_focus(&f, FocusState::NotEditable);
+    run(&f, speech(1_000));
+    let email = Some(StyleBadge { id: "mail".into(), name: "Email".into() });
+    assert_eq!(processing(&f), vec![OverlayEvent::Processing { style: email.clone() }]);
+    let Some(OverlayEvent::Toast { message, style, .. }) = f.window.last_event() else { panic!("no toast") };
+    assert_eq!((message, style), (Notice::Copied { correction: None }, email));
+}
+
+// --- transcribe_prefix --------------------------------------------------------------------------
+
+#[test]
+fn transcribe_prefix_returns_the_text_or_none() {
+    let f = Fixture::new();
+    f.svc.db.lock().unwrap().add_term("Tauri", &[], None, TermSource::Manual, "2026-01-01T00:00:00.000Z").unwrap();
+    let prefix = || tauri::async_runtime::block_on(transcribe_prefix(&f.svc, speech(500)));
+    assert_eq!(prefix().as_deref(), Some("bonjour scribe comment ça va"));
+    let keywords = style::keywords(&f.svc.settings.read().unwrap().styles);
+    assert!(!keywords.is_empty());
+    assert_eq!(f.hints.lock().unwrap().as_slice(), [keywords], "keyword hints only, no glossary term");
+    f.plan(|p| p.stt = Err(ProviderError::Auth));
+    assert_eq!(prefix(), None);
+    f.plan(|p| p.build = Err(ProviderError::MissingKey { provider: "OpenAI".into() }));
+    assert_eq!(prefix(), None);
+    assert!(rows(&f).is_empty(), "a peek is never recorded");
 }
