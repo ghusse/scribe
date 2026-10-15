@@ -186,10 +186,16 @@ export type AppError =
   | { code: "duplicate_term"; term: string }
   | { code: "invalid_settings"; error: SettingsError }
   | { code: "provider"; error: ProviderError }
-  | { code: "no_update" };
+  | { code: "no_update" }
+  /** The style asked for is no longer in the settings. */
+  | { code: "style_not_found" }
+  /** The dictation has no transcript to rewrite. */
+  | { code: "nothing_to_restyle" };
 
 /** What a toast says; mirror of `overlay::Notice`. `correction`: why the text was not corrected. */
 export type Notice =
+  /** Clean paste of a dictation with a keyword style: hosts its badge. */
+  | { code: "pasted" }
   | { code: "pasted_without_correction"; correction: ProviderError }
   | { code: "pasted_uncertain"; correction: ProviderError | null }
   | { code: "copied"; correction: ProviderError | null }
@@ -201,18 +207,34 @@ export type Notice =
   | { code: "recording_lost"; detail: string }
   | { code: "hook_unavailable"; detail: string }
   | { code: "update_available"; version: string }
+  /** A style switch replaced the pasted text in place. */
+  | { code: "restyled" }
+  /** A style switch could not replace the pasted text: the new text is in the clipboard. */
+  | { code: "restyle_copied" }
+  /** A style switch could not rewrite the text; nothing changed. */
+  | { code: "restyle_failed"; error: ProviderError }
   /** Raised by the overlay itself when its « Copy » button fails. */
-  | { code: "copy_failed"; detail: string };
+  | { code: "copy_failed"; detail: string }
+  /** Raised by the overlay itself when the backend refuses a style switch (`restyle_dictation` rejected). */
+  | { code: "restyle_refused"; detail: string };
 
 /** Shown under the pill for the whole recording. */
 export type RecordingWarning = "shared_microphone";
 
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
+/** `style`: the keyword style of the dictation, when one was detected (never the default style). */
 export type OverlayEvent =
   | { kind: "idle" }
-  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null }
-  | { kind: "processing" }
-  | { kind: "toast"; level: ToastLevel; message: Notice; preview: string | null; dictation_id: number | null };
+  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null; style: StyleBadge | null }
+  | { kind: "processing"; style: StyleBadge | null }
+  | {
+      kind: "toast";
+      level: ToastLevel;
+      message: Notice;
+      preview: string | null;
+      dictation_id: number | null;
+      style: StyleBadge | null;
+    };
 
 type Result<T> = { Ok: T } | { Err: ProviderError };
 /** Each call's duration in ms or its error; `llm` is null when correction is off (not tested). */
@@ -227,6 +249,12 @@ export type Permission = "accessibility" | "microphone";
 export type PermissionState = "granted" | "not_determined" | "denied";
 /** An OS permission (macOS privacy settings); Windows reports none. */
 export interface PermissionStatus { permission: Permission; state: PermissionState }
+
+/** An area of the overlay: `[x, y, width, height]` in CSS pixels. */
+export type HitArea = [number, number, number, number];
+
+/** The overlay's visible surface (null while idle: the window is transparent) and its buttons, in DOM order. */
+export interface OverlayAreas { surface: HitArea | null; buttons: HitArea[] }
 
 export const api = {
   listDictations: (query: string | null, limit = 50, offset = 0) =>
@@ -269,4 +297,7 @@ export const api = {
   improveStyle: (request: ImproveRequest) => invoke<string>("improve_style", { request }),
   overlayDismiss: () => invoke<void>("overlay_dismiss"),
   openHistory: (id: number | null) => invoke<void>("open_history", { id }),
+  /** Rewrites a dictation with another style; the result arrives as an overlay toast. */
+  restyleDictation: (id: number, styleId: string) => invoke<void>("restyle_dictation", { id, styleId }),
+  overlayHitAreas: (areas: OverlayAreas) => invoke<void>("overlay_hit_areas", { ...areas }),
 };

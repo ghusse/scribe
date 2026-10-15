@@ -480,7 +480,7 @@ fn providers_lists_the_catalog() {
 fn overlay_dismiss_hides_a_toast_but_not_a_recording() {
     let f = Fixture::new();
     with_state(&f, |s| {
-        f.svc.overlay.emit(OverlayEvent::Recording { locked: false, warning: None });
+        f.svc.overlay.emit(OverlayEvent::Recording { locked: false, warning: None, style: None });
         overlay_dismiss(s.clone());
         assert!(f.window.visible());
         f.svc.overlay.toast(ToastLevel::Copied, Notice::Copied { correction: None }, None, Some(1));
@@ -501,7 +501,20 @@ fn open_history_shows_the_main_window_on_the_dictation() {
     assert_eq!(f.ui.calls(), vec![UiCall::ShowMain, UiCall::FocusDictation(5), UiCall::ShowMain]);
 }
 
-/// Names of the commands in `src` that touch `svc.overlay` from a sync (main-thread) handler.
+#[test]
+fn restyle_dictation_delegates_to_the_dictation() {
+    let f = Fixture::new();
+    let id = insert(&f, Some("Texte."), None);
+    with_state(&f, |s| {
+        let r = tauri::async_runtime::block_on(restyle_dictation(s.clone(), 42, "mail".into()));
+        assert_eq!(r.unwrap_err(), AppError::DictationNotFound);
+        let r = tauri::async_runtime::block_on(restyle_dictation(s, id, "gone".into()));
+        assert_eq!(r.unwrap_err(), AppError::StyleNotFound);
+    });
+}
+
+/// Names of the commands in `src` that touch `svc.overlay`, directly or through `dictation::`, and of those that do
+/// it from a sync (main-thread) handler.
 fn sync_commands_touching_the_overlay(src: &str) -> (Vec<String>, Vec<String>) {
     let (mut touching, mut offending) = (Vec::new(), Vec::new());
     for item in src.split("#[tauri::command").skip(1) {
@@ -509,7 +522,7 @@ fn sync_commands_touching_the_overlay(src: &str) -> (Vec<String>, Vec<String>) {
         let code: String = item.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n");
         let sig = code.lines().find(|l| l.contains("fn ")).unwrap();
         let name = sig.split("fn ").nth(1).unwrap().split(['(', '<']).next().unwrap().to_string();
-        if !code.contains("overlay.") {
+        if !code.contains("overlay.") && !code.contains("dictation::") {
             continue;
         }
         touching.push(name.clone());
@@ -525,9 +538,26 @@ fn commands_touching_the_overlay_never_run_on_the_main_thread() {
     // Tauri runs sync commands on the main thread, which owns the overlay window: blocking there on the
     // `Overlay` lock can deadlock with a holder showing that window (see `overlay::OverlayWindow`).
     let (touching, offending) = sync_commands_touching_the_overlay(include_str!("../commands.rs"));
-    assert_eq!(touching, vec!["overlay_dismiss", "open_history"]);
+    assert_eq!(touching, vec!["retranscribe", "overlay_dismiss", "open_history", "restyle_dictation"]);
     assert_eq!(offending, Vec::<String>::new());
     // The check itself flags a sync command.
-    let bad = "#[tauri::command]\npub fn f(svc: Svc<'_>) {\n    svc.overlay.dismiss();\n}\n/// overlay. in a doc\n#[tauri::command]\npub fn g() {}\n#[tauri::command(async)]\npub fn h(svc: Svc<'_>) { svc.overlay.dismiss(); }\n#[tauri::command]\npub async fn i(svc: Svc<'_>) { svc.overlay.dismiss(); }\n";
-    assert_eq!(sync_commands_touching_the_overlay(bad), (vec!["f".into(), "h".into(), "i".into()], vec!["f".into()]));
+    let bad = "#[tauri::command]\npub fn f(svc: Svc<'_>) {\n    svc.overlay.dismiss();\n}\n/// overlay. in a doc\n#[tauri::command]\npub fn g() {}\n#[tauri::command(async)]\npub fn h(svc: Svc<'_>) { svc.overlay.dismiss(); }\n#[tauri::command]\npub async fn i(svc: Svc<'_>) { svc.overlay.dismiss(); }\n#[tauri::command]\npub fn j(svc: Svc<'_>) { dictation::purge_audio(&svc); }\n";
+    assert_eq!(
+        sync_commands_touching_the_overlay(bad),
+        (vec!["f".into(), "h".into(), "i".into(), "j".into()], vec!["f".into(), "j".into()])
+    );
+}
+
+#[test]
+fn overlay_hit_areas_are_forwarded_to_the_platform() {
+    let mut sent = Vec::new();
+    super::forward_hit_areas(Some([0.0, 60.0, 200.0, 44.0]), vec![[150.0, 70.0, 24.0, 24.0]], |a| sent.push(a));
+    super::forward_hit_areas(None, Vec::new(), |a| sent.push(a));
+    assert_eq!(
+        sent,
+        vec![
+            OverlayAreas { surface: Some([0.0, 60.0, 200.0, 44.0]), buttons: vec![[150.0, 70.0, 24.0, 24.0]] },
+            OverlayAreas::default(),
+        ]
+    );
 }

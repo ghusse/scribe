@@ -6,9 +6,9 @@ use std::sync::Mutex;
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
 };
-use scribe_core::insert::KeySender;
+use scribe_core::insert::{KeySender, NavKey};
 
-use crate::mac_keys::{modifier_mask, paste_keycode, KeyMap, KEYCODE_V};
+use crate::mac_keys::{arrow_flags, arrow_keycode, modifier_mask, paste_keycode, KeyMap, KEYCODE_V};
 
 /// `EventSourceUserData` of the events Scribe posts: the hook lets them through untouched.
 pub const INJECTED_MARK: i64 = 0x5343_5249;
@@ -114,6 +114,21 @@ impl KeySender for MacKeySender {
             // Never set the unicode string: macOS 27 then types a plain « v » (or beeps) instead of pasting.
             CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, INJECTED_MARK);
             CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
+        }
+        Ok(())
+    }
+    fn press(&self, key: NavKey, shift: bool, times: usize) -> Result<(), String> {
+        let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState);
+        let keycode = arrow_keycode(key);
+        for _ in 0..times {
+            for down in [true, false] {
+                let event = CGEvent::new_keyboard_event(source.as_deref(), keycode, down)
+                    .ok_or("cannot create the arrow key event")?;
+                let flags = arrow_flags(CGEvent::flags(Some(&event)).0, shift);
+                CGEvent::set_flags(Some(&event), CGEventFlags(flags));
+                CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, INJECTED_MARK);
+                CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
+            }
         }
         Ok(())
     }

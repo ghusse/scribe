@@ -27,6 +27,10 @@ pub enum AppError {
         error: ProviderError,
     },
     NoUpdate,
+    /// The style asked for is no longer in the settings.
+    StyleNotFound,
+    /// The dictation has no transcript to rewrite.
+    NothingToRestyle,
 }
 
 impl AppError {
@@ -135,6 +139,8 @@ mod tests {
                 json!({"code": "provider", "error": {"code": "http", "status": 404, "body": "b"}}),
             ),
             (AppError::NoUpdate, json!({"code": "no_update"})),
+            (AppError::StyleNotFound, json!({"code": "style_not_found"})),
+            (AppError::NothingToRestyle, json!({"code": "nothing_to_restyle"})),
         ];
         for (e, expected) in cases {
             assert_eq!(serde_json::to_value(&e).unwrap(), expected);

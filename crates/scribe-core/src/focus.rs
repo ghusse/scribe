@@ -7,6 +7,8 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum FocusState {
     Editable,
+    /// A terminal: pasting works, but its prompt line cannot be selected and replaced safely.
+    Terminal,
     NotEditable,
     Unknown,
 }

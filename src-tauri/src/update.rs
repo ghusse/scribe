@@ -79,6 +79,7 @@ mod tests {
                 message: Notice::UpdateAvailable { version: "0.2.0".into() },
                 preview: None,
                 dictation_id: None,
+                style: None,
             })
         );
     }

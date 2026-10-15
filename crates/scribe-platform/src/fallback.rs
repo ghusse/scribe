@@ -112,6 +112,10 @@ pub fn show_overlay(_raw_hwnd: isize) {}
 
 pub fn hide_overlay(_raw_hwnd: isize) {}
 
+pub fn on_overlay_pointer(_f: Box<dyn Fn(crate::overlay_pointer::PointerState) + Send + Sync>) {}
+
+pub fn set_overlay_hit_areas(_areas: crate::overlay_pointer::OverlayAreas) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,12 +138,21 @@ mod tests {
 
     #[test]
     fn a_paste_is_never_verified() {
-        assert_eq!(field_reader().focused_text(), None);
+        let field = field_reader();
+        assert_eq!(field.focused_text(), None);
+        assert_eq!(field.before_caret(), None);
+        assert_eq!(field.selected_text(), None);
+        assert_eq!(
+            field.select_before_caret("text"),
+            scribe_core::insert::Selection::Unsupported,
+            "a restyle copies the new text instead"
+        );
     }
 
     #[test]
     fn paste_simulation_fails_so_the_text_stays_in_the_clipboard() {
         assert_eq!(key_sender().send_paste(), Err("keyboard simulation not available on this platform".into()));
+        assert!(key_sender().press(scribe_core::insert::NavKey::Left, true, 3).is_err());
     }
 
     #[test]
@@ -171,5 +184,7 @@ mod tests {
         prepare_overlay(1);
         show_overlay(1);
         hide_overlay(1);
+        on_overlay_pointer(Box::new(|_| {}));
+        set_overlay_hit_areas(crate::overlay_pointer::OverlayAreas::default());
     }
 }

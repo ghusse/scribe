@@ -18,8 +18,8 @@ pub const PANE: i32 = 50033;
 
 const SHELL_CLASSES: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd"];
 const NAVIGATION: &[i32] = &[BUTTON, LIST_ITEM, LIST, MENU_ITEM, TAB, TAB_ITEM, TREE, TREE_ITEM];
-/// Terminals take typed and pasted text, but expose it as plain text with no writable value: Windows Terminal's
-/// text area (a `TermControl` element) and the classic console window (`ConsoleWindowClass`).
+/// Terminals take pasted text but expose it as plain text with no writable value, and their caret is not the
+/// shell's: Windows Terminal's text area (a `TermControl` element) and the classic console (`ConsoleWindowClass`).
 const TERMINAL_ELEMENTS: &[&str] = &["TermControl"];
 const TERMINAL_WINDOWS: &[&str] = &["ConsoleWindowClass"];
 
@@ -37,7 +37,7 @@ pub fn classify(f: &UiaFacts) -> FocusState {
         return FocusState::NotEditable;
     }
     if TERMINAL_ELEMENTS.contains(&f.element_class.as_str()) || TERMINAL_WINDOWS.contains(&f.window_class.as_str()) {
-        return FocusState::Editable;
+        return FocusState::Terminal;
     }
     match f.control_type {
         Some(EDIT) => {
@@ -109,6 +109,22 @@ pub fn utf16_prefix(buf: &[u16], len: i64) -> String {
     String::from_utf16_lossy(&buf[..n])
 }
 
+/// The first `units` UTF-16 code units of `text` (an AX caret location). `None` past the end or inside a
+/// surrogate pair.
+pub fn prefix_utf16(text: &str, units: usize) -> Option<String> {
+    let mut seen = 0;
+    for (i, c) in text.char_indices() {
+        if seen == units {
+            return Some(text[..i].to_string());
+        }
+        seen += c.len_utf16();
+        if seen > units {
+            return None;
+        }
+    }
+    (seen == units).then(|| text.to_string())
+}
+
 /// Application name shown in the history: the executable's file stem (`C:\…\Code.exe` → `Code`).
 pub fn process_stem(image_path: &str) -> Option<String> {
     let file = image_path.rsplit(['\\', '/']).next().unwrap_or(image_path);
@@ -128,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn terminals_are_editable() {
+    fn terminals_are_classified_as_terminals() {
         // Windows Terminal's text area: a Text control with a text pattern but no value.
         let wt = UiaFacts {
             window_class: "CASCADIA_HOSTING_WINDOW_CLASS".into(),
@@ -136,8 +152,9 @@ mod tests {
             control_type: Some(TEXT),
             value_read_only: None,
         };
-        assert_eq!(classify(&wt), FocusState::Editable);
-        assert_eq!(classify(&facts("ConsoleWindowClass", None, None)), FocusState::Editable);
+        assert_eq!(classify(&wt), FocusState::Terminal);
+        assert_eq!(classify(&facts("ConsoleWindowClass", None, None)), FocusState::Terminal);
+        assert_eq!(classify(&facts("ConsoleWindowClass", Some(EDIT), Some(false))), FocusState::Terminal);
         assert_eq!(classify(&facts("X", Some(TEXT), None)), FocusState::Unknown, "other text controls stay unknown");
     }
 
@@ -207,6 +224,19 @@ mod tests {
         assert_eq!(utf16_prefix(&buf, 0), "");
         assert_eq!(utf16_prefix(&buf, -1), "", "a failed call returns 0 or less");
         assert_eq!(utf16_prefix(&buf[..3], 50), "Not", "never reads past the buffer");
+    }
+
+    #[test]
+    fn prefix_utf16_cuts_at_a_caret_location() {
+        assert_eq!(prefix_utf16("hello", 0).as_deref(), Some(""));
+        assert_eq!(prefix_utf16("hello", 3).as_deref(), Some("hel"));
+        assert_eq!(prefix_utf16("hello", 5).as_deref(), Some("hello"));
+        assert_eq!(prefix_utf16("hello", 6), None, "past the end");
+        assert_eq!(prefix_utf16("", 0).as_deref(), Some(""));
+        assert_eq!(prefix_utf16("été", 2).as_deref(), Some("ét"), "one unit per BMP character");
+        assert_eq!(prefix_utf16("a😀b", 3).as_deref(), Some("a😀"), "an emoji is two units");
+        assert_eq!(prefix_utf16("a😀b", 2), None, "inside a surrogate pair");
+        assert_eq!(prefix_utf16("a\r\nb", 3).as_deref(), Some("a\r\n"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,14 +7,17 @@ use scribe_core::audio::AudioClip;
 use scribe_core::chord;
 use scribe_core::focus::{self, FocusSnapshot};
 use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
-use scribe_core::session::{self, Session, SessionAction};
+use scribe_core::peek::{PeekTimer, PEEK_CLIP_MS};
+use scribe_core::session::{self, Session, SessionAction, SessionState};
+use scribe_core::style;
 use scribe_platform::audio_capture::{LevelCallback, RecordOptions, RecordingStart};
 use scribe_platform::HookEvent;
 
 use crate::audio_mute::MuteGuard;
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
-use crate::overlay::{Notice, OverlayEvent, RecordingWarning, ToastLevel};
+use crate::overlay::{Notice, OverlayEvent, RecordingWarning, StyleBadge, ToastLevel};
 use crate::services::{Services, UiSink};
+use crate::settings::Settings;
 
 pub enum ControllerMsg {
     /// A real key event, with its trigger/lock edges decided by the hook (`scribe_platform::key_filter`).
@@ -25,6 +28,11 @@ pub enum ControllerMsg {
     /// Sent by the tray after flipping `hook_cfg.paused`; carries the new value so a quick
     /// on/off toggle still discards the recording that was in flight when pause was set.
     PauseChanged(bool),
+    /// The start of the transcript of recording `id`, to show its style while the user still speaks.
+    Prefix {
+        id: u64,
+        text: String,
+    },
 }
 
 /// Microphone access (cpal in the app).
@@ -35,6 +43,8 @@ pub trait Recorder: Send + Sync {
 /// A recording in progress.
 pub trait Recording: Send {
     fn started(&self) -> RecordingStart;
+    /// The first `max_ms` captured so far, as 16 kHz mono; recording goes on.
+    fn peek(&self, max_ms: u64) -> Option<AudioClip>;
     /// Stops capture and returns 16 kHz mono audio.
     fn stop(self: Box<Self>) -> Result<AudioClip, String>;
 }
@@ -53,6 +63,32 @@ pub struct Job {
 /// Runs a job off the controller thread and sends `ProcessingDone` when it is over.
 pub type SpawnProcessing = Box<dyn Fn(Arc<Services>, Job, Sender<ControllerMsg>) + Send>;
 
+/// The start of a recording, to transcribe while it goes on.
+pub struct PrefixJob {
+    pub id: u64,
+    pub clip: AudioClip,
+}
+
+/// A prefix transcription in flight; aborted when dropped, so it ends with its recording.
+pub struct PrefixTask(Option<Box<dyn FnOnce() + Send>>);
+
+impl PrefixTask {
+    pub fn new(abort: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(abort)))
+    }
+}
+
+impl Drop for PrefixTask {
+    fn drop(&mut self) {
+        if let Some(abort) = self.0.take() {
+            abort();
+        }
+    }
+}
+
+/// Starts producing transcript prefixes of a recording, sent back as `ControllerMsg::Prefix`.
+pub type SpawnPrefix = Box<dyn Fn(Arc<Services>, PrefixJob, Sender<ControllerMsg>) -> PrefixTask + Send>;
+
 /// Physical key state (`scribe_platform::is_key_pressed` in the app).
 pub type KeyState = Arc<dyn Fn(u32) -> bool + Send + Sync>;
 
@@ -60,6 +96,7 @@ pub struct ControllerDeps {
     pub recorder: Arc<dyn Recorder>,
     pub clock: Clock,
     pub spawn_processing: SpawnProcessing,
+    pub spawn_prefix: SpawnPrefix,
     pub is_pressed: KeyState,
 }
 
@@ -98,8 +135,29 @@ pub fn microphone_warning(options: RecordOptions, started: RecordingStart) -> Op
     (options.exclusive_microphone && !started.exclusive_microphone).then_some(RecordingWarning::SharedMicrophone)
 }
 
+/// Whether a recording peeks at its style: only a keyword style can show, and only when it will be applied.
+pub fn peeks(settings: &Settings) -> bool {
+    settings.correction_enabled && settings.styles.iter().any(|s| s.keyword.is_some())
+}
+
+/// Also stores each level in `latest`: the audio thread only writes an atomic, the controller reads it on ticks.
+fn keep_latest_level(latest: Arc<AtomicU32>, inner: LevelCallback) -> LevelCallback {
+    Arc::new(move |rms: f32| {
+        latest.store(rms.to_bits(), Ordering::Relaxed);
+        inner(rms);
+    })
+}
+
+/// The batch peek of a recording: when to transcribe its start, and the transcription in flight.
+struct Peek {
+    timer: PeekTimer,
+    level: Arc<AtomicU32>,
+    task: Option<PrefixTask>,
+}
+
 /// A recording in progress, with what it holds until it ends.
 struct Active {
+    id: u64,
     handle: Box<dyn Recording>,
     /// The start focus snapshot is resolved off the controller thread (it can take up to
     /// FOCUS_TIMEOUT_MS): blocking here would delay queued ticks and break double-tap timing.
@@ -109,6 +167,9 @@ struct Active {
     mute: Option<MuteGuard>,
     /// Kept on the pill when the recording locks.
     warning: Option<RecordingWarning>,
+    /// The keyword style peeked at, shown on the pill and then on the processing state.
+    style: Option<StyleBadge>,
+    peek: Option<Peek>,
 }
 
 pub struct Controller {
@@ -119,6 +180,8 @@ pub struct Controller {
     session: Session,
     mode: Mode,
     recording: Option<Active>,
+    /// Id of the last recording started, so a late prefix of a previous one is ignored.
+    recording_id: u64,
     /// Since when the trigger looks physically up while the detector sees it held.
     released_since: Option<u64>,
 }
@@ -145,6 +208,16 @@ pub fn spawn_processing(svc: Arc<Services>, job: Job, tx: Sender<ControllerMsg>)
                 .unwrap_or_else(|_| FocusSnapshot::unknown());
         dictation::process(svc, Captured { clip: job.clip, mode: job.mode, focus_start }).await;
     });
+}
+
+/// The app's `SpawnPrefix`: transcribes the clip on the async runtime and reports the text, if any.
+pub fn spawn_prefix(svc: Arc<Services>, job: PrefixJob, tx: Sender<ControllerMsg>) -> PrefixTask {
+    let task = tauri::async_runtime::spawn(async move {
+        if let Some(text) = dictation::transcribe_prefix(&svc, job.clip).await {
+            let _ = tx.send(ControllerMsg::Prefix { id: job.id, text });
+        }
+    });
+    PrefixTask::new(move || task.abort())
 }
 
 /// Starts the ticker and the controller threads.
@@ -181,11 +254,17 @@ impl Controller {
             session: Session::new(s.max_recording_ms),
             mode: Mode::Hold,
             recording: None,
+            recording_id: 0,
             released_since: None,
         }
     }
 
     pub fn handle(&mut self, msg: ControllerMsg) {
+        self.dispatch(msg);
+        self.svc.session_busy.store(self.session.state() != SessionState::Idle, Ordering::Relaxed);
+    }
+
+    fn dispatch(&mut self, msg: ControllerMsg) {
         match msg {
             ControllerMsg::Key(ev) => {
                 // A pending hotkey capture takes every key until the combination is released, even while paused.
@@ -209,7 +288,9 @@ impl Controller {
                     self.gesture.reset();
                     self.apply_action(action);
                 }
+                self.peek_if_due(now);
             }
+            ControllerMsg::Prefix { id, text } => self.show_prefix_style(id, &text),
             ControllerMsg::ProcessingDone => self.session.on_processing_done(),
             ControllerMsg::PauseChanged(paused) => {
                 if paused {
@@ -227,6 +308,35 @@ impl Controller {
                 self.svc.hook_cfg.lock_vk.store(s.lock_vk, Ordering::Relaxed);
             }
         }
+    }
+
+    fn peek_if_due(&mut self, now: u64) {
+        let Some(active) = self.recording.as_mut() else { return };
+        let Some(peek) = active.peek.as_mut() else { return };
+        peek.timer.on_level(now, f32::from_bits(peek.level.load(Ordering::Relaxed)));
+        if !peek.timer.take_due(now) {
+            return;
+        }
+        if let Some(clip) = active.handle.peek(PEEK_CLIP_MS) {
+            let job = PrefixJob { id: active.id, clip };
+            peek.task = Some((self.deps.spawn_prefix)(self.svc.clone(), job, self.tx.clone()));
+        }
+    }
+
+    /// The latest prefix of the current recording decides its badge; a prefix of an ended recording is ignored.
+    fn show_prefix_style(&mut self, id: u64, text: &str) {
+        let Some(active) = self.recording.as_mut().filter(|a| a.id == id) else { return };
+        let language = self.svc.language();
+        let badge = {
+            let settings = self.svc.settings.read().unwrap();
+            style::match_prefix(text, &settings.styles).map(|d| StyleBadge::of(d.style, language))
+        };
+        if badge == active.style {
+            return;
+        }
+        active.style = badge;
+        let (warning, style) = (active.warning, active.style.clone());
+        self.svc.overlay.emit(OverlayEvent::Recording { locked: self.mode == Mode::Locked, warning, style });
     }
 
     /// A press whose key-up never reached the hook (session locked while dictating) is dropped: the
@@ -262,19 +372,32 @@ impl Controller {
         let overlay = &self.svc.overlay;
         match action {
             SessionAction::BeginRecording => {
-                let on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
-                let exclusive_microphone = self.svc.settings.read().unwrap().exclusive_microphone_during_dictation;
+                let mut on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
+                let (exclusive_microphone, peek) = {
+                    let s = self.svc.settings.read().unwrap();
+                    let peek = peeks(&s).then(|| Peek {
+                        timer: PeekTimer::new((self.deps.clock)(), s.silence_threshold_dbfs),
+                        level: Arc::new(AtomicU32::new(0)),
+                        task: None,
+                    });
+                    (s.exclusive_microphone_during_dictation, peek)
+                };
+                if let Some(p) = &peek {
+                    on_level = keep_latest_level(p.level.clone(), on_level);
+                }
                 let options = RecordOptions { exclusive_microphone };
                 match self.deps.recorder.start(options, on_level) {
                     Ok(handle) => {
                         (self.svc.warm_up)(&self.svc.settings.read().unwrap());
                         self.mode = Mode::Hold;
                         let warning = microphone_warning(options, handle.started());
-                        overlay.emit(OverlayEvent::Recording { locked: false, warning });
+                        overlay.emit(OverlayEvent::Recording { locked: false, warning, style: None });
                         let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
                         let mute = mute_on.then(|| self.svc.audio_mute.guard());
                         let focus_start = spawn_focus_snapshot(&self.svc);
-                        self.recording = Some(Active { handle, focus_start, mute, warning });
+                        self.recording_id += 1;
+                        let id = self.recording_id;
+                        self.recording = Some(Active { id, handle, focus_start, mute, warning, style: None, peek });
                     }
                     Err(detail) => {
                         self.session.abort();
@@ -285,22 +408,25 @@ impl Controller {
             }
             SessionAction::SetMode(mode) => {
                 self.mode = mode;
-                let warning = self.recording.as_ref().and_then(|a| a.warning);
-                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, warning });
+                let (warning, style) = self.recording.as_ref().map_or((None, None), |a| (a.warning, a.style.clone()));
+                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, warning, style });
             }
             SessionAction::DiscardRecording => {
-                if let Some(Active { handle, mute, .. }) = self.recording.take() {
+                if let Some(Active { handle, mute, peek, .. }) = self.recording.take() {
+                    drop(peek);
                     let _ = handle.stop();
                     drop(mute);
                 }
                 overlay.emit(OverlayEvent::Idle);
             }
             SessionAction::FinishRecording => {
-                let Some(Active { handle, focus_start, mute, .. }) = self.recording.take() else {
+                let Some(Active { handle, focus_start, mute, style, peek, .. }) = self.recording.take() else {
                     self.session.on_processing_done();
                     return;
                 };
-                overlay.emit(OverlayEvent::Processing);
+                // From here only `dictation::process` decides the style.
+                drop(peek);
+                overlay.emit(OverlayEvent::Processing { style });
                 let stopped = handle.stop();
                 // Not before: the speakers would be heard at the end of the recording.
                 drop(mute);

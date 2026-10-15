@@ -2,19 +2,43 @@
   display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.35); margin-bottom: 8px; }
 .recording { display: flex; flex-direction: column; align-items: center; }
 .warning { background: #b45309; color: #fff; font-size: 12px; border-radius: 8px; padding: 4px 10px; margin: 0 0 8px; }
-.toast { border-radius: 14px; max-width: 420px; align-items: flex-start; }
+/* The window is 440x120: a toast never grows past it (its top, with the badge, would be cut); the preview gives way. */
+.toast { border-radius: 14px; max-width: 420px; box-sizing: border-box; max-height: calc(100vh - 8px); }
 .toast.error { border-left: 4px solid #ef4444; }
 .toast.copied, .toast.uncertain { border-left: 4px solid #6366f1; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444; animation: pulse 1s infinite; }
 .bars { display: flex; align-items: center; gap: 3px; height: 28px; }
 .bars span { width: 4px; background: #a5b4fc; border-radius: 2px; transition: height 60ms linear; }
-.tag { font-size: 12px; background: #6366f1; padding: 2px 8px; border-radius: 999px; }
-.label { font-size: 14px; }
+.tag { font-size: 12px; line-height: 20px; background: #6366f1; padding: 0 8px; border-radius: 999px; }
+.label { font-size: 14px; line-height: 20px; }
+.badge { font-size: 12px; font-weight: 600; color: #e0e7ff; background: rgba(99,102,241,.25); border: 1px solid #818cf8;
+  box-sizing: border-box; height: 22px; line-height: 20px; padding: 0 8px; border-radius: 999px; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+.switch { display: inline-flex; align-items: center; gap: 4px; font-family: inherit; cursor: pointer; transition: background-color .12s; }
+.switch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.switch svg { flex: none; }
+.switch:hover, .switch[data-hover] { background: rgba(99,102,241,.45); }
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; line-height: 20px; flex: none; }
 .spinner { width: 14px; height: 14px; border: 2px solid #a5b4fc; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
-.text { flex: 1; font-size: 13px; }
-.text p { margin: 4px 0 0; opacity: .8; }
-.actions { display: flex; gap: 6px; }
-.actions button { background: #3f3f56; color: #fff; border: 0; border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
-.actions button.close { background: transparent; font-size: 16px; padding: 0 4px; }
+.text { flex: 1; min-width: 0; font-size: 13px; display: flex; flex-direction: column; max-height: calc(100vh - 28px); overflow: hidden; }
+.text p { margin: 4px 0 0; opacity: .8; line-height: 16px; min-height: 0; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.detail { display: block; font-size: 12px; line-height: 16px; color: #c7c9d6; flex: none; }
+.actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.actions button { display: inline-flex; align-items: center; height: 24px; background: #3f3f56; color: #fff; border: 0; border-radius: 8px;
+  padding: 0 10px; cursor: pointer; font-size: 12px; }
+.actions button { transition: background-color .12s; }
+.actions button:hover, .actions button[data-hover] { background: #565677; }
+.actions button.close { background: transparent; padding: 0 5px; }
+.actions button.close:hover, .actions button.close[data-hover] { background: rgba(255, 255, 255, .14); }
+.actions button.close svg { display: block; }
+.chips { display: flex; gap: 6px; margin-top: 6px; padding-bottom: 4px; overflow-x: auto; overflow-y: hidden; flex: none; }
+.chips::-webkit-scrollbar { height: 4px; }
+.chips::-webkit-scrollbar-thumb { background: #565677; border-radius: 2px; }
+.chips button { flex: none; box-sizing: border-box; height: 22px; line-height: 20px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid #565677; background: #3f3f56; color: #fff; font-size: 12px; cursor: pointer; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background-color .12s, border-color .12s; }
+.chips button:hover, .chips button[data-hover] { background: #565677; border-color: #818cf8; }
+.chips button.current { cursor: default; font-weight: 600; color: #e0e7ff; background: rgba(99,102,241,.25); border-color: #818cf8; }
 @keyframes pulse { 50% { opacity: .4; } }
 @keyframes spin { to { transform: rotate(360deg); } }

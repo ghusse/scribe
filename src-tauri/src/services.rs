@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use scribe_core::chord::{ChordRecorder, Recorded};
 use scribe_core::focus::FocusDetector;
-use scribe_core::insert::{Clipboard, FieldReader, KeySender};
+use scribe_core::insert::{Clipboard, FieldReader, KeySender, PastedText};
 use scribe_core::permissions::SystemPermissions;
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::storage::Db;
@@ -114,6 +114,17 @@ pub struct Services {
     /// Set while the settings UI waits for the user to press the new hotkey.
     pub key_capture: KeyCapture,
     pub ctrl_tx: Mutex<Sender<ControllerMsg>>,
+    /// The last dictation pasted, which a style switch may replace in place.
+    pub last_paste: Mutex<Option<PastedText>>,
+    /// Held by every paste or replace, so two of them never interleave on the clipboard.
+    pub insert_lock: Mutex<()>,
+    /// A recording or its processing is in flight (mirrors the controller's session): a style switch then sends
+    /// no keys.
+    pub session_busy: AtomicBool,
+    /// Number of the last style switch asked: only that one is applied.
+    pub restyle_seq: AtomicU64,
+    /// Applies style switches one at a time.
+    pub restyle_lock: tokio::sync::Mutex<()>,
 }
 
 impl Services {

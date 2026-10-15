@@ -7,6 +7,32 @@
 
 /// kVK_ANSI_V: the key of « v » on QWERTY and AZERTY.
 pub const KEYCODE_V: u16 = 0x09;
+/// kVK_LeftArrow, kVK_RightArrow.
+pub const KEYCODE_LEFT_ARROW: u16 = 0x7B;
+pub const KEYCODE_RIGHT_ARROW: u16 = 0x7C;
+
+pub fn arrow_keycode(key: scribe_core::insert::NavKey) -> u16 {
+    match key {
+        scribe_core::insert::NavKey::Left => KEYCODE_LEFT_ARROW,
+        scribe_core::insert::NavKey::Right => KEYCODE_RIGHT_ARROW,
+    }
+}
+
+/// `CGEventFlags` bits: `MaskShift`, `MaskNumericPad`, `MaskSecondaryFn`.
+pub const FLAG_SHIFT: u64 = 0x0002_0000;
+pub const FLAG_NUMERIC_PAD: u64 = 0x0020_0000;
+pub const FLAG_SECONDARY_FN: u64 = 0x0080_0000;
+
+/// The flags of an injected arrow key: only its own (`current` comes from the new event), so a modifier the user
+/// still holds cannot extend the selection by word or line; Shift when selecting.
+pub fn arrow_flags(current: u64, shift: bool) -> u64 {
+    let own = current & (FLAG_NUMERIC_PAD | FLAG_SECONDARY_FN);
+    if shift {
+        own | FLAG_SHIFT
+    } else {
+        own
+    }
+}
 
 /// `CGEventType` values the hook listens to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +352,26 @@ mod tests {
         assert_eq!(paste_keycode(&|k| (k == 0x2F).then_some('V')), 0x2F, "Caps Lock");
         assert_eq!(paste_keycode(&|_| None), KEYCODE_V, "unreadable layout");
         assert_eq!(paste_keycode(&|_| Some('ф')), KEYCODE_V, "no « v » (Cyrillic): its position");
+    }
+
+    #[test]
+    fn arrow_keycodes_are_the_arrow_keys() {
+        use scribe_core::insert::NavKey;
+        assert_eq!(arrow_keycode(NavKey::Left), 0x7B);
+        assert_eq!(arrow_keycode(NavKey::Right), 0x7C);
+        assert_eq!(vk_for_key(KEYCODE_LEFT_ARROW, None), Some(0x25), "VK_LEFT");
+        assert_eq!(vk_for_key(KEYCODE_RIGHT_ARROW, None), Some(0x27), "VK_RIGHT");
+    }
+
+    #[test]
+    fn an_injected_arrow_keeps_only_its_own_flags() {
+        const COMMAND: u64 = 0x0010_0000;
+        const OPTION: u64 = 0x0008_0000;
+        let arrow = FLAG_NUMERIC_PAD | FLAG_SECONDARY_FN;
+        assert_eq!(arrow_flags(arrow | COMMAND | OPTION, false), arrow, "held modifiers dropped");
+        assert_eq!(arrow_flags(arrow | COMMAND, true), arrow | FLAG_SHIFT);
+        assert_eq!(arrow_flags(0, true), FLAG_SHIFT);
+        assert_eq!(arrow_flags(FLAG_SHIFT, false), 0, "a held Shift would select");
     }
 
     #[test]

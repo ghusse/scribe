@@ -3,7 +3,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_V,
 };
 
-use scribe_core::insert::KeySender;
+use scribe_core::insert::{KeySender, NavKey};
+
+use crate::win_keys::arrow_strokes;
 
 pub struct WinKeySender;
 
@@ -21,13 +23,17 @@ pub fn send_menu_mask() {
 }
 
 fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+    key_with(vk, up, KEYBD_EVENT_FLAGS(0))
+}
+
+fn key_with(vk: VIRTUAL_KEY, up: bool, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
                 wVk: vk,
                 wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                dwFlags: if up { flags | KEYEVENTF_KEYUP } else { flags },
                 time: 0,
                 dwExtraInfo: 0,
             },
@@ -35,14 +41,25 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     }
 }
 
+fn send(inputs: &[INPUT]) -> Result<(), String> {
+    let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent as usize == inputs.len() {
+        Ok(())
+    } else {
+        Err(format!("SendInput sent only {sent}/{} events", inputs.len()))
+    }
+}
+
 impl KeySender for WinKeySender {
     fn send_paste(&self) -> Result<(), String> {
-        let inputs = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
-        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
-        if sent as usize == inputs.len() {
-            Ok(())
-        } else {
-            Err(format!("SendInput sent only {sent}/{} events", inputs.len()))
-        }
+        send(&[key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)])
+    }
+
+    fn press(&self, nav: NavKey, shift: bool, times: usize) -> Result<(), String> {
+        let inputs: Vec<INPUT> = arrow_strokes(nav, shift, times)
+            .iter()
+            .map(|s| key_with(VIRTUAL_KEY(s.vk), false, KEYBD_EVENT_FLAGS(s.flags)))
+            .collect();
+        send(&inputs)
     }
 }

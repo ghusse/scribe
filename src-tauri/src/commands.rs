@@ -11,6 +11,7 @@ use scribe_core::permissions::{Permission, PermissionStatus};
 use scribe_core::pipeline::{Corrector, ProviderError};
 use scribe_core::prompt::{self, CorrectionPrompt, ImproveRequest};
 use scribe_core::style::{self, Preset, Style, MAX_TASK_CHARS};
+use scribe_platform::overlay_pointer::{HitArea, OverlayAreas};
 use scribe_providers::catalog::{self, Provider};
 
 use crate::audio_mute;
@@ -197,11 +198,7 @@ pub fn style_catalog(svc: Svc<'_>) -> StyleCatalog {
                 task: style::preset_task(preset, language),
             })
             .collect(),
-        styles: settings
-            .styles
-            .iter()
-            .map(|s| StyleBadge { id: s.id.clone(), name: style::display_name(s, language) })
-            .collect(),
+        styles: settings.styles.iter().map(|s| StyleBadge::of(s, language)).collect(),
         correction_enabled: settings.correction_enabled,
     }
 }
@@ -299,6 +296,17 @@ pub fn overlay_dismiss(svc: Svc<'_>) {
     svc.overlay.dismiss();
 }
 
+/// The overlay's visible surface and buttons (`[x, y, width, height]`, CSS pixels) after each render: on macOS its web
+/// view gets no mouse event, so the hover state and the pointing-hand cursor are tracked natively against them.
+#[tauri::command]
+pub fn overlay_hit_areas(surface: Option<HitArea>, buttons: Vec<HitArea>) {
+    forward_hit_areas(surface, buttons, scribe_platform::set_overlay_hit_areas);
+}
+
+fn forward_hit_areas(surface: Option<HitArea>, buttons: Vec<HitArea>, platform: impl FnOnce(OverlayAreas)) {
+    platform(OverlayAreas { surface, buttons });
+}
+
 /// From an overlay toast: open the history, scrolled to that dictation. `async`: see `overlay_dismiss`.
 #[tauri::command(async)]
 pub fn open_history(svc: Svc<'_>, id: Option<i64>) {
@@ -307,6 +315,12 @@ pub fn open_history(svc: Svc<'_>, id: Option<i64>) {
     if let Some(id) = id {
         svc.ui.focus_dictation(id);
     }
+}
+
+/// From an overlay toast: rewrites a dictation with another style; the result comes as a toast.
+#[tauri::command]
+pub async fn restyle_dictation(svc: Svc<'_>, id: i64, style_id: String) -> Result<(), AppError> {
+    dictation::restyle(svc.inner().clone(), id, &style_id).await
 }
 
 #[cfg(test)]

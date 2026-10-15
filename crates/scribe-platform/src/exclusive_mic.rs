@@ -40,8 +40,19 @@ const SETTLE_ATTEMPTS: u32 = 5;
 const SETTLE_DELAY: Duration = Duration::from_millis(50);
 
 /// Opens the input exclusively when asked to, else (or when exclusive access fails) shared: exclusive access
-/// never costs a dictation. The start tells which one was obtained.
+/// never costs a dictation. The start tells which one was obtained; `capture` learns the input format.
 pub fn open_input(
+    exclusive: bool,
+    access: &ExclusiveAccess,
+    shared: &dyn InputOpener,
+    capture: Arc<CaptureBuffer>,
+) -> Result<(OpenStream, RecordingStart), String> {
+    let opened = open_any(exclusive, access, shared, capture.clone())?;
+    capture.set_format(opened.0.channels, opened.0.rate);
+    Ok(opened)
+}
+
+fn open_any(
     exclusive: bool,
     access: &ExclusiveAccess,
     shared: &dyn InputOpener,
@@ -283,7 +294,32 @@ mod tests {
     #[test]
     fn the_shared_error_is_returned_when_nothing_opens() {
         let (ex, sh, _) = openers(Err("device in use"), Err("no microphone found"));
-        assert_eq!(open_input(true, &ex, &sh, capture()).err(), Some("no microphone found".into()));
+        let c = capture();
+        assert_eq!(open_input(true, &ex, &sh, c.clone()).err(), Some("no microphone found".into()));
+        c.push(vec![0.5]);
+        assert_eq!(c.peek(1_000), None, "no format without an input");
+    }
+
+    /// One sample was pushed by the opener: its peek length tells the rate the capture learnt.
+    fn peeked_len(c: &CaptureBuffer) -> usize {
+        c.peek(1_000).map_or(0, |clip| clip.samples.len())
+    }
+
+    #[test]
+    fn the_capture_learns_the_format_of_the_input_that_opened() {
+        let paths = [
+            (false, openers(Ok((1, 8_000)), Ok((1, 8_000)))),
+            (true, openers(Ok((1, 8_000)), Err("unused"))),
+            (true, openers(Err("device in use"), Ok((1, 8_000)))),
+            (true, held(None, Ok((1, 8_000)))),
+            (true, held(Some("refused"), Ok((1, 8_000)))),
+        ];
+        for (i, (exclusive, (access, sh, _))) in paths.into_iter().enumerate() {
+            let c = capture();
+            c.push(vec![0.5]);
+            open_input(exclusive, &access, &sh, c.clone()).unwrap();
+            assert_eq!(peeked_len(&c), 4, "path {i}: 2 samples at 8 kHz give 4 at 16 kHz");
+        }
     }
 
     #[test]

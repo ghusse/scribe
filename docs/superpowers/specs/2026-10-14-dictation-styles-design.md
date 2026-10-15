@@ -430,12 +430,23 @@ New `Notice` variants: `Pasted` (success toast hosting the badge and, from PR 3,
   locking the recording keeps it.
 - **Processing** at `FinishRecording` carries `Active.style`. After transcription, `dictation::process` emits
   `Processing { style }` from `on_detected`. This is authoritative and may remove a wrong peek badge.
-- Badges show only for **keyword** styles. Default shows no badge.
+- Badges show only for **keyword** styles. Default shows no badge. Exception: the result toasts of a style switch
+  (`Restyled`, `RestyleCopied`, `RestyleFailed`) carry the chosen style's badge, Default included, so the switch
+  stays available.
 - **Final toast**: `dictation::feedback` gains a `style: Option<StyleBadge>` argument.
   - A clean paste emits `Toast { level: Info, message: Pasted, style, dictation_id, preview: None }` only when a
     keyword style was detected and correction is on. Otherwise it stays `Idle`, as today.
   - Other notices (`PastedUncertain`, `Copied`, …) carry the badge when a keyword style was detected.
-  - The overlay auto-dismisses the `Pasted` toast after 4 s (`toastTimeout`).
+  - The overlay auto-dismisses every non-error toast carrying a badge (`Pasted`, `Copied`, `NotPasted`,
+    `PastedUncertain`, …) after 8 s instead of 6 s (`toastTimeout`), long enough to reach a style chip (PR 3); error
+    toasts keep 10 s. No toast hides under the pointer: when its delay runs out while hovered, it goes `LEAVE_GRACE_MS` (1 s)
+    after the pointer leaves.
+  - macOS sends no mouse event to the overlay's web view while another app is active: an always-active native
+    tracking area feeds `scribe_platform::overlay_pointer` with the visible surface (pill or toast, not the transparent
+    window) and the button areas the overlay sends (`overlay_hit_areas`), which drives the `overlay-pointer` event
+    (hover state, hovered button styled) and the pointing-hand cursor (set only when entering or leaving a button).
+    Hiding the overlay forgets the pointer position (no `mouseExited:` once ordered out), and the overlay forgets its
+    hover state whenever it stops showing a toast.
 - `Overlay.last` becomes `Mutex<(Kind, Option<i64>)>`: the kind and, for a toast, its `dictation_id`.
 - New `Overlay::emit_for_dictation(dictation_id, ev) -> bool`: emits only when the overlay is Idle, or showing a
   Toast for the same `dictation_id`. A late style-switch result therefore never covers a new recording, nor the
@@ -445,9 +456,11 @@ New `Notice` variants: `Pasted` (success toast hosting the badge and, from PR 3,
 
 - `Overlay.tsx`:
   - a badge chip (style name) in the recording pill, the processing state and the toast;
-  - a toast button "Change style" (`m.changeStyle`) opens **one horizontally scrollable row** of style chips inside
-    the existing 440×120 window (never resized). Buttons, not a native `<select>`, because the panel never takes
-    keyboard focus. `MAX_STYLES` bounds the row.
+  - when the switch is offered, the toast's badge is itself a button (titled `m.changeStyle`): a separate action
+    button would squeeze the text column. It opens **one horizontally scrollable row** of style chips inside the
+    existing 440×120 window (never resized); a vertical wheel scrolls the row sideways. Buttons, not a native
+    `<select>`, because the panel never takes keyboard focus. `MAX_STYLES` bounds the row. The current style's chip
+    is disabled and is no native hit area (`hitAreas` and `markHovered` both list `button:not(:disabled)`).
 - `model.ts`:
   - `toastActions(ov)` gains `restyle: boolean`: the toast has a `style` badge, `dictation_id` set, correction
     enabled (from `style_catalog`), and the notice delivered a transcript: `pasted`, `pasted_uncertain`,
@@ -462,7 +475,9 @@ New `Notice` variants: `Pasted` (success toast hosting the badge and, from PR 3,
   - `style_catalog() -> StyleCatalog { presets: Vec<PresetView { preset, name, task }>, styles: Vec<StyleBadge>,
     correction_enabled }`: sync, for the current UI language; does not touch the overlay. The overlay uses `styles`
     and `correction_enabled`; the settings UI uses `presets`. Names are resolved in Rust only.
-  - `restyle_dictation(id, style_id)`: `pub async fn` (it awaits the LLM).
+  - `restyle_dictation(id, style_id)`: `pub async fn` (it awaits the LLM). When it rejects (`StyleNotFound`,
+    `NothingToRestyle`, …), the overlay shows a local `restyle_refused` toast; `restyle_failed` is the backend's
+    toast for an LLM error.
   - `sync_commands_touching_the_overlay` (`src-tauri/src/commands/tests.rs`) only sees the text `overlay.` in a
     command body. It is extended to also count `dictation::` calls as touching the overlay; the pinned `touching`
     list becomes `["retranscribe", "overlay_dismiss", "open_history", "restyle_dictation"]` (source order) and the
@@ -526,8 +541,8 @@ v1 producer (batch peek), the only one shipped:
   `clip = handle.peek(PEEK_CLIP_MS)` and `deps.spawn_prefix(PrefixJob { id, clip })`, which returns an abortable
   `PrefixTask`. The copy and resample of ≤ 3 s runs once per recording on the controller thread; the network call
   never does.
-- Production `spawn_prefix`: a one-line `tauri::async_runtime::spawn` in `main.rs` of `dictation::transcribe_prefix(svc,
-  clip) -> Option<String>` (`encode_wav`, `build_providers`, `pipeline::transcribe` with keyword hints only; errors
+- Production `spawn_prefix`: `controller::spawn_prefix` (wired in `main.rs`), a `tauri::async_runtime::spawn` of
+  `dictation::transcribe_prefix(svc, clip) -> Option<String>` (`encode_wav`, `build_providers`, `pipeline::transcribe` with keyword hints only; errors
   return None with a debug log), which sends `Prefix { id, text }`.
 - `FinishRecording` and `DiscardRecording` call `PrefixTask::abort()`. A late `Prefix` is ignored by the id and state
   check. Once recording stops, only `process` emits a style.
@@ -550,10 +565,10 @@ Realtime transcription streams; Groq does not (batch only); Mistral to verify. N
 | Seam | Change |
 |---|---|
 | `FocusState` | new variant `Terminal`. Windows `focus_rules::classify` returns it for `TermControl` / `ConsoleWindowClass`. `decide` maps it to `Paste { uncertain: false }`, so paste behaviour does not change. macOS terminals stay `Unknown`. |
-| `FieldReader` | new default methods: `before_caret() -> Option<String>` (field text up to a collapsed caret; None with a selection or an unknown caret), `selected_text() -> Option<String>`, and `select_before_caret(suffix: &str) -> bool` (selects the `suffix` that ends at the caret through accessibility; false when unsupported). `TimedFieldReader` forwards them with its timeout. |
+| `FieldReader` | new default methods: `before_caret() -> Option<String>` (field text up to a collapsed caret; None with a selection or an unknown caret), `selected_text() -> Option<String>`, and `select_before_caret(suffix: &str) -> Selection` (selects the `suffix` that ends at the caret through accessibility: `Selected`, `Unsupported`, or `TimedOut`, which only `TimedFieldReader` returns since a late selection may still land). `TimedFieldReader` forwards them with its timeout. |
 | `KeySender` | new default method `press(key: NavKey, shift: bool, times: usize) -> Result<(), String>`, `NavKey { Left, Right }`. Default `Err` (fakes, `fallback::NoKeys`). Fallback selection only. |
 | new types | `PastedText { dictation_id: i64, focus: FocusSnapshot, text: String }`; `ReplacePlan { Replace { suffix: String, graphemes: usize }, CopyOnly(ReplaceRefusal) }`; `ReplaceRefusal { Busy, NotLastPaste, FocusChanged, NotEditable, CaretUnreadable, TextMoved, TooLong }` |
-| `plan_replace(last, now, before_caret, session_idle, max) -> ReplacePlan` | Pure. Replace only when every condition holds: `session_idle` (no recording or processing in flight); same `window_id` (Some) and `app_name`; `now.state == Editable` (not Terminal or Unknown); `before_caret` is Some and ends with the pasted text after CRLF→LF normalization; the matched field suffix is at most `MAX_SELECT_GRAPHEMES = 2000`. `suffix` is the **field's** text (CRLF kept) and graphemes are counted on it, so a CRLF counts as one caret step. |
+| `plan_replace(last, now, before_caret, session_idle, max) -> ReplacePlan` | Pure. Replace only when every condition holds: `session_idle` (no recording or processing in flight); same `window_id` (Some) and `app_name`; `now.state == Editable` (not Terminal or Unknown); `before_caret` is Some and ends with the pasted text once every line break (CRLF, and a lone CR as RichEdit reports it) becomes LF; the matched field suffix is at most `MAX_SELECT_GRAPHEMES = 2000`. `suffix` is the **field's** text (line breaks kept) and graphemes are counted on it, so a CRLF or a lone CR counts as one caret step. |
 | `verify_replace(before, after, old, new) -> Verdict` | Fingerprint counts. `Inserted` when the count of `new` rises and (the count of `old` drops, or `fp(new)` contains `fp(old)`). `NotInserted` when the field is unchanged. `Unknown` otherwise. |
 | `replace(...) -> InsertResult` | Steps below. Shares the clipboard save, restore and verify loop with `perform` through private helpers. |
 
@@ -562,15 +577,18 @@ New dependency: `unicode-segmentation` in scribe-core.
 `replace` steps:
 
 1. Save the clipboard and write the new text.
-2. Select: `reader.select_before_caret(suffix)`; when false, fall back to `keys.press(Left, shift: true,
-   graphemes)`. If both fail, return `NotPasted` (text stays in the clipboard).
+2. Select: `reader.select_before_caret(suffix)`; only when `Unsupported`, fall back to `keys.press(Left, shift: true,
+   graphemes)` (arrows on top of a timed-out selection that lands late would shrink it). If both fail, return
+   `NotPasted` (text stays in the clipboard).
 3. **Wait for the selection**: poll `selected_text()` with the existing `VERIFY_INTERVAL_MS` / `VERIFY_ATTEMPTS` loop
    until it equals the suffix (EOL-normalized). Injected arrows are handled asynchronously by the target app, so a
    single immediate read would see a partial selection. If it never matches, `press(Right, false, 1)` to collapse
-   the selection to its end (the original caret) and return `NotPasted`, keeping the text in the clipboard. This
-   guard also catches an app whose caret steps differ from graphemes, and a modifier still held by the user.
+   the selection to its end (the original caret), only when `selected_text()` is non-empty, and return `NotPasted`,
+   keeping the text in the clipboard. This guard also catches an app whose caret steps differ from graphemes, and a
+   modifier still held by the user.
 4. Read `focused_text`, `send_paste`, run the verify loop with `verify_replace`, restore the clipboard if it still
-   holds our text.
+   holds our text. When the paste fails or the field stays unchanged, the old text stays selected: a manual paste
+   then completes the replace, and a late paste lands over it instead of after it.
 
 ### 9.2 Platform (excluded files; logic stays in tested helpers)
 
@@ -602,7 +620,9 @@ New dependency: `unicode-segmentation` in scribe-core.
     `prepare_overlay` like today's `object_setClass`.
   - **Electron apps (Slack desktop)**: Chromium builds no AX tree for third-party clients unless
     `AXManualAccessibility` is set on the application element. `macos/focus.rs` sets `AXManualAccessibility = true`
-    on the focused `AXApplication` once per pid (wiring only; a new remaining branch in `CLAUDE.md`). If the field
+    on the focused `AXApplication` from `before_caret` / `select_before_caret` only (never from the focus snapshot
+    every dictation takes: the app pays for its AX tree and VS Code switches to its screen reader mode), and
+    remembers the pid only once the set succeeded (wiring only; a new remaining branch in `CLAUDE.md`). If the field
     still cannot be read or selected, `plan_replace` refuses and the new text is copied. Validated on Slack/macOS
     at the start of PR 3.
 
@@ -636,10 +656,14 @@ New dependency: `unicode-segmentation` in scribe-core.
      - new text equals the pasted text → nothing;
      - otherwise snapshot the focus (`snapshot_with_timeout`), `plan_replace(.., session_idle =
        !session_busy.load())`, then `insert::replace`, or on `CopyOnly` write the clipboard;
+     - a copy is skipped when no toast could announce it: `CopyOnly(Busy)`, or the overlay no longer free for this
+       dictation (`Overlay::free_for_dictation`: a recording, a processing state or a newer dictation's toast). The
+       user's clipboard is left alone, the new text only goes to the history and no toast is emitted;
      - when replaced, update `last_paste.text` **inside this critical section**.
-  8. `db.update_correction(...)` with the new outcome, still under `restyle_lock`.
-  9. `overlay.emit_for_dictation(id, Toast { Restyled | RestyleCopied, style, dictation_id, preview })`, then
-     `ui.history_changed()`.
+  8. `db.update_correction(...)` with the new outcome (the previous one when nothing was delivered), still under
+     `restyle_lock`.
+  9. `overlay.emit_for_dictation(id, Toast { Restyled | RestyleCopied, style, dictation_id, preview })` with the
+     chosen style's badge (Default included, see 7.2), then `ui.history_changed()`.
 
 Refusal reasons (`ReplaceRefusal`) go to the logs; the toast just says the new text was copied. The residual race
 (a recording starting between the busy check and the paste) is caught by the step-3 selection guard.
@@ -816,14 +840,14 @@ translates the dictation into English, showing that a style may translate.
 | `scribe-core/prompt.rs` | frame per language; no "never translate" in the frame; task after glossary; `strip_tags` on transcript and task (nested breakout); system stable across dictations for the same style; `transcriber_hints` keywords first, budget respected, keyword equal to a glossary term sent once; improve prompt strips tags from name, keyword, draft and request and uses the UI language |
 | `scribe-core/pipeline.rs` | short dictation with a style still calls the LLM; keyword alone is a normal dictation (short bypass applies, keyword pasted); the LLM receives the body without the keyword (FakeLlm records the prompt); a correction error falls back to the body; correction disabled strips the keyword and fillers without calling the LLM, `style: None`, `body_start` set; short with no style skips the LLM with `style = default`; `on_detected` called once with the right value; `body_start` in the output |
 | `scribe-core/peek.rs` | fires at 2.5 s; fires at a pause after 1 s; not at a pause before 1 s nor without speech; fires once |
-| `scribe-core/insert.rs` | `plan_replace` table (session busy, other window or app, NotEditable/Unknown/Terminal, unreadable caret, text moved, CRLF, too long, emoji graphemes); `verify_replace` table; `caret_units`; `replace` order (clipboard, select, selection poll, paste, restore); accessibility select used first, `press` as fallback; selection reached on a later poll; selection never matching collapses Right and keeps the text in the clipboard; both selects failing gives `NotPasted`; default trait methods |
+| `scribe-core/insert.rs` | `plan_replace` table (session busy, other window or app, NotEditable/Unknown/Terminal, unreadable caret, text moved, CRLF, too long, emoji graphemes); `verify_replace` table; `caret_units`; `replace` order (clipboard, select, selection poll, paste, restore); accessibility select used first, `press` as fallback; selection reached on a later poll; selection never matching collapses Right (only a non-empty selection) and keeps the text in the clipboard; a timed-out select sends no arrows; a paste that did not land keeps the old text selected; a lone CR read as a line break; both selects failing gives `NotPasted`; default trait methods |
 | `scribe-core/storage.rs` | V2→V3 migration on a V2 file: `style` backfilled (raw → NULL, clean → `clean`, formatted → `default`), `level` column gone, other columns kept; `body_start` round-trip; `update_correction` clears edited and rewrites search |
 | `scribe-platform` | `CaptureBuffer::peek` (non-draining, None before format, capped to `max_ms`); `open_input` sets the format on each path; `spawn_recorder` handle peek; `focus_rules::prefix_utf16`; `classify` returns Terminal; `mac_keys` arrow constants |
 | `src-tauri/settings.rs` | legacy `level` raw/clean/formatted migrated; load → save → load equals the first load and the file has no `level` key; `level: clean` with a custom default task in `styles` keeps the task; missing `styles` gives the catalog; seeding appends a new catalog style once, never re-adds a deleted one, skips a colliding one; a file with duplicate triggers keeps its `llm_model` and hotkey and loses only the later style; validation errors |
 | `src-tauri/providers.rs` | `build_corrector` without an STT key; correction off and missing LLM key give `NoCorrector`; `build` still fails without an STT key |
 | `src-tauri/controller` | prefix producer spawned at due time only when a keyword style exists and correction is on; the level atomic feeds the timer on Tick; `Prefix` sets the badge, a later one replaces it, stale or post-recording ones ignored; abort on finish and discard; badge kept on `SetMode`; Processing carries the peek badge; `session_busy` set on begin, cleared on every return to Idle |
 | `src-tauri/overlay.rs` | `emit_for_dictation`: emits on Idle and on a toast of the same dictation, not on Recording/Processing nor on another dictation's toast |
-| `src-tauri/dictation` | Processing badge from detection; `feedback`: `Pasted` toast only with a keyword style, `Idle` otherwise; `last_paste` set only on paste; `transcribe_prefix` (ok, provider error → None, transcriber error → None); restyle: replaced, copied (each refusal, busy included), unchanged text sends no keys, LLM error toast, Default corrects the full raw text with the keyword, body sliced with the stored `body_start` after the keyword was renamed, works without an STT key, stale seq dropped in both completion orders, `last_paste.text` updated, DB row updated |
+| `src-tauri/dictation` | Processing badge from detection; `feedback`: `Pasted` toast only with a keyword style, `Idle` otherwise; `last_paste` set only on paste; `transcribe_prefix` (ok, provider error → None, transcriber error → None); restyle: replaced, copied (each refusal), busy or a newer dictation shown → clipboard untouched and row updated, unchanged text sends no keys, LLM error toast, Default corrects the full raw text with the keyword, body sliced with the stored `body_start` after the keyword was renamed, works without an STT key, stale seq dropped in both completion orders, `last_paste.text` updated, DB row updated |
 | `src-tauri/commands` | `improve_style` (ok, no output tag, timeout, provider error, no STT key); `style_catalog` per language; `restore_builtin_styles`; overlay-command scan counts `dictation::` and lists `restyle_dictation` |
 | UI | `styles.ts` unit tests; `Styles.test.tsx` (edit → custom with language, reset, delete, add, cap, restore built-ins; autosave payload; error names the style); `ImproveStyle.test.tsx` (preview, accept, discard, error); `model.test.ts` (picker cancels dismiss, restyle success and failure, generation, no restyle on `transcription_failed` nor without a badge); `Overlay.test.tsx` (badge in each state, scrollable picker); updated `Settings.test.tsx`, `apiKeys`, `autosave`, `providerTest`; fixture `correction_enabled: true` and `styles` |
 
@@ -839,11 +863,13 @@ translates the dictation into English, showing that a style may translate.
 - `device/microphone.rs`: takes the `Arc<CaptureBuffer>`;
 - `adapters.rs`: `CpalRecording::peek`;
 - `main.rs`: commands, the corrector factory, `last_paste`, `insert_lock`, `session_busy`, `restyle_seq`, the
-  one-line `spawn_prefix`.
+  `controller::spawn_prefix` wiring.
 
 Update the "remaining branches" in `CLAUDE.md` in the PR that adds them: Windows focus (degenerate-selection guard,
 TextPattern absent, `Select()` result); macOS focus (`AXSelectedTextRange` read, length and settable guards,
-`AXManualAccessibility` once per pid); macOS window (panel subclass registration); keys: none. The
+`AXManualAccessibility` once per pid, from the caret reads only); macOS window (panel subclass registration); keys:
+event creation and the `SendInput` count check (the arrow sequence is `win_keys::arrow_strokes`, the macOS arrow
+flags `mac_keys::arrow_flags`). The
 `tests/coverage-policy.test.ts` file list does not change.
 
 ## 15. Delivery (3 PRs)
@@ -895,7 +921,8 @@ Acceptance:
 
 - The badge appears during recording about 2.5 s in, or at the first pause.
 - A wrong peek is corrected at Processing; a short dictation gets its badge at Processing.
-- A dictation with a keyword style ends on a 4 s toast with the badge; other dictations show no new toast.
+- A dictation with a keyword style ends on an 8 s toast with the badge (kept while hovered); any other non-error toast
+  with a badge also lasts 8 s; dictations without a keyword style show no new toast.
 - No peek request with correction off or without a keyword style.
 - All checks in `CLAUDE.md` pass.
 
@@ -914,8 +941,8 @@ Acceptance:
 - Switching style in a normal text field replaces the text in place. Manual: click a chip, then replace in TextEdit
   and in Slack (macOS), Notepad and Slack (Windows); where Slack's field stays unreadable, the text is copied.
 - Switching to Default after a false trigger gives the full text, keyword included.
-- In a terminal, after a focus change, when the caret moved, or while a new dictation runs, the new text is copied
-  and a toast says so.
+- In a terminal, after a focus change or when the caret moved, the new text is copied and a toast says so. While a
+  new dictation runs (or shows its toast), the clipboard is left alone and the new text only goes to the history.
 - A new recording, or a newer dictation's toast, is never covered by a late result; two quick switches end with the
   last one clicked.
 - Switching works with only an LLM key configured.

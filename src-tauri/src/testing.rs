@@ -1,9 +1,10 @@
 //! Test doubles for `Services`: in-memory Db, temp dirs, and fakes for every OS/network seam.
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, RwLock};
 
 use scribe_core::focus::{FocusDetector, FocusSnapshot, FocusState};
-use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender, SystemMute};
+use scribe_core::insert::{Clipboard, ClipboardContent, FieldReader, KeySender, NavKey, Selection, SystemMute};
 use scribe_core::permissions::{Permission, PermissionState, PermissionStatus, SystemPermissions};
 use scribe_core::pipeline::{Corrector, ProviderError, Transcriber};
 use scribe_core::prompt::CorrectionPrompt;
@@ -94,9 +95,11 @@ impl Clipboard for FakeClipboard {
     }
 }
 
+/// Records pastes and arrow presses (`press`: key, shift, times).
 #[derive(Default)]
 pub struct FakeKeys {
     pub pastes: Mutex<u32>,
+    pub presses: Mutex<Vec<(NavKey, bool, usize)>>,
     pub fail: Mutex<bool>,
 }
 
@@ -108,26 +111,49 @@ impl KeySender for FakeKeys {
         *self.pastes.lock().unwrap() += 1;
         Ok(())
     }
+    fn press(&self, key: NavKey, shift: bool, times: usize) -> Result<(), String> {
+        self.presses.lock().unwrap().push((key, shift, times));
+        Ok(())
+    }
 }
 
-/// The focused field's text, read in order (the last reading repeats); unreadable when empty.
+/// The focused field: its text, read in order (the last reading repeats; unreadable when empty), the text before
+/// its caret, and an accessibility selection that works when `selectable`.
 #[derive(Default)]
-pub struct FakeField(pub Mutex<Vec<Option<String>>>);
+pub struct FakeField {
+    readings: Mutex<Vec<Option<String>>>,
+    pub before_caret: Mutex<Option<String>>,
+    pub selectable: Mutex<bool>,
+    pub selected: Mutex<Option<String>>,
+}
 
 impl FakeField {
     pub fn script(&self, readings: &[Option<&str>]) {
-        *self.0.lock().unwrap() = readings.iter().rev().map(|r| r.map(String::from)).collect();
+        *self.readings.lock().unwrap() = readings.iter().rev().map(|r| r.map(String::from)).collect();
     }
 }
 
 impl FieldReader for FakeField {
     fn focused_text(&self) -> Option<String> {
-        let mut v = self.0.lock().unwrap();
+        let mut v = self.readings.lock().unwrap();
         if v.len() > 1 {
             v.pop().flatten()
         } else {
             v.first().cloned().flatten()
         }
+    }
+    fn before_caret(&self) -> Option<String> {
+        self.before_caret.lock().unwrap().clone()
+    }
+    fn selected_text(&self) -> Option<String> {
+        self.selected.lock().unwrap().clone()
+    }
+    fn select_before_caret(&self, suffix: &str) -> Selection {
+        if !*self.selectable.lock().unwrap() {
+            return Selection::Unsupported;
+        }
+        *self.selected.lock().unwrap() = Some(suffix.into());
+        Selection::Selected
     }
 }
 
@@ -249,15 +275,19 @@ impl Default for ProviderPlan {
     }
 }
 
-struct FakeStt(Result<String, ProviderError>);
+struct FakeStt {
+    answer: Result<String, ProviderError>,
+    hints: Arc<Mutex<Vec<Vec<String>>>>,
+}
 
 #[async_trait::async_trait]
 impl Transcriber for FakeStt {
     fn name(&self) -> String {
         "fake-stt".into()
     }
-    async fn transcribe(&self, _wav: &[u8], _hints: &[String]) -> Result<String, ProviderError> {
-        self.0.clone()
+    async fn transcribe(&self, _wav: &[u8], hints: &[String]) -> Result<String, ProviderError> {
+        self.hints.lock().unwrap().push(hints.to_vec());
+        self.answer.clone()
     }
 }
 
@@ -329,6 +359,8 @@ pub struct Fixture {
     pub plan: Arc<Mutex<ProviderPlan>>,
     /// Every prompt the fake corrector received.
     pub prompts: Arc<Mutex<Vec<CorrectionPrompt>>>,
+    /// The hints of every transcription request.
+    pub hints: Arc<Mutex<Vec<Vec<String>>>>,
     /// The transcription provider of each warm-up request.
     pub warm_ups: Arc<Mutex<Vec<String>>>,
     pub ctrl_rx: Receiver<ControllerMsg>,
@@ -361,6 +393,8 @@ impl Fixture {
         let corrector_plan = plan.clone();
         let prompts = Arc::new(Mutex::new(Vec::new()));
         let (factory_prompts, corrector_prompts) = (prompts.clone(), prompts.clone());
+        let hints = Arc::new(Mutex::new(Vec::new()));
+        let stt_hints = hints.clone();
         let warm_ups = Arc::new(Mutex::new(Vec::new()));
         let warm_up_log = warm_ups.clone();
         let (tx, ctrl_rx) = mpsc::channel();
@@ -381,7 +415,7 @@ impl Fixture {
                 let plan = factory_plan.lock().unwrap().clone();
                 plan.build?;
                 let llm = FakeLlm { answer: plan.llm, prompts: factory_prompts.clone() };
-                Ok((Box::new(FakeStt(plan.stt)), Box::new(llm)))
+                Ok((Box::new(FakeStt { answer: plan.stt, hints: stt_hints.clone() }), Box::new(llm)))
             }),
             corrector: Box::new(move |_s, _store| {
                 let answer = corrector_plan.lock().unwrap().llm.clone();
@@ -395,6 +429,11 @@ impl Fixture {
             updater: updater.clone(),
             key_capture: KeyCapture::new(hook_cfg.clone()),
             ctrl_tx: Mutex::new(tx),
+            last_paste: Mutex::default(),
+            insert_lock: Mutex::default(),
+            session_busy: AtomicBool::default(),
+            restyle_seq: AtomicU64::default(),
+            restyle_lock: tokio::sync::Mutex::default(),
         });
         Self {
             svc,
@@ -411,6 +450,7 @@ impl Fixture {
             secrets,
             plan,
             prompts,
+            hints,
             warm_ups,
             ctrl_rx,
             _dir: dir,

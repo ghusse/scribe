@@ -93,18 +93,37 @@ What is left in excluded files is wiring only; every decision lives in a tested 
 - `macos/permissions.rs`: `SystemPermissions` on AX/AVFoundation; what the UI offers per state is
   `src/lib/permissions.ts::permissionActions`, the « open the window at launch » rule `permissions::any_missing`.
   Remaining branches: the AVFoundation status `match` and the `open` command result.
-- `macos/focus.rs`: classification is `focus_rules::classify_ax`, the app name `focus_rules::process_stem`.
-  Remaining branches: AX error / downcast `?`s and the secure-field guard of `AxFieldReader`.
+- `macos/focus.rs`: classification is `focus_rules::classify_ax`, the app name `focus_rules::process_stem`, the
+  text before the caret `focus_rules::prefix_utf16`, the selection length `insert::caret_units`; whether a replace
+  may run and whether its selection matched are `insert::plan_replace` / `insert::replace`. Remaining branches: AX
+  error / downcast `?`s, the secure-field guard of `AxFieldReader`, the `AXSelectedTextRange` read (`AXValue`
+  decode), the empty-selection, caret-range and settable guards of `select_before_caret` (`insert::Selection::of`
+  maps its result), and `AXManualAccessibility` set on the focused application by the caret reads only
+  (`before_caret`, `select_before_caret`; Chromium/Electron build no AX tree otherwise), its pid remembered only once
+  the set succeeded.
 - `macos/keys.rs`, `macos/window.rs`, `macos/mod.rs`: CoreGraphics/AppKit/Carbon calls and re-exports only (which key
-  pastes on the active layout is `mac_keys::paste_keycode`, which flag tells a modifier is down `mac_keys::modifier_mask`;
-  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). Overlay
+  pastes on the active layout is `mac_keys::paste_keycode`, which flag tells a modifier is down `mac_keys::modifier_mask`,
+  the arrow keys of `press` `mac_keys::arrow_keycode` and their flags `mac_keys::arrow_flags`;
+  the layout is read on the main queue with `exec_sync`, from the paste worker thread only). In `window.rs`, the
+  overlay's web view gets no mouse event while another app is active: an always-active tracking area feeds
+  `overlay_pointer::PointerTracker` (over the visible surface sent by the overlay, which button is under the pointer,
+  which cursor to set), which decides the `overlay-pointer` event (toast kept under the pointer, hovered button styled,
+  payload `overlay::OverlayPointer`) and the cursor; `hide_overlay` makes it forget the pointer (no `mouseExited:` once
+  ordered out). `keys.rs` remaining branches: `ok_or` on event creation. The overlay is an `NSPanel` subclass whose `canBecomeKeyWindow` is NO (a click must leave the
+  keyboard to the target app), registered by `define_class!` and set by `object_setClass` in `prepare_overlay`.
+  Remaining branches: the `contentView` / main-thread `let else`s, the cursor `match` and the re-assert
+  while over a button. Overlay
   `show`/`hide` post to the main queue (`DispatchQueue::main().exec_async`), never wait (same rule as Windows).
 - `windows/focus.rs`: the class-name and process-name buffers go through `focus_rules::utf16_prefix` and
-  `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals included). `UiaFieldReader`
+  `focus_rules::process_stem`; classification is `focus_rules::classify` (terminals → `Terminal`). `UiaFieldReader`
   only reads the focused field (text pattern, else value; never a password field); whether a paste landed is
-  `scribe_core::insert::verify`, the re-reading loop `insert::perform`. Remaining branches: FFI error
-  propagation (`?`, `.ok()`), the password / text-pattern / value-pattern `if`s and the null foreground window →
-  `FocusSnapshot::unknown()` guard.
+  `scribe_core::insert::verify`, the re-reading loop `insert::perform`. The text before the caret, the selection and
+  the selection before the caret (`insert::caret_units` characters) use the text pattern only; whether a replace may
+  run and whether its selection matched are `insert::plan_replace` / `insert::replace`. Remaining branches: FFI error
+  propagation (`?`, `.ok()`), the password / text-pattern / value-pattern `if`s (`insert::Selection::of` maps the
+  selection result), the null foreground window →
+  `FocusSnapshot::unknown()` guard, the degenerate-selection guard, the text pattern absent, the
+  `MoveEndpointByUnit` count and the `Select()` result.
 - `windows/audio_output.rs`, `macos/audio_output.rs`: one WASAPI / CoreAudio call per `OutputBackend` method;
   which outputs to mute (not already muted, failures skipped) and which to unmute (still muted, vanished ones
   ignored) is `output_mute::OutputMuter`. Remaining branches: FFI error propagation (`?`, status checks), the
@@ -132,7 +151,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   pointer and the capture loop conditions.
 - `device/clipboard.rs`: what to read first (text, then image, else `Unsupported`) and how to restore each
   `ClipboardContent` are `clipboard::BackendClipboard`. Remaining branches: arboard error mapping (`?`).
-- `windows/keys.rs`, `windows/window.rs`, `windows/mod.rs`: Win32 calls and re-exports only. `show_overlay`/`hide_overlay` must stay
+- `windows/keys.rs`, `windows/window.rs`, `windows/mod.rs`: Win32 calls and re-exports only; the arrow burst of
+  `press` (keys, Shift around it, extended flag) is `win_keys::arrow_strokes`. Remaining branch: the `SendInput`
+  count check. `show_overlay`/`hide_overlay` must stay
   non-blocking across threads (`ShowWindowAsync`, `SWP_ASYNCWINDOWPOS`): see the next point.
 - `tray.rs`: pause = `controller::toggle_pause` (tested); open = `adapters::show_main`; labels per language =
   `locale::tray_labels` (relabelled by `TrayMenu::relabel` when `save_settings` reports a new language). Remaining
@@ -146,8 +167,9 @@ What is left in excluded files is wiring only; every decision lives in a tested 
   another thread (post, don't send), or a main-thread caller waiting for that lock deadlocks the app. The native
   window is therefore resolved once in `TauriOverlayWindow::new` on the main thread (`WebviewWindow::hwnd()` and
   `ns_window()` are blocking event-loop round-trips in tauri-runtime-wry), never in `show`/`hide`. Commands
-  that touch `svc.overlay` are `#[tauri::command(async)]` so they never wait for the lock on the main thread
-  (checked by `commands_touching_the_overlay_never_run_on_the_main_thread`).
+  that touch `svc.overlay`, directly or through `dictation::`, are async (`#[tauri::command(async)]` or `async fn`)
+  so they never wait for the lock on the main thread (checked by
+  `commands_touching_the_overlay_never_run_on_the_main_thread`).
 - `main.rs`: `bootstrap::needs_setup` (same case table as `needsSetup` in `src/lib/apiKeys.ts`),
   `bootstrap::hides_on_close`, `audio_mute::recover` (sound left muted by a crash, queued on the mute worker), `AudioMute::restore_before_exit` (sound muted by a recording when Scribe quits). Remaining branches: `?` on setup steps,
   the delayed `update::check_at_startup` spawn, the single-instance callback (a second launch shows the window unless `bootstrap::shows_main_at_launch` says otherwise), the keyboard-hook `Ok` (keep the handle) / `Err` (log + `Notice::HookUnavailable` toast) dispatch, the OS languages

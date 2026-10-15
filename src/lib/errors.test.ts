@@ -98,6 +98,8 @@ describe("errorText", () => {
     [{ code: "invalid_settings", error: { code: "model_required" } }, "choisissez un modèle de transcription et un modèle de correction"],
     [{ code: "provider", error: { code: "timeout" } }, "fournisseur injoignable"],
     [{ code: "no_update" }, "aucune mise à jour disponible"],
+    [{ code: "style_not_found" }, "ce style n'existe plus"],
+    [{ code: "nothing_to_restyle" }, "cette dictée n'a pas de transcription à réécrire"],
   ])("%o", (e, text) => {
     expect(errorText(e)).toBe(text);
   });
@@ -117,25 +119,30 @@ test("storedErrorText reads a JSON provider error, else the legacy text", () => 
 
 describe("noticeText", () => {
   const timeout: ProviderError = { code: "timeout" };
-  test.each<[Notice, string]>([
-    [{ code: "pasted_without_correction", correction: timeout }, "Inséré sans correction (fournisseur injoignable)"],
-    [{ code: "pasted_uncertain", correction: null }, "Texte inséré ?"],
-    [{ code: "pasted_uncertain", correction: timeout }, "Texte inséré ? (non corrigé : fournisseur injoignable)"],
-    [{ code: "copied", correction: null }, "Texte copié dans le presse-papier"],
-    [{ code: "not_pasted", correction: null }, "Non inséré : texte copié, collez-le avec Ctrl+V"],
-    [{ code: "clipboard_unavailable", correction: null }, "Presse-papier indisponible : texte dans l'historique"],
-    [{ code: "transcription_failed", error: { code: "auth" } }, "Échec de la transcription : clé refusée, vérifiez la clé. Réessayez depuis l'historique."],
-    [{ code: "audio_encoding_failed", detail: "x" }, "Encodage audio impossible : x"],
-    [{ code: "microphone_unavailable", detail: "x" }, "Micro indisponible : x"],
-    [{ code: "recording_lost", detail: "x" }, "Enregistrement perdu : x"],
-    [{ code: "hook_unavailable", detail: "x" }, "Raccourci indisponible : x"],
-    [{ code: "update_available", version: "1.2.0" }, "Scribe 1.2.0 est disponible : Réglages > Général"],
-    [{ code: "copy_failed", detail: "occupé" }, "Copie impossible : occupé"],
-  ])("%o", (n, text) => {
-    expect(noticeText(n, "windows")).toBe(text);
+  test.each<[Notice, string, string | null]>([
+    [{ code: "pasted" }, "Texte inséré", null],
+    [{ code: "pasted_without_correction", correction: timeout }, "Inséré sans correction", "fournisseur injoignable"],
+    [{ code: "pasted_uncertain", correction: null }, "Texte inséré ?", null],
+    [{ code: "pasted_uncertain", correction: timeout }, "Texte inséré ?", "Non corrigé : fournisseur injoignable"],
+    [{ code: "copied", correction: null }, "Texte copié dans le presse-papier", null],
+    [{ code: "not_pasted", correction: null }, "Non inséré : texte copié, collez-le avec Ctrl+V", null],
+    [{ code: "clipboard_unavailable", correction: null }, "Presse-papier indisponible : texte dans l'historique", null],
+    [{ code: "transcription_failed", error: { code: "auth" } }, "Échec de la transcription : clé refusée, vérifiez la clé. Réessayez depuis l'historique.", null],
+    [{ code: "audio_encoding_failed", detail: "x" }, "Encodage audio impossible : x", null],
+    [{ code: "microphone_unavailable", detail: "x" }, "Micro indisponible : x", null],
+    [{ code: "recording_lost", detail: "x" }, "Enregistrement perdu : x", null],
+    [{ code: "hook_unavailable", detail: "x" }, "Raccourci indisponible : x", null],
+    [{ code: "update_available", version: "1.2.0" }, "Scribe 1.2.0 est disponible : Réglages > Général", null],
+    [{ code: "copy_failed", detail: "occupé" }, "Copie impossible : occupé", null],
+    [{ code: "restyled" }, "Texte remplacé", null],
+    [{ code: "restyle_copied" }, "Nouveau texte copié", null],
+    [{ code: "restyle_failed", error: { code: "timeout" } }, "Réécriture impossible : fournisseur injoignable", null],
+    [{ code: "restyle_refused", detail: "ce style n'existe plus" }, "Réécriture impossible : ce style n'existe plus", null],
+  ])("%o", (n, title, detail) => {
+    expect(noticeText(n, "windows")).toEqual({ title, detail });
   });
 
   test("names the macOS paste shortcut on a Mac", () => {
-    expect(noticeText({ code: "not_pasted", correction: null }, "mac")).toBe("Non inséré : texte copié, collez-le avec ⌘V");
+    expect(noticeText({ code: "not_pasted", correction: null }, "mac").title).toBe("Non inséré : texte copié, collez-le avec ⌘V");
   });
 });

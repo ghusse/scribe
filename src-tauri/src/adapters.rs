@@ -182,6 +182,10 @@ pub fn setup_overlay(app: &AppHandle) -> tauri::Result<()> {
     if let Some(h) = raw_window(app) {
         scribe_platform::prepare_overlay(h);
     }
+    let handle = app.clone();
+    scribe_platform::on_overlay_pointer(Box::new(move |state| {
+        let _ = handle.emit_to(OVERLAY_WINDOW, "overlay-pointer", overlay::OverlayPointer::from(state));
+    }));
     Ok(())
 }
 
@@ -193,6 +197,9 @@ struct CpalRecording(RecordingHandle);
 impl Recording for CpalRecording {
     fn started(&self) -> RecordingStart {
         self.0.started()
+    }
+    fn peek(&self, max_ms: u64) -> Option<AudioClip> {
+        self.0.peek(max_ms)
     }
     fn stop(self: Box<Self>) -> Result<AudioClip, String> {
         self.0.stop()

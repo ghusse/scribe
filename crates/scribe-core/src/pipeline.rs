@@ -254,10 +254,12 @@ pub async fn correct(
 
 /// Transcribes, detects the style keyword, then corrects the body with that style's task (the default style's
 /// when none was said). The keyword and its leading fillers are stripped even with correction off.
+/// `on_detected` gets the detected keyword style (None without one) once transcribed, when correction is on.
 pub async fn run(
     cfg: &PipelineConfig,
     wav: &[u8],
     inp: &StyleInputs<'_>,
+    on_detected: &(dyn Fn(Option<&Style>) + Sync),
     transcriber: &dyn Transcriber,
     corrector: &dyn Corrector,
 ) -> Result<PipelineOutput, PipelineError> {
@@ -278,6 +280,7 @@ pub async fn run(
     if !cfg.correction_enabled {
         return Ok(output(body, None, None, None));
     }
+    on_detected(detected.map(|d| d.style));
     let fallback;
     let style = match detected {
         Some(d) => d.style,
@@ -367,7 +370,7 @@ mod tests {
     ) -> Result<PipelineOutput, PipelineError> {
         let styles = style::catalog();
         let inp = StyleInputs { styles: &styles, language: Language::Fr, terms, app_name };
-        run(cfg, b"wav", &inp, stt, llm).await
+        run(cfg, b"wav", &inp, &|_| {}, stt, llm).await
     }
 
     fn term(id: i64, t: &str) -> Term {
@@ -474,11 +477,31 @@ mod tests {
         let inp = StyleInputs { styles: &styles, language: Language::En, terms: &[], app_name: Some("Slack") };
         let stt = FakeStt::new(vec![Ok("slack bonjour".into())]);
         let llm = FakeLlm::new(Ok("<output>Hello</output>".into()), 0);
-        let out = run(&cfg(true), b"wav", &inp, &stt, &llm).await.unwrap();
+        let out = run(&cfg(true), b"wav", &inp, &|_| {}, &stt, &llm).await.unwrap();
         assert_eq!(out.final_text, "Hello");
         let p = llm.last_prompt();
         assert!(p.system.contains("Task:\n- Translate to English."));
         assert!(p.user.starts_with("Target application: Slack"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn on_detected_reports_the_keyword_style_once_when_correction_is_on() {
+        let styles = style::catalog();
+        let inp = StyleInputs { styles: &styles, language: Language::Fr, terms: &[], app_name: None };
+        let cases = [
+            ("Slack, on décale la réunion.", true, vec![Some("slack".to_string())]),
+            ("on décale la réunion à demain", true, vec![None]),
+            ("Slack.", true, vec![None]),
+            ("Slack, on décale la réunion.", false, vec![]),
+        ];
+        for (raw, enabled, expected) in cases {
+            let seen = Mutex::new(vec![]);
+            let stt = FakeStt::new(vec![Ok(raw.into())]);
+            let llm = FakeLlm::new(Ok("<output>X</output>".into()), 0);
+            let on_detected = |s: Option<&Style>| seen.lock().unwrap().push(s.map(|s| s.id.clone()));
+            run(&cfg(enabled), b"wav", &inp, &on_detected, &stt, &llm).await.unwrap();
+            assert_eq!(*seen.lock().unwrap(), expected, "{raw} {enabled}");
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -487,7 +510,7 @@ mod tests {
         let inp = StyleInputs { styles: &styles, language: Language::Fr, terms: &[], app_name: None };
         let stt = FakeStt::new(vec![Ok("bonjour à tous et merci".into())]);
         let llm = FakeLlm::new(Ok("<output>Bonjour à tous, et merci.</output>".into()), 0);
-        let out = run(&cfg(true), b"wav", &inp, &stt, &llm).await.unwrap();
+        let out = run(&cfg(true), b"wav", &inp, &|_| {}, &stt, &llm).await.unwrap();
         assert_eq!(out.style.as_deref(), Some("default"));
         assert!(llm.last_prompt().system.contains(style::preset_task(style::Preset::Default, Language::Fr)));
     }
