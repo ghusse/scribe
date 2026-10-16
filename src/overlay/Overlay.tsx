@@ -86,11 +86,6 @@ export default function Overlay() {
           </div>
           {ov.locked && <span class={styles.tag}>{m.locked}</span>}
         </div>
-        {ov.warning && (
-          <p class={styles.warning} data-surface role="alert">
-            {m.warnings[ov.warning]}
-          </p>
-        )}
       </div>
     );
   }

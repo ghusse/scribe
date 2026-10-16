@@ -90,9 +90,6 @@ export const settings: typeof En = {
   sound: {
     heading: "Son",
     mute: "Couper le son de l'ordinateur pendant la dictée",
-    exclusiveMic: "Couper le micro des autres applications pendant la dictée",
-    exclusiveMicNote:
-      "Une visio ou un appel en cours perd le micro le temps de la dictée. Si le micro refuse cet accès exclusif, la dictée se fait quand même, sans couper les autres applications.",
   },
   correction: {
     heading: "Correction",

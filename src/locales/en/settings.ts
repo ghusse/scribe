@@ -88,9 +88,6 @@ export const settings = {
   sound: {
     heading: "Sound",
     mute: "Mute the computer's sound during dictation",
-    exclusiveMic: "Cut other apps off the microphone during dictation",
-    exclusiveMicNote:
-      "A video or phone call in progress loses the microphone during the dictation. If the microphone refuses this exclusive access, the dictation still works, without cutting off the other apps.",
   },
   correction: {
     heading: "Correction",
