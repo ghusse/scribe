@@ -11,5 +11,4 @@ export const overlay: typeof En = {
   changeStyle: "Changer de style",
   styles: "Styles",
   rewriting: (name) => `Réécriture en style ${name}…`,
-  warnings: { shared_microphone: "Micro non exclusif : les autres applications vous entendent" },
 };

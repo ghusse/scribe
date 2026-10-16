@@ -66,14 +66,6 @@ pub enum Notice {
     },
 }
 
-/// Shown under the pill for the whole recording.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecordingWarning {
-    /// Exclusive access to the microphone was asked for but not obtained.
-    SharedMicrophone,
-}
-
 /// `style`: the keyword style of the dictation, when one was detected (never the default style).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -81,7 +73,6 @@ pub enum OverlayEvent {
     Idle,
     Recording {
         locked: bool,
-        warning: Option<RecordingWarning>,
         style: Option<StyleBadge>,
     },
     Processing {
@@ -328,7 +319,7 @@ mod tests {
     #[test]
     fn idle_hides_and_everything_else_shows() {
         let (w, o) = overlay();
-        o.emit(OverlayEvent::Recording { locked: false, warning: None, style: None });
+        o.emit(OverlayEvent::Recording { locked: false, style: None });
         assert!(w.visible());
         o.emit(OverlayEvent::Processing { style: None });
         assert!(w.visible());
@@ -346,10 +337,7 @@ mod tests {
                 style: None
             })
         );
-        assert_eq!(
-            w.calls.lock().unwrap()[0],
-            Call::Send(OverlayEvent::Recording { locked: false, warning: None, style: None })
-        );
+        assert_eq!(w.calls.lock().unwrap()[0], Call::Send(OverlayEvent::Recording { locked: false, style: None }));
     }
 
     #[test]
@@ -366,8 +354,8 @@ mod tests {
     #[test]
     fn late_dismiss_does_not_hide_recording_or_processing() {
         for ev in [
-            OverlayEvent::Recording { locked: false, warning: None, style: None },
-            OverlayEvent::Recording { locked: true, warning: None, style: None },
+            OverlayEvent::Recording { locked: false, style: None },
+            OverlayEvent::Recording { locked: true, style: None },
             OverlayEvent::Processing { style: None },
         ] {
             let (w, o) = overlay();
@@ -393,14 +381,14 @@ mod tests {
         let o2 = o.clone();
         let dismiss = std::thread::spawn(move || o2.dismiss());
         in_hide_rx.recv().unwrap();
-        o.emit(OverlayEvent::Recording { locked: false, warning: None, style: None });
+        o.emit(OverlayEvent::Recording { locked: false, style: None });
         dismiss.join().unwrap();
         assert!(w.visible(), "{:?}", w.calls.lock().unwrap());
         let calls = w.calls.lock().unwrap();
         let n = calls.len();
         assert_eq!(
             calls[n - 3..],
-            [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false, warning: None, style: None }), Call::Show]
+            [Call::Hide, Call::Send(OverlayEvent::Recording { locked: false, style: None }), Call::Show]
         );
     }
 
@@ -427,10 +415,7 @@ mod tests {
         assert!(!o.emit_for_dictation(4, restyled(4)), "a newer dictation's toast");
         o.toast(ToastLevel::Error, copied(), None, None);
         assert!(!o.emit_for_dictation(4, restyled(4)), "a toast of no dictation");
-        for ev in [
-            OverlayEvent::Recording { locked: false, warning: None, style: None },
-            OverlayEvent::Processing { style: None },
-        ] {
+        for ev in [OverlayEvent::Recording { locked: false, style: None }, OverlayEvent::Processing { style: None }] {
             o.emit(ev.clone());
             assert!(!o.emit_for_dictation(4, restyled(4)));
             assert_eq!(w.last_event(), Some(ev));
@@ -462,22 +447,12 @@ mod tests {
             })
         );
         assert_eq!(
-            serde_json::to_value(OverlayEvent::Recording { locked: true, warning: None, style: None }).unwrap(),
-            json!({"kind": "recording", "locked": true, "warning": null, "style": null})
+            serde_json::to_value(OverlayEvent::Recording { locked: true, style: None }).unwrap(),
+            json!({"kind": "recording", "locked": true, "style": null})
         );
         assert_eq!(
-            serde_json::to_value(OverlayEvent::Recording {
-                locked: false,
-                warning: Some(RecordingWarning::SharedMicrophone),
-                style: Some(slack()),
-            })
-            .unwrap(),
-            json!({
-                "kind": "recording",
-                "locked": false,
-                "warning": "shared_microphone",
-                "style": {"id": "slack", "name": "Slack"}
-            })
+            serde_json::to_value(OverlayEvent::Recording { locked: false, style: Some(slack()) }).unwrap(),
+            json!({"kind": "recording", "locked": false, "style": {"id": "slack", "name": "Slack"}})
         );
         assert_eq!(
             serde_json::to_value(OverlayEvent::Processing { style: Some(slack()) }).unwrap(),

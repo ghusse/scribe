@@ -55,14 +55,11 @@ impl OutputBackend for CoreAudioOutputs {
     }
 }
 
-pub(super) fn prop(
-    selector: AudioObjectPropertySelector,
-    scope: AudioObjectPropertyScope,
-) -> AudioObjectPropertyAddress {
+fn prop(selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope) -> AudioObjectPropertyAddress {
     AudioObjectPropertyAddress { mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain }
 }
 
-pub(super) fn check(status: i32) -> Result<(), String> {
+fn check(status: i32) -> Result<(), String> {
     if status == 0 {
         Ok(())
     } else {
@@ -71,11 +68,7 @@ pub(super) fn check(status: i32) -> Result<(), String> {
 }
 
 /// Reads a fixed-size property into `out`.
-pub(super) fn get<T>(
-    object: AudioObjectID,
-    address: &mut AudioObjectPropertyAddress,
-    out: &mut T,
-) -> Result<(), String> {
+fn get<T>(object: AudioObjectID, address: &mut AudioObjectPropertyAddress, out: &mut T) -> Result<(), String> {
     let mut size = size_of::<T>() as u32;
     let status = unsafe {
         AudioObjectGetPropertyData(
@@ -90,7 +83,7 @@ pub(super) fn get<T>(
     check(status)
 }
 
-pub(super) fn data_size(object: AudioObjectID, address: &mut AudioObjectPropertyAddress) -> Result<u32, String> {
+fn data_size(object: AudioObjectID, address: &mut AudioObjectPropertyAddress) -> Result<u32, String> {
     let mut size: u32 = 0;
     let status = unsafe {
         AudioObjectGetPropertyDataSize(object, NonNull::from(address), 0, ptr::null(), NonNull::from(&mut size))
@@ -99,7 +92,7 @@ pub(super) fn data_size(object: AudioObjectID, address: &mut AudioObjectProperty
 }
 
 /// Every audio device (inputs and outputs).
-pub(super) fn devices() -> Result<Vec<AudioObjectID>, String> {
+fn devices() -> Result<Vec<AudioObjectID>, String> {
     let system = kAudioObjectSystemObject as AudioObjectID;
     let mut address = prop(kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal);
     let mut size = data_size(system, &mut address)?;

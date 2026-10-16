@@ -41,29 +41,15 @@ describe("Overlay", () => {
 
   it("shows the recording pill with a live meter and the lock tag", async () => {
     const { container } = await mount();
-    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
+    await fire("overlay", { kind: "recording", locked: false, style: null });
     const bars = () => [...container.querySelectorAll<HTMLElement>(`.${styles.bars} span`)].map((b) => b.style.height);
     expect(bars()).toHaveLength(12);
     expect(screen.queryByText("Verrouillé")).toBeNull();
     await fire("audio-level", 1);
     expect(bars().at(-1)).toBe("28px");
-    await fire("overlay", { kind: "recording", locked: true, warning: null, style: null });
+    await fire("overlay", { kind: "recording", locked: true, style: null });
     expect(screen.getByText("Verrouillé")).toBeTruthy();
     expect(bars().at(-1)).toBe("28px"); // locking keeps the meter
-  });
-
-  it("warns under the pill when the microphone is not exclusive, locked or not", async () => {
-    await mount();
-    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
-    expect(screen.queryByRole("alert")).toBeNull();
-    const text = "Micro non exclusif : les autres applications vous entendent";
-    await fire("overlay", { kind: "recording", locked: false, warning: "shared_microphone", style: null });
-    expect(screen.getByRole("alert").textContent).toBe(text);
-    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone", style: null });
-    expect(screen.getByRole("alert").textContent).toBe(text);
-    expect(screen.getByText("Verrouillé")).toBeTruthy();
-    await fire("overlay", { kind: "processing", style: null });
-    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows the processing pill", async () => {
@@ -119,13 +105,13 @@ describe("Overlay", () => {
   it("shows the style badge while recording, locked, processing and on the toast", async () => {
     const { container } = await mount();
     const badge = () => container.querySelector<HTMLElement>(`.${styles.badge}`);
-    await fire("overlay", { kind: "recording", locked: false, warning: null, style: null });
+    await fire("overlay", { kind: "recording", locked: false, style: null });
     expect(badge()).toBeNull();
-    await fire("overlay", { kind: "recording", locked: false, warning: null, style: SLACK });
+    await fire("overlay", { kind: "recording", locked: false, style: SLACK });
     expect(badge()!.textContent).toBe("Slack");
     expect(badge()!.title).toBe("Style : Slack");
     expect(badge()!.closest(`.${styles.pill}`)).toBeTruthy();
-    await fire("overlay", { kind: "recording", locked: true, warning: null, style: SLACK });
+    await fire("overlay", { kind: "recording", locked: true, style: SLACK });
     expect(badge()!.textContent).toBe("Slack");
     expect(screen.getByText("Verrouillé")).toBeTruthy();
     await fire("overlay", { kind: "processing", style: null });
@@ -224,10 +210,9 @@ describe("Overlay", () => {
   it("speaks English, and follows a language change while shown", async () => {
     lang.value = "en";
     await mount();
-    await fire("overlay", { kind: "recording", locked: true, warning: "shared_microphone", style: null });
+    await fire("overlay", { kind: "recording", locked: true, style: null });
     expect(screen.getByRole("status", { name: "Recording" })).toBeTruthy();
     expect(screen.getByText("Locked")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toBe("Microphone not exclusive: other apps can hear you");
     await fire("overlay", toast({ style: SLACK }));
     expect(screen.getByText("Text copied to the clipboard")).toBeTruthy();
     expect(await screen.findByTitle("Change style")).toBeTruthy();
