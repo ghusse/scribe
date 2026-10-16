@@ -704,18 +704,6 @@ export default function Settings({ active = true, onStatusChange }: SettingsProp
                 />{" "}
                 {tr.sound.mute}
               </label>
-              <label class={cx(styles.row, styles.check)}>
-                <input
-                  type="checkbox"
-                  checked={cur.exclusive_microphone_during_dictation}
-                  onChange={(e) => edit((d) => (d.exclusive_microphone_during_dictation = e.currentTarget.checked))}
-                  aria-describedby="exclusive-mic-note"
-                />{" "}
-                {tr.sound.exclusiveMic}
-              </label>
-              <p class={styles.note} id="exclusive-mic-note">
-                {tr.sound.exclusiveMicNote}
-              </p>
             </section>
 
             <section class={styles.section}>

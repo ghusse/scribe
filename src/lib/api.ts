@@ -74,7 +74,6 @@ export interface Settings {
   /** Mutes every audio output while recording. */
   mute_audio_during_dictation: boolean;
   /** Other apps get no microphone input while recording (falls back to shared input when refused). */
-  exclusive_microphone_during_dictation: boolean;
 }
 
 export type Preset = "default" | "clean" | "slack" | "mail";
@@ -219,13 +218,12 @@ export type Notice =
   | { code: "restyle_refused"; detail: string };
 
 /** Shown under the pill for the whole recording. */
-export type RecordingWarning = "shared_microphone";
 
 export type ToastLevel = "info" | "uncertain" | "copied" | "error";
 /** `style`: the keyword style of the dictation, when one was detected (never the default style). */
 export type OverlayEvent =
   | { kind: "idle" }
-  | { kind: "recording"; locked: boolean; warning: RecordingWarning | null; style: StyleBadge | null }
+  | { kind: "recording"; locked: boolean; style: StyleBadge | null }
   | { kind: "processing"; style: StyleBadge | null }
   | {
       kind: "toast";

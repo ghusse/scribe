@@ -10,12 +10,12 @@ use scribe_core::gesture::{GestureCommand, GestureDetector, Mode};
 use scribe_core::peek::{PeekTimer, PEEK_CLIP_MS};
 use scribe_core::session::{self, Session, SessionAction, SessionState};
 use scribe_core::style;
-use scribe_platform::audio_capture::{LevelCallback, RecordOptions, RecordingStart};
+use scribe_platform::audio_capture::LevelCallback;
 use scribe_platform::HookEvent;
 
 use crate::audio_mute::MuteGuard;
 use crate::dictation::{self, Captured, FOCUS_TIMEOUT_MS};
-use crate::overlay::{Notice, OverlayEvent, RecordingWarning, StyleBadge, ToastLevel};
+use crate::overlay::{Notice, OverlayEvent, StyleBadge, ToastLevel};
 use crate::services::{Services, UiSink};
 use crate::settings::Settings;
 
@@ -37,12 +37,11 @@ pub enum ControllerMsg {
 
 /// Microphone access (cpal in the app).
 pub trait Recorder: Send + Sync {
-    fn start(&self, options: RecordOptions, on_level: LevelCallback) -> Result<Box<dyn Recording>, String>;
+    fn start(&self, on_level: LevelCallback) -> Result<Box<dyn Recording>, String>;
 }
 
 /// A recording in progress.
 pub trait Recording: Send {
-    fn started(&self) -> RecordingStart;
     /// The first `max_ms` captured so far, as 16 kHz mono; recording goes on.
     fn peek(&self, max_ms: u64) -> Option<AudioClip>;
     /// Stops capture and returns 16 kHz mono audio.
@@ -130,11 +129,6 @@ pub fn level_emitter(ui: Arc<dyn UiSink>, clock: Clock, min_interval_ms: u64) ->
 
 const LEVEL_INTERVAL_MS: u64 = 50;
 
-/// The overlay warning of a recording: exclusive access was asked for but not obtained.
-pub fn microphone_warning(options: RecordOptions, started: RecordingStart) -> Option<RecordingWarning> {
-    (options.exclusive_microphone && !started.exclusive_microphone).then_some(RecordingWarning::SharedMicrophone)
-}
-
 /// Whether a recording peeks at its style: only a keyword style can show, and only when it will be applied.
 pub fn peeks(settings: &Settings) -> bool {
     settings.correction_enabled && settings.styles.iter().any(|s| s.keyword.is_some())
@@ -165,8 +159,6 @@ struct Active {
     /// Restores the sound when dropped, so every path that ends the recording restores it. Dropped after the
     /// microphone is stopped.
     mute: Option<MuteGuard>,
-    /// Kept on the pill when the recording locks.
-    warning: Option<RecordingWarning>,
     /// The keyword style peeked at, shown on the pill and then on the processing state.
     style: Option<StyleBadge>,
     peek: Option<Peek>,
@@ -335,8 +327,8 @@ impl Controller {
             return;
         }
         active.style = badge;
-        let (warning, style) = (active.warning, active.style.clone());
-        self.svc.overlay.emit(OverlayEvent::Recording { locked: self.mode == Mode::Locked, warning, style });
+        let style = active.style.clone();
+        self.svc.overlay.emit(OverlayEvent::Recording { locked: self.mode == Mode::Locked, style });
     }
 
     /// A press whose key-up never reached the hook (session locked while dictating) is dropped: the
@@ -373,31 +365,28 @@ impl Controller {
         match action {
             SessionAction::BeginRecording => {
                 let mut on_level = level_emitter(self.svc.ui.clone(), self.deps.clock.clone(), LEVEL_INTERVAL_MS);
-                let (exclusive_microphone, peek) = {
+                let peek = {
                     let s = self.svc.settings.read().unwrap();
-                    let peek = peeks(&s).then(|| Peek {
+                    peeks(&s).then(|| Peek {
                         timer: PeekTimer::new((self.deps.clock)(), s.silence_threshold_dbfs),
                         level: Arc::new(AtomicU32::new(0)),
                         task: None,
-                    });
-                    (s.exclusive_microphone_during_dictation, peek)
+                    })
                 };
                 if let Some(p) = &peek {
                     on_level = keep_latest_level(p.level.clone(), on_level);
                 }
-                let options = RecordOptions { exclusive_microphone };
-                match self.deps.recorder.start(options, on_level) {
+                match self.deps.recorder.start(on_level) {
                     Ok(handle) => {
                         (self.svc.warm_up)(&self.svc.settings.read().unwrap());
                         self.mode = Mode::Hold;
-                        let warning = microphone_warning(options, handle.started());
-                        overlay.emit(OverlayEvent::Recording { locked: false, warning, style: None });
+                        overlay.emit(OverlayEvent::Recording { locked: false, style: None });
                         let mute_on = self.svc.settings.read().unwrap().mute_audio_during_dictation;
                         let mute = mute_on.then(|| self.svc.audio_mute.guard());
                         let focus_start = spawn_focus_snapshot(&self.svc);
                         self.recording_id += 1;
                         let id = self.recording_id;
-                        self.recording = Some(Active { id, handle, focus_start, mute, warning, style: None, peek });
+                        self.recording = Some(Active { id, handle, focus_start, mute, style: None, peek });
                     }
                     Err(detail) => {
                         self.session.abort();
@@ -408,8 +397,8 @@ impl Controller {
             }
             SessionAction::SetMode(mode) => {
                 self.mode = mode;
-                let (warning, style) = self.recording.as_ref().map_or((None, None), |a| (a.warning, a.style.clone()));
-                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, warning, style });
+                let style = self.recording.as_ref().and_then(|a| a.style.clone());
+                overlay.emit(OverlayEvent::Recording { locked: mode == Mode::Locked, style });
             }
             SessionAction::DiscardRecording => {
                 if let Some(Active { handle, mute, peek, .. }) = self.recording.take() {

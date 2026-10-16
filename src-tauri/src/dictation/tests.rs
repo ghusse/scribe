@@ -1060,7 +1060,7 @@ fn a_late_switch_result_never_covers_a_new_recording() {
     let f = Fixture::new();
     let id = pasted_slack(&f);
     *f.svc.last_paste.lock().unwrap() = None;
-    let recording = OverlayEvent::Recording { locked: false, warning: None, style: None };
+    let recording = OverlayEvent::Recording { locked: false, style: None };
     f.svc.overlay.emit(recording.clone());
     restyle_to(&f, id, "mail").unwrap();
     assert_kept_in_history_only(&f, id, Some(recording));
