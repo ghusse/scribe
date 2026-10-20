@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1](https://github.com/ghusse/scribe/compare/v0.7.0...v0.7.1) (2026-10-20)
+
+### Bug Fixes
+
+* **windows:** build the Windows app again ([#30](https://github.com/ghusse/scribe/issues/30)) ([1ce6314](https://github.com/ghusse/scribe/commit/1ce63142dfde00c28bba490c2ac159e312b8f462))
+
 ## [0.7.0](https://github.com/ghusse/scribe/compare/v0.6.0...v0.7.0) (2026-10-15)
 
 ### Features
