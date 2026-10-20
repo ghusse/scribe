@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installed by `bun install` (package.json > prepare: core.hooksPath).
+# Installed by `bun install` (package.json > prepare: scripts/prepare.ts sets core.hooksPath).
 git diff --cached --name-only --diff-filter=ACM | grep -q '\.rs$' || exit 0
 cargo fmt --all --check >/dev/null 2>&1 && exit 0
 cargo fmt --all
