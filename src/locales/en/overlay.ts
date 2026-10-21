@@ -1,5 +1,3 @@
-import type { RecordingWarning } from "../../lib/api";
-
 export const overlay = {
   recording: "Recording",
   locked: "Locked",
@@ -11,5 +9,4 @@ export const overlay = {
   changeStyle: "Change style",
   styles: "Styles",
   rewriting: (name: string) => `Rewriting as ${name}…`,
-  warnings: { shared_microphone: "Microphone not exclusive: other apps can hear you" } satisfies Record<RecordingWarning, string>,
 };

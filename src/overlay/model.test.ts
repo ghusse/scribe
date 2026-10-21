@@ -26,11 +26,11 @@ describe("pure helpers", () => {
     const rect = (el: Element, x: number, y: number, width: number, height: number) =>
       (el.getBoundingClientRect = () => ({ x, y, width, height }) as DOMRect);
     const [copy, view] = root.querySelectorAll("button");
-    const [pill, warning] = root.querySelectorAll("[data-surface]");
+    const [pill, below] = root.querySelectorAll("[data-surface]");
     rect(copy, 10, 5, 40, 24);
     rect(view, 56, 5, 30, 24);
     rect(pill, 0, 0, 100, 34);
-    rect(warning, 20, 40, 120, 20);
+    rect(below, 20, 40, 120, 20);
     expect(hitAreas(root)).toEqual({ surface: [0, 0, 140, 60], buttons: [[10, 5, 40, 24], [56, 5, 30, 24]] });
     expect(hitAreas(document.createElement("div"))).toEqual({ surface: null, buttons: [] });
   });
@@ -147,12 +147,12 @@ describe("pure helpers", () => {
 
   it("resets the meter on a new recording, keeps it when locking, schedules toasts", () => {
     const view: OverlayView = { ...initialView(), levels: pushLevel(emptyLevels(), 0.1) };
-    const rec = reduce(view, { kind: "recording", locked: false, warning: null, style: null });
+    const rec = reduce(view, { kind: "recording", locked: false, style: null });
     expect(rec.view.levels).toEqual(emptyLevels());
     expect(rec.timeout).toBeNull();
-    const locked = reduce(view, { kind: "recording", locked: true, warning: null, style: null });
+    const locked = reduce(view, { kind: "recording", locked: true, style: null });
     expect(locked.view.levels).toBe(view.levels);
-    expect(locked.view.ov).toEqual({ kind: "recording", locked: true, warning: null, style: null });
+    expect(locked.view.ov).toEqual({ kind: "recording", locked: true, style: null });
     expect(reduce(view, toast({ level: "error" })).timeout).toBe(10000);
     expect(reduce(view, toast({ message: { code: "pasted" }, style: SLACK })).timeout).toBe(8000);
     expect(reduce(view, { kind: "processing", style: null }).timeout).toBeNull();
@@ -200,10 +200,10 @@ describe("createOverlay", () => {
 
   it("feeds the level meter", () => {
     const { ctl, views } = setup();
-    ctl.event({ kind: "recording", locked: false, warning: null, style: null });
+    ctl.event({ kind: "recording", locked: false, style: null });
     ctl.level(0.1);
     expect(views.at(-1)!.levels[LEVEL_BARS - 1]).toBeCloseTo(0.6);
-    expect(views.at(-1)!.ov).toEqual({ kind: "recording", locked: false, warning: null, style: null });
+    expect(views.at(-1)!.ov).toEqual({ kind: "recording", locked: false, style: null });
   });
 
   it("dismisses a toast on its own after its timeout and tells the backend", () => {
@@ -246,7 +246,7 @@ describe("createOverlay", () => {
     const { ctl, timers } = setup();
     ctl.event(toast());
     ctl.hover(true);
-    ctl.event({ kind: "recording", locked: false, warning: null, style: null });
+    ctl.event({ kind: "recording", locked: false, style: null });
     ctl.event(toast());
     timers.at(-1)!.fn();
     expect(ctl.view().ov).toEqual({ kind: "idle" });
@@ -286,7 +286,7 @@ describe("createOverlay", () => {
   it("a new event cancels the pending toast timer", () => {
     const { ctl, deps, timers } = setup();
     ctl.event(toast());
-    ctl.event({ kind: "recording", locked: false, warning: null, style: null });
+    ctl.event({ kind: "recording", locked: false, style: null });
     expect(timers[0].cancelled).toBe(true);
     expect(deps.cancel).toHaveBeenCalledTimes(1);
   });
@@ -332,10 +332,10 @@ describe("createOverlay", () => {
     const s = setup();
     s.ctl.event(toast());
     const done = s.ctl.copy();
-    s.ctl.event({ kind: "recording", locked: false, warning: null, style: null });
+    s.ctl.event({ kind: "recording", locked: false, style: null });
     s.resolveCopy();
     await done;
-    expect(s.ctl.view().ov).toEqual({ kind: "recording", locked: false, warning: null, style: null });
+    expect(s.ctl.view().ov).toEqual({ kind: "recording", locked: false, style: null });
     expect(s.deps.dismiss).not.toHaveBeenCalled();
   });
 
@@ -538,7 +538,7 @@ describe("createOverlay", () => {
       const s = await ready();
       s.ctl.openPicker();
       const late = s.ctl.restyle("mail");
-      s.ctl.event({ kind: "recording", locked: false, warning: null, style: null });
+      s.ctl.event({ kind: "recording", locked: false, style: null });
       s.rejectRestyle("x");
       await late;
       expect(s.ctl.view().ov.kind).toBe("recording");

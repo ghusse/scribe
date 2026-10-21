@@ -5,11 +5,9 @@ use scribe_core::focus::FocusDetector;
 use scribe_core::insert::{FieldReader, KeySender, SystemMute};
 use scribe_core::permissions::SystemPermissions;
 
-use crate::exclusive_mic::ExclusiveAccess;
 use crate::output_mute::OutputMuter;
 
 pub mod audio_output;
-pub mod exclusive_capture;
 pub mod focus;
 pub mod hook;
 pub mod keys;
@@ -39,8 +37,4 @@ pub fn system_mute() -> Arc<dyn SystemMute> {
 /// Windows asks for no permission.
 pub fn permissions() -> Arc<dyn SystemPermissions> {
     crate::fallback::permissions()
-}
-
-pub fn exclusive_input() -> ExclusiveAccess {
-    ExclusiveAccess::Input(Box::new(exclusive_capture::WasapiExclusiveInput))
 }

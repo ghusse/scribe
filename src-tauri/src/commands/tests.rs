@@ -480,7 +480,7 @@ fn providers_lists_the_catalog() {
 fn overlay_dismiss_hides_a_toast_but_not_a_recording() {
     let f = Fixture::new();
     with_state(&f, |s| {
-        f.svc.overlay.emit(OverlayEvent::Recording { locked: false, warning: None, style: None });
+        f.svc.overlay.emit(OverlayEvent::Recording { locked: false, style: None });
         overlay_dismiss(s.clone());
         assert!(f.window.visible());
         f.svc.overlay.toast(ToastLevel::Copied, Notice::Copied { correction: None }, None, Some(1));

@@ -10,32 +10,13 @@ pub use crate::device::microphone::start_recording;
 /// Receives the RMS (0.0–1.0) of each captured buffer, from the audio thread.
 pub type LevelCallback = Arc<dyn Fn(f32) + Send + Sync>;
 
-/// How a recording uses the microphone.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct RecordOptions {
-    /// Other apps get no microphone input while recording (`exclusive_mic`); falls back to shared input.
-    pub exclusive_microphone: bool,
-}
-
-/// What a recording got from the microphone once started.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct RecordingStart {
-    /// Other apps get no microphone input (false when not asked or refused).
-    pub exclusive_microphone: bool,
-}
-
 pub struct RecordingHandle {
-    started: RecordingStart,
     capture: Arc<CaptureBuffer>,
     stop_tx: mpsc::Sender<()>,
     join: Option<JoinHandle<Result<AudioClip, String>>>,
 }
 
 impl RecordingHandle {
-    pub fn started(&self) -> RecordingStart {
-        self.started
-    }
-
     /// The first `max_ms` captured so far, as 16 kHz mono; recording goes on.
     pub fn peek(&self, max_ms: u64) -> Option<AudioClip> {
         self.capture.peek(max_ms)
@@ -54,21 +35,20 @@ impl RecordingHandle {
 
 /// The recording thread body: `(stop, ready) -> clip`. Boxed so that the device glue does not instantiate
 /// `spawn_recorder` again (an untested generic copy would count as uncovered lines).
-pub type RecorderBody = Box<
-    dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<RecordingStart, String>>) -> Result<AudioClip, String> + Send,
->;
+pub type RecorderBody =
+    Box<dyn FnOnce(mpsc::Receiver<()>, mpsc::Sender<Result<(), String>>) -> Result<AudioClip, String> + Send>;
 
-/// Runs `body` on a dedicated recording thread. `body` reports through `ready` how capture started
+/// Runs `body` on a dedicated recording thread. `body` reports through `ready` whether capture started
 /// (`Err` aborts the start), records into `capture` until `stop` receives, then returns the clip.
 pub fn spawn_recorder(capture: Arc<CaptureBuffer>, body: RecorderBody) -> Result<RecordingHandle, String> {
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<RecordingStart, String>>();
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
     let join = std::thread::Builder::new()
         .name("scribe-recorder".into())
         .spawn(move || body(stop_rx, ready_tx))
         .map_err(|e| e.to_string())?;
     match ready_rx.recv() {
-        Ok(Ok(started)) => Ok(RecordingHandle { started, capture, stop_tx, join: Some(join) }),
+        Ok(Ok(())) => Ok(RecordingHandle { capture, stop_tx, join: Some(join) }),
         Ok(Err(e)) => {
             let _ = join.join();
             Err(e)
@@ -266,7 +246,7 @@ mod tests {
             Box::new(move |stop, ready| {
                 c.set_format(1, TARGET_RATE);
                 c.push(vec![0.5; 4]);
-                ready.send(Ok(RecordingStart::default())).unwrap();
+                ready.send(Ok(())).unwrap();
                 stop.recv().unwrap();
                 c.finish(1, TARGET_RATE)
             }),
@@ -282,7 +262,7 @@ mod tests {
         let h = spawn_recorder(
             buffer(),
             Box::new(move |stop, ready| {
-                ready.send(Ok(RecordingStart::default())).unwrap();
+                ready.send(Ok(())).unwrap();
                 stop.recv().unwrap();
                 stopped_tx.send("stopped").unwrap();
                 Ok(clip(vec![1, 2, 3]))
@@ -292,22 +272,6 @@ mod tests {
         assert!(stopped_rx.recv_timeout(Duration::from_millis(100)).is_err(), "still recording before stop");
         assert_eq!(h.stop(), Ok(clip(vec![1, 2, 3])));
         assert_eq!(stopped_rx.recv().unwrap(), "stopped");
-    }
-
-    #[test]
-    fn the_handle_tells_how_the_recording_started() {
-        let exclusive = RecordingStart { exclusive_microphone: true };
-        let h = spawn_recorder(
-            buffer(),
-            Box::new(move |stop, ready| {
-                ready.send(Ok(exclusive)).unwrap();
-                stop.recv().unwrap();
-                Ok(clip(vec![]))
-            }),
-        )
-        .unwrap();
-        assert_eq!(h.started(), exclusive);
-        h.stop().unwrap();
     }
 
     #[test]
@@ -340,7 +304,7 @@ mod tests {
         let h = spawn_recorder(
             buffer(),
             Box::new(|stop, ready| {
-                ready.send(Ok(RecordingStart::default())).unwrap();
+                ready.send(Ok(())).unwrap();
                 stop.recv().unwrap();
                 panic!("cpal callback panicked");
             }),
@@ -355,7 +319,7 @@ mod tests {
         let h = spawn_recorder(
             buffer(),
             Box::new(|_, ready| {
-                ready.send(Ok(RecordingStart::default())).unwrap();
+                ready.send(Ok(())).unwrap();
                 Ok(clip(vec![7]))
             }),
         )

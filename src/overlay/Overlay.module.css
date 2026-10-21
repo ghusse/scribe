@@ -1,7 +1,6 @@
 .pill, .toast { background: rgba(24, 24, 32, 0.92); color: #fff; border-radius: 999px; padding: 10px 18px;
   display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 18px rgba(0,0,0,.35); margin-bottom: 8px; }
 .recording { display: flex; flex-direction: column; align-items: center; }
-.warning { background: #b45309; color: #fff; font-size: 12px; border-radius: 8px; padding: 4px 10px; margin: 0 0 8px; }
 /* The window is 440x120: a toast never grows past it (its top, with the badge, would be cut); the preview gives way. */
 .toast { border-radius: 14px; max-width: 420px; box-sizing: border-box; max-height: calc(100vh - 8px); }
 .toast.error { border-left: 4px solid #ef4444; }
