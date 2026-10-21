@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.2](https://github.com/ghusse/scribe/compare/v0.7.1...v0.7.2) (2026-10-21)
+
+### Bug Fixes
+
+* remove the option that cut other apps off the microphone ([#29](https://github.com/ghusse/scribe/issues/29)) ([3c9c1b0](https://github.com/ghusse/scribe/commit/3c9c1b090b77ce7614e40f05b0db65ffb5ba5615))
+
 ## [0.7.1](https://github.com/ghusse/scribe/compare/v0.7.0...v0.7.1) (2026-10-20)
 
 ### Bug Fixes
